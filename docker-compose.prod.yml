@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: crm
+      POSTGRES_USER: crm
+      POSTGRES_PASSWORD: crm
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  certbot:
+    image: certbot/certbot
+    volumes:
+    - certbot_etc:/etc/letsencrypt
+    - certbot_var:/var/lib/letsencrypt
+    - ./docker/nginx/certbot:/var/www/certbot
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
+    command: /app/entrypoint.prod.sh
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    expose:
+      - "8000"
+
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    volumes:
+      - static_volume:/var/www/static
+      - media_volume:/var/www/media
+      - certbot_etc:/etc/letsencrypt
+      - certbot_var:/var/lib/letsencrypt
+
+
+volumes:
+  pgdata:
+  static_volume:
+  media_volume:
+  certbot_etc:
+  certbot_var:

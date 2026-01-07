@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.sqlite3
+*.egg-info/
+.env
+.env.*
+venv/
+.venv/
+
+# Django
+staticfiles/
+media/
+
+# Node / Vite
+node_modules/
+dist/
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.pgdata/
