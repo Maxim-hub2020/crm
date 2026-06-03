@@ -1,182 +1,129 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Card, CardHeader, CardBody, Select, Badge } from "../components/ui";
-import { fetchTop, fetchCommissions, getUser } from "../api";
-import { monthStartISO, monthLabel } from "../utils/month";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from "recharts";
+import { Calendar, FolderKanban, ListTodo, Layers } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
-function MonthPicker({ value, onChange }) {
-  const now = new Date();
-  const months = [];
-  for (let i = 0; i < 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    months.push(monthStartISO(d));
-  }
+import { fetchProjects, fetchTasks } from "../api";
+
+function formatDate(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("ru-RU");
+}
+
+function projectAge(project) {
+  const source = project.updated_at || project.created_at;
+  if (!source) return 0;
+  const date = new Date(source);
+  if (Number.isNaN(date.getTime())) return 0;
+  return Math.max(0, Math.ceil((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24)));
+}
+
+function Panel({ icon: Icon, iconClassName, title, children }) {
   return (
-    <Select value={value} onChange={(e) => onChange(e.target.value)}>
-      {months.map((m) => (
-        <option key={m} value={m}>
-          {monthLabel(m)}
-        </option>
-      ))}
-    </Select>
+    <div>
+      <h2 className="mb-4 flex items-center gap-2 text-xl font-black text-gray-800">
+        <Icon size={20} className={iconClassName} />
+        {title}
+      </h2>
+      <div className="space-y-3 rounded-[32px] bg-white p-4 shadow-lg">{children}</div>
+    </div>
   );
 }
 
 export default function Dashboard() {
-  const user = getUser();
-  const [period, setPeriod] = useState(monthStartISO(new Date()));
-  const [top, setTop] = useState([]);
-  const [comm, setComm] = useState([]);
+  const navigate = useNavigate();
+  const [projects, setProjects] = useState([]);
+  const [tasks, setTasks] = useState([]);
 
   useEffect(() => {
     (async () => {
       try {
-        const t = await fetchTop(period);
-        setTop(t);
+        const [projectRows, taskRows] = await Promise.all([fetchProjects(), fetchTasks()]);
+        setProjects(projectRows);
+        setTasks(taskRows);
       } catch {
-        setTop([]);
-      }
-    })();
-  }, [period]);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const c = await fetchCommissions();
-        setComm(c);
-      } catch {
-        setComm([]);
+        setProjects([]);
+        setTasks([]);
       }
     })();
   }, []);
 
-  const myStats = useMemo(() => {
-    const rows = comm.filter((x) => x.period_month === period && x.status !== "canceled");
-    const accrued = rows.reduce((s, r) => s + Number(r.commission_amount), 0);
-    const sales = rows.filter((r) => Number(r.sale_number_in_month) > 0).length;
-    const advances = rows.reduce((s, r) => s + Number(r.base_amount), 0);
-    return { accrued, sales, advances };
-  }, [comm, period]);
+  const stuckProjects = useMemo(() => {
+    return projects
+      .filter((project) => project.status !== "closed" && project.status !== "canceled" && projectAge(project) >= 5)
+      .sort((left, right) => projectAge(right) - projectAge(left))
+      .slice(0, 8);
+  }, [projects]);
 
-  const chartData = useMemo(() => {
-    const rows = comm.filter((x) => x.period_month === period && x.status !== "canceled");
-    const byDay = new Map();
-    for (const r of rows) {
-      const day = (r.created_at || "").slice(0, 10) || "—";
-      byDay.set(day, (byDay.get(day) || 0) + Number(r.commission_amount));
-    }
-    return Array.from(byDay.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([day, value]) => ({ day, value: Number(value.toFixed(2)) }));
-  }, [comm, period]);
+  const upcomingTasks = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const nextWeek = new Date(today);
+    nextWeek.setDate(nextWeek.getDate() + 7);
 
-  const canSeeTop = user?.role === "admin";
+    return tasks
+      .filter((task) => {
+        if (task.status === "done" || !task.due_date) return false;
+        const dueDate = new Date(task.due_date);
+        dueDate.setHours(0, 0, 0, 0);
+        return dueDate <= nextWeek;
+      })
+      .sort((left, right) => new Date(left.due_date) - new Date(right.due_date))
+      .slice(0, 8);
+  }, [tasks]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <div className="text-sm text-zinc-500">Дашборд</div>
-          <div className="text-2xl font-semibold">Результаты за {monthLabel(period)}</div>
-        </div>
-        <div className="w-full md:w-64">
-          <div className="mb-2 text-sm text-zinc-600">Период</div>
-          <MonthPicker value={period} onChange={setPeriod} />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-12 gap-6">
-        <Card className="col-span-12 md:col-span-4">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="font-semibold">Моя статистика</div>
-              <Badge>{user?.role === "admin" ? "Админ" : "Менеджер"}</Badge>
-            </div>
-            <div className="text-sm text-zinc-500">Начисления формируются сразу после аванса</div>
-          </CardHeader>
-          <CardBody className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-zinc-600">Продаж</div>
-              <div className="text-lg font-semibold">{myStats.sales}</div>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-zinc-600">Сумма авансов</div>
-              <div className="text-lg font-semibold">{myStats.advances.toFixed(2)}</div>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-zinc-600">Начислено комиссий</div>
-              <div className="text-lg font-semibold">{myStats.accrued.toFixed(2)}</div>
-            </div>
-            <div className="text-xs text-zinc-500">
-              Правило: 1–3 продажи — 5%, с 4-й продажи — 8% (месяц, вариант A).
-            </div>
-          </CardBody>
-        </Card>
-
-        <Card className="col-span-12 md:col-span-8">
-          <CardHeader>
-            <div className="font-semibold">Начисления по дням</div>
-            <div className="text-sm text-zinc-500">Динамика комиссий внутри месяца</div>
-          </CardHeader>
-          <CardBody>
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData}>
-                  <XAxis dataKey="day" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="value" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </CardBody>
-        </Card>
-
-        {canSeeTop && (
-          <Card className="col-span-12">
-            <CardHeader>
-              <div className="font-semibold">ТОП менеджеров</div>
-              <div className="text-sm text-zinc-500">Сортировка по начисленным комиссиям</div>
-            </CardHeader>
-            <CardBody>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="text-left text-zinc-500">
-                    <tr>
-                      <th className="py-2">#</th>
-                      <th className="py-2">Менеджер</th>
-                      <th className="py-2">Продажи</th>
-                      <th className="py-2">Авансы</th>
-                      <th className="py-2">Начислено</th>
-                      <th className="py-2">Выплачено</th>
-                      <th className="py-2">К выплате</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {top.map((r, i) => (
-                      <tr key={r.manager_id} className="border-t border-zinc-100">
-                        <td className="py-3">{i + 1}</td>
-                        <td className="py-3 font-medium">{r.manager}</td>
-                        <td className="py-3">{r.sales}</td>
-                        <td className="py-3">{r.advance_sum}</td>
-                        <td className="py-3">{r.accrued_commission}</td>
-                        <td className="py-3">{r.paid_out}</td>
-                        <td className="py-3 font-semibold">{r.to_pay}</td>
-                      </tr>
-                    ))}
-                    {top.length === 0 && (
-                      <tr>
-                        <td className="py-6 text-zinc-500" colSpan={7}>
-                          Нет данных за выбранный период
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </CardBody>
-          </Card>
+    <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+      <Panel icon={Layers} iconClassName="text-orange-500" title="Зависшие проекты">
+        {stuckProjects.length > 0 ? (
+          stuckProjects.map((project) => (
+            <button
+              key={project.id}
+              type="button"
+              onClick={() => navigate("/projects", { state: { q: project.client_name } })}
+              className="w-full rounded-2xl bg-gray-50 p-4 text-left transition hover:bg-gray-100"
+            >
+              <h4 className="font-bold text-gray-800">{project.client_name}</h4>
+              <p className="mt-1 text-xs text-gray-500">{project.object_address || "Адрес не указан"}</p>
+              <p className="mt-1 text-xs font-semibold text-red-500">
+                Без изменений {projectAge(project)} дн. • {formatDate(project.updated_at || project.created_at)}
+              </p>
+            </button>
+          ))
+        ) : (
+          <p className="p-8 text-center text-gray-400">Нет проектов, требующих внимания.</p>
         )}
+      </Panel>
+
+      <Panel icon={ListTodo} iconClassName="text-blue-500" title="Ближайшие задачи">
+        {upcomingTasks.length > 0 ? (
+          upcomingTasks.map((task) => (
+            <div key={task.id} className="rounded-2xl bg-gray-50 p-4">
+              <p className="font-semibold text-gray-800">{task.title}</p>
+              {task.notes && <p className="mt-1 text-sm text-gray-500">{task.notes}</p>}
+              <div className="mt-2 flex items-center gap-1.5 text-xs font-bold text-amber-600">
+                <Calendar size={12} />
+                Срок: {formatDate(task.due_date)}
+              </div>
+            </div>
+          ))
+        ) : (
+          <p className="p-8 text-center text-gray-400">Нет задач на ближайшее время.</p>
+        )}
+      </Panel>
+
+      <div className="rounded-[32px] bg-white p-5 shadow-lg lg:col-span-2">
+        <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500">
+          <div className="flex items-center gap-2 font-semibold text-gray-800">
+            <FolderKanban size={18} className="text-blue-600" />
+            Проектов: {projects.length}
+          </div>
+          <div className="flex items-center gap-2 font-semibold text-gray-800">
+            <ListTodo size={18} className="text-blue-600" />
+            Задач: {tasks.length}
+          </div>
+        </div>
       </div>
     </div>
   );

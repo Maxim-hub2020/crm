@@ -1,60 +1,128 @@
+version: "3.9"
+
 services:
   db:
     image: postgres:16
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      POSTGRES_DB: crm
-      POSTGRES_USER: crm
-      POSTGRES_PASSWORD: crm
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U crm"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
-  certbot:
-    image: certbot/certbot
-    volumes:
-    - certbot_etc:/etc/letsencrypt
-    - certbot_var:/var/lib/letsencrypt
-    - ./docker/nginx/certbot:/var/www/certbot
+
   backend:
     build:
-      context: .
-      dockerfile: backend/Dockerfile.prod
-    command: /app/entrypoint.prod.sh
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    image: crm-backend:prod
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DJANGO_DEBUG: ${DJANGO_DEBUG}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS}
+      CORS_ALLOW_ALL: ${CORS_ALLOW_ALL}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
+      DJANGO_SECURE_SSL_REDIRECT: ${DJANGO_SECURE_SSL_REDIRECT}
+      DJANGO_SESSION_COOKIE_SECURE: ${DJANGO_SESSION_COOKIE_SECURE}
+      DJANGO_CSRF_COOKIE_SECURE: ${DJANGO_CSRF_COOKIE_SECURE}
+      DJANGO_SECURE_HSTS_SECONDS: ${DJANGO_SECURE_HSTS_SECONDS}
+      DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS: ${DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS}
+      DJANGO_SECURE_HSTS_PRELOAD: ${DJANGO_SECURE_HSTS_PRELOAD}
+      TIME_ZONE: ${TIME_ZONE}
+      TZ: ${TZ}
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
+      - ./backend/secrets:/app/secrets:ro
     expose:
       - "8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/health/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  ai-memory-worker:
+    image: crm-backend:prod
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - media_volume:/app/media
+      - ./backend/secrets:/app/secrets:ro
+    command: >
+      sh -c "python manage.py refresh_crm_memory --force --interval $${CRM_AI_MEMORY_REFRESH_INTERVAL_SECONDS:-120}"
 
   nginx:
     build:
       context: .
       dockerfile: docker/nginx/Dockerfile
+      args:
+        VITE_API_BASE: ${VITE_API_BASE}
+        VITE_ASSISTANT_LIVE: ${VITE_ASSISTANT_LIVE}
+        VITE_ASSISTANT_CLIENT_SILENCE_MS: ${VITE_ASSISTANT_CLIENT_SILENCE_MS}
+        VITE_ASSISTANT_LIVE_RESPONSE_WATCHDOG_MS: ${VITE_ASSISTANT_LIVE_RESPONSE_WATCHDOG_MS}
+        VITE_ASSISTANT_LIVE_MAX_UTTERANCE_MS: ${VITE_ASSISTANT_LIVE_MAX_UTTERANCE_MS}
+        VITE_ASSISTANT_LIVE_REFRESH_AFTER_TURN: ${VITE_ASSISTANT_LIVE_REFRESH_AFTER_TURN}
+        VITE_ASSISTANT_STABLE_SILENCE_MS: ${VITE_ASSISTANT_STABLE_SILENCE_MS}
+        VITE_ASSISTANT_STABLE_MAX_UTTERANCE_MS: ${VITE_ASSISTANT_STABLE_MAX_UTTERANCE_MS}
+        VITE_ASSISTANT_TTS_MAX_MS: ${VITE_ASSISTANT_TTS_MAX_MS}
+        VITE_ASSISTANT_TEXT_TIMEOUT_MS: ${VITE_ASSISTANT_TEXT_TIMEOUT_MS}
+        VITE_ASSISTANT_PENDING_WATCHDOG_MS: ${VITE_ASSISTANT_PENDING_WATCHDOG_MS}
     restart: unless-stopped
     depends_on:
-      - backend
-    ports:
-      - "80:80"
+      backend:
+        condition: service_healthy
+    expose:
+      - "80"
     volumes:
       - static_volume:/var/www/static
       - media_volume:/var/www/media
-      - certbot_etc:/etc/letsencrypt
-      - certbot_var:/var/lib/letsencrypt
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
 
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      nginx:
+        condition: service_healthy
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
 
 volumes:
   pgdata:
   static_volume:
   media_volume:
-  certbot_etc:
-  certbot_var:
+  caddy_data:
+  caddy_config:

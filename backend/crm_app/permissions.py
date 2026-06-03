@@ -7,3 +7,15 @@ class IsAdmin(BasePermission):
 class IsAuthenticatedAny(BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated
+
+
+class HasActiveSubscription(BasePermission):
+    message = "Подписка не активна. Откройте раздел оплаты и продлите доступ к CRM."
+
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+
+        from .subscription import is_subscription_active
+
+        return is_subscription_active()

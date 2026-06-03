@@ -1,9 +1,27 @@
 from django.contrib import admin
-from .models import User, Project, Payment, Commission, Payout, AuditLog
+
+from .models import (
+    Account,
+    AuditLog,
+    CRMMemorySnapshot,
+    DocumentTemplate,
+    FinanceCategory,
+    Payment,
+    Project,
+    ProjectCustomField,
+    ProjectStatus,
+    Task,
+    User,
+)
 
 admin.site.register(User)
+admin.site.register(ProjectStatus)
 admin.site.register(Project)
 admin.site.register(Payment)
-admin.site.register(Commission)
-admin.site.register(Payout)
+admin.site.register(Task)
+admin.site.register(FinanceCategory)
+admin.site.register(Account)
+admin.site.register(ProjectCustomField)
+admin.site.register(DocumentTemplate)
+admin.site.register(CRMMemorySnapshot)
 admin.site.register(AuditLog)

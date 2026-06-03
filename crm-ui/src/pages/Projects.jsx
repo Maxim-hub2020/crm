@@ -1,299 +1,1483 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { Card, CardHeader, CardBody, Button, Input, Modal, Select, Badge } from "../components/ui";
-import { createProject, fetchProjects, createPayment, fetchPayments } from "../api";
+import React, { useDeferredValue, useEffect, useMemo, useState } from "react";
+import {
+  BadgeRussianRuble,
+  CreditCard,
+  FileText,
+  LayoutGrid,
+  List,
+  MapPin,
+  MessageSquare,
+  Phone,
+  Plus,
+  Search,
+  Trash2,
+  Wallet,
+} from "lucide-react";
+import { useLocation } from "react-router-dom";
 
-const CAT_OPTIONS = [
+import {
+  createPayment,
+  createProject,
+  createProjectComment,
+  deletePayment,
+  deleteProject,
+  deleteProjectComment,
+  downloadProjectDocument,
+  extractApiErrorMessage,
+  fetchPayments,
+  fetchProjectComments,
+  fetchProjects,
+  fetchProjectStatuses,
+  updateProject,
+} from "../api";
+import {
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  Input,
+  Label,
+  Modal,
+  Select,
+} from "../components/ui.jsx";
+
+const VIEW_MODE_KEY = "crm_projects_view_mode";
+
+const CATEGORY_OPTIONS = [
   { value: "mirrors", label: "Зеркала" },
   { value: "furniture", label: "Мебель" },
   { value: "shower", label: "Душевые" },
 ];
 
-function categoriesToBadges(csv) {
-  const set = new Set((csv || "").split(",").map((s) => s.trim()).filter(Boolean));
-  return CAT_OPTIONS.filter((x) => set.has(x.value)).map((x) => x.label);
+const DEFAULT_STATUS_OPTIONS = [
+  { value: "active", label: "В работе", short: "Работа", color: "sky", is_default: true },
+  { value: "closed", label: "Завершено", short: "Готово", color: "emerald", is_default: false },
+  { value: "canceled", label: "Отменено", short: "Стоп", color: "rose", is_default: false },
+];
+
+const PAYMENT_TYPE_OPTIONS = [
+  { value: "advance", label: "Аванс" },
+  { value: "additional", label: "Доплата" },
+  { value: "refund", label: "Возврат" },
+  { value: "correction", label: "Корректировка" },
+];
+
+const PAYMENT_METHOD_OPTIONS = [
+  { value: "transfer", label: "Перевод" },
+  { value: "cash", label: "Наличные" },
+  { value: "card", label: "Карта" },
+  { value: "other", label: "Другое" },
+];
+
+const moneyFormatter = new Intl.NumberFormat("ru-RU", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
+function normalizeStatusOption(status) {
+  return {
+    value: status.code ?? status.value,
+    label: status.name ?? status.label,
+    short: status.short_name || status.short || status.name || status.label,
+    color: status.color || "sky",
+    is_default: Boolean(status.is_default),
+  };
 }
 
-export default function Projects() {
-  const [projects, setProjects] = useState([]);
-  const [payments, setPayments] = useState([]);
-  const [q, setQ] = useState("");
-
-  const [openCreate, setOpenCreate] = useState(false);
-  const [openPay, setOpenPay] = useState(false);
-  const [activeProject, setActiveProject] = useState(null);
-
-  const [form, setForm] = useState({
+function createEmptyProjectForm(status = "active") {
+  return {
     client_name: "",
     client_phone: "",
     client_email: "",
     object_address: "",
     description: "",
     categories: "mirrors",
-  });
+    total_amount: "",
+    works_with_contract: false,
+    status,
+  };
+}
 
-  const [payForm, setPayForm] = useState({
+function createEmptyPaymentForm() {
+  return {
+    type: "advance",
     amount: "",
     method: "transfer",
     comment: "",
     paid_at: "",
-  });
+  };
+}
 
-  async function reload() {
-    const p = await fetchProjects();
-    setProjects(p);
-    const pay = await fetchPayments();
-    setPayments(pay);
+function normalizeProjectForm(project, fallbackStatus = "active") {
+  return {
+    client_name: project?.client_name || "",
+    client_phone: project?.client_phone || "",
+    client_email: project?.client_email || "",
+    object_address: project?.object_address || "",
+    description: project?.description || "",
+    categories: project?.categories || "mirrors",
+    total_amount: project?.total_amount ? String(project.total_amount) : "",
+    works_with_contract: Boolean(project?.works_with_contract),
+    status: project?.status || fallbackStatus,
+  };
+}
+
+function labelFor(options, value) {
+  return options.find((option) => option.value === value)?.label || value;
+}
+
+function categoryBadges(csv) {
+  const selected = new Set(
+    (csv || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+  );
+
+  return CATEGORY_OPTIONS.filter((item) => selected.has(item.value)).map((item) => item.label);
+}
+
+function formatMoney(value) {
+  return moneyFormatter.format(Number(value || 0));
+}
+
+function formatDateTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDate(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("ru-RU");
+}
+
+function sanitizeFileName(value) {
+  return String(value || "client")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .slice(0, 80);
+}
+
+function filenameFromDisposition(headers, fallback) {
+  const disposition = headers?.["content-disposition"] || headers?.["Content-Disposition"] || "";
+  const encodedMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (encodedMatch?.[1]) {
+    try {
+      return decodeURIComponent(encodedMatch[1]);
+    } catch {
+      return fallback;
+    }
+  }
+
+  const quotedMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return quotedMatch?.[1] || fallback;
+}
+
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function daysInWork(value) {
+  if (!value) return 0;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 0;
+  return Math.max(0, Math.ceil((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24)));
+}
+
+function projectAmount(project, paymentsByProject) {
+  const plannedAmount = Number(project?.total_amount || 0);
+  if (plannedAmount > 0) return plannedAmount;
+
+  const rows = paymentsByProject.get(project.id) || [];
+  return rows.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+}
+
+function ageBadgeClass(days) {
+  if (days >= 8) return "bg-red-50 text-red-600";
+  if (days >= 4) return "bg-amber-50 text-amber-600";
+  return "bg-slate-100 text-slate-500";
+}
+
+function statusBadgeClass(colorOrStatus) {
+  if (colorOrStatus === "emerald" || colorOrStatus === "closed") return "bg-emerald-100 text-emerald-700";
+  if (colorOrStatus === "rose" || colorOrStatus === "canceled") return "bg-rose-100 text-rose-700";
+  if (colorOrStatus === "amber") return "bg-amber-100 text-amber-700";
+  if (colorOrStatus === "violet") return "bg-violet-100 text-violet-700";
+  if (colorOrStatus === "slate") return "bg-slate-100 text-slate-700";
+  return "bg-sky-100 text-sky-700";
+}
+
+function ModeButton({ active, icon: Icon, label, onClick }) {
+  return (
+    <Button
+      type="button"
+      variant={active ? "primary" : "secondary"}
+      className="px-4"
+      onClick={onClick}
+    >
+      <Icon size={16} />
+      {label}
+    </Button>
+  );
+}
+
+function EmptyColumn({ onCreate }) {
+  return (
+    <button
+      type="button"
+      onClick={onCreate}
+      className="flex min-h-[108px] w-full items-center justify-center rounded-[22px] border border-dashed border-slate-200 bg-white/75 text-sm font-semibold text-slate-400 transition hover:border-slate-300 hover:bg-white hover:text-slate-700"
+    >
+      Добавить первый проект
+    </button>
+  );
+}
+
+function ColumnHeader({ status, count, totalAmount }) {
+  return (
+    <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-5">
+      <div className="flex items-center gap-3">
+        <div className="text-[1.05rem] font-black tracking-tight text-slate-800">{status.label}</div>
+        <span className="inline-flex min-w-8 items-center justify-center rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-400">
+          {count}
+        </span>
+      </div>
+      <div className="pt-0.5 text-right text-[1.05rem] font-black tracking-tight text-slate-600">
+        {formatMoney(totalAmount)} ₽
+      </div>
+    </div>
+  );
+}
+
+function ProjectKanbanCard({ project, amount, ageDays, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full rounded-[22px] border border-slate-200/90 bg-white px-4 py-4 text-left shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_14px_32px_rgba(15,23,42,0.08)]"
+    >
+      <div className="line-clamp-2 text-[1.02rem] font-black leading-6 tracking-tight text-slate-800">
+        {project.client_name}
+      </div>
+      <div className="mt-1.5 text-sm text-slate-500">{project.client_phone || "Клиент не назначен"}</div>
+      <div className="mt-4 flex items-end justify-between gap-3">
+        <div className="text-[1.05rem] font-black tracking-tight text-blue-600">{formatMoney(amount)} ₽</div>
+        <span className={`rounded-full px-3 py-1 text-sm font-semibold ${ageBadgeClass(ageDays)}`}>
+          {ageDays || 0} дн.
+        </span>
+      </div>
+    </button>
+  );
+}
+
+export default function Projects() {
+  const location = useLocation();
+
+  const [projects, setProjects] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [statusRows, setStatusRows] = useState(DEFAULT_STATUS_OPTIONS);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState(location.state?.q || "");
+  const deferredQuery = useDeferredValue(query);
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem(VIEW_MODE_KEY) || "kanban");
+  const [dragProjectId, setDragProjectId] = useState(null);
+
+  const [openCreate, setOpenCreate] = useState(false);
+  const [createForm, setCreateForm] = useState(createEmptyProjectForm());
+  const [createSaving, setCreateSaving] = useState(false);
+  const [createError, setCreateError] = useState("");
+
+  const [activeProjectId, setActiveProjectId] = useState(null);
+  const [detailForm, setDetailForm] = useState(createEmptyProjectForm());
+  const [detailTab, setDetailTab] = useState("comments");
+  const [detailSaving, setDetailSaving] = useState(false);
+  const [documentLoading, setDocumentLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
+
+  const [comments, setComments] = useState([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [commentSaving, setCommentSaving] = useState(false);
+  const [commentError, setCommentError] = useState("");
+
+  const [paymentForm, setPaymentForm] = useState(createEmptyPaymentForm());
+  const [paymentSaving, setPaymentSaving] = useState(false);
+  const [paymentError, setPaymentError] = useState("");
+
+  const [confirmState, setConfirmState] = useState(null);
+  const [confirmDeleting, setConfirmDeleting] = useState(false);
+
+  const statusOptions = useMemo(() => {
+    const source = statusRows.length > 0 ? statusRows : DEFAULT_STATUS_OPTIONS;
+    return source.map(normalizeStatusOption);
+  }, [statusRows]);
+
+  const defaultStatusValue = useMemo(() => {
+    return statusOptions.find((status) => status.is_default)?.value || statusOptions[0]?.value || "active";
+  }, [statusOptions]);
+
+  const statusMap = useMemo(() => {
+    return new Map(statusOptions.map((status) => [status.value, status]));
+  }, [statusOptions]);
+
+  async function reloadData({ silent = false } = {}) {
+    if (!silent) {
+      setLoading(true);
+    }
+
+    try {
+      const [projectRows, paymentRows, statusItems] = await Promise.all([
+        fetchProjects(),
+        fetchPayments(),
+        fetchProjectStatuses(),
+      ]);
+
+      setProjects(projectRows);
+      setPayments(paymentRows);
+      setStatusRows(statusItems.length > 0 ? statusItems : DEFAULT_STATUS_OPTIONS);
+    } finally {
+      if (!silent) {
+        setLoading(false);
+      }
+    }
+  }
+
+  async function reloadComments(projectId) {
+    if (!projectId) {
+      setComments([]);
+      return;
+    }
+
+    setCommentsLoading(true);
+    try {
+      const rows = await fetchProjectComments(projectId);
+      setComments(rows);
+    } catch {
+      setComments([]);
+    } finally {
+      setCommentsLoading(false);
+    }
   }
 
   useEffect(() => {
-    reload().catch(() => {});
+    reloadData().catch(() => {
+      setProjects([]);
+      setPayments([]);
+      setStatusRows(DEFAULT_STATUS_OPTIONS);
+      setLoading(false);
+    });
   }, []);
 
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return projects;
-    return projects.filter((p) =>
-      [p.client_name, p.client_phone, p.object_address].some((x) => (x || "").toLowerCase().includes(s))
+  useEffect(() => {
+    localStorage.setItem(VIEW_MODE_KEY, viewMode);
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (location.state?.q) {
+      setQuery(location.state.q);
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
+
+  useEffect(() => {
+    if (!openCreate) {
+      setCreateForm((prev) => ({
+        ...prev,
+        status: prev.status || defaultStatusValue,
+      }));
+    }
+  }, [defaultStatusValue, openCreate]);
+
+  const paymentsByProject = useMemo(() => {
+    const map = new Map();
+
+    for (const payment of payments) {
+      if (!map.has(payment.project)) {
+        map.set(payment.project, []);
+      }
+      map.get(payment.project).push(payment);
+    }
+
+    for (const rows of map.values()) {
+      rows.sort((left, right) => (right.paid_at || "").localeCompare(left.paid_at || ""));
+    }
+
+    return map;
+  }, [payments]);
+
+  const filteredProjects = useMemo(() => {
+    const value = deferredQuery.trim().toLowerCase();
+    if (!value) return projects;
+
+    return projects.filter((project) =>
+      [project.client_name, project.client_phone, project.object_address, project.description]
+        .filter(Boolean)
+        .some((field) => field.toLowerCase().includes(value))
     );
-  }, [projects, q]);
+  }, [deferredQuery, projects]);
 
-  function openAddAdvance(p) {
-    setActiveProject(p);
-    setPayForm({ amount: "", method: "transfer", comment: "", paid_at: "" });
-    setOpenPay(true);
+  const groupedProjects = useMemo(() => {
+    const groups = Object.fromEntries(statusOptions.map((status) => [status.value, []]));
+
+    for (const project of filteredProjects) {
+      const statusValue = groups[project.status] ? project.status : defaultStatusValue;
+      if (!groups[statusValue]) {
+        groups[statusValue] = [];
+      }
+      groups[statusValue].push(project);
+    }
+
+    return groups;
+  }, [defaultStatusValue, filteredProjects, statusOptions]);
+
+  const activeProject = useMemo(
+    () => projects.find((project) => project.id === activeProjectId) || null,
+    [activeProjectId, projects]
+  );
+
+  const activeProjectPayments = useMemo(() => {
+    if (!activeProjectId) return [];
+    return paymentsByProject.get(activeProjectId) || [];
+  }, [activeProjectId, paymentsByProject]);
+
+  const activeProjectPaymentTotal = useMemo(
+    () => activeProjectPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
+    [activeProjectPayments]
+  );
+
+  useEffect(() => {
+    if (!activeProject) {
+      return;
+    }
+
+    setDetailForm(normalizeProjectForm(activeProject, defaultStatusValue));
+    setDetailError("");
+  }, [activeProject, defaultStatusValue]);
+
+  useEffect(() => {
+    if (!activeProjectId) {
+      setComments([]);
+      setCommentText("");
+      setCommentError("");
+      setPaymentForm(createEmptyPaymentForm());
+      setPaymentError("");
+      return;
+    }
+
+    reloadComments(activeProjectId).catch(() => {});
+  }, [activeProjectId]);
+
+  function openCreateModal(status = defaultStatusValue) {
+    setCreateError("");
+    setCreateForm(createEmptyProjectForm(status));
+    setOpenCreate(true);
   }
 
-  async function submitCreate(e) {
-    e.preventDefault();
-    await createProject(form);
+  function closeCreateModal() {
     setOpenCreate(false);
-    setForm({
-      client_name: "",
-      client_phone: "",
-      client_email: "",
-      object_address: "",
-      description: "",
-      categories: "mirrors",
-    });
-    await reload();
+    setCreateError("");
+    setCreateForm(createEmptyProjectForm(defaultStatusValue));
   }
 
-  async function submitAdvance(e) {
-    e.preventDefault();
-    await createPayment({
-      project: activeProject.id,
-      type: "advance",
-      amount: payForm.amount,
-      method: payForm.method,
-      comment: payForm.comment,
-      paid_at: payForm.paid_at || undefined,
-    });
-    setOpenPay(false);
-    await reload();
+  function openProject(project, tab = "comments") {
+    setActiveProjectId(project.id);
+    setDetailTab(tab);
   }
 
-  function projectPayments(projectId) {
-    return payments
-      .filter((x) => x.project === projectId)
-      .sort((a, b) => (b.paid_at || "").localeCompare(a.paid_at || ""));
+  function closeProject() {
+    setActiveProjectId(null);
+    setDetailTab("comments");
+    setDetailError("");
+    setCommentError("");
+    setPaymentError("");
+  }
+
+  async function submitCreate(event) {
+    event.preventDefault();
+    setCreateError("");
+    setCreateSaving(true);
+
+    try {
+      if (!createForm.client_name.trim()) {
+        setCreateError("Укажите клиента или название проекта.");
+        return;
+      }
+
+      const created = await createProject({
+        client_name: createForm.client_name.trim(),
+        client_phone: createForm.client_phone.trim(),
+        client_email: createForm.client_email.trim(),
+        object_address: createForm.object_address.trim(),
+        description: createForm.description.trim(),
+        categories: createForm.categories,
+        status: createForm.status,
+        total_amount: createForm.total_amount.trim() ? createForm.total_amount.trim() : null,
+        works_with_contract: createForm.works_with_contract,
+      });
+
+      setProjects((prev) => [created, ...prev]);
+      closeCreateModal();
+      openProject(created);
+    } catch (error) {
+      setCreateError(extractApiErrorMessage(error, "Не удалось создать проект."));
+    } finally {
+      setCreateSaving(false);
+    }
+  }
+
+  async function submitProjectUpdate() {
+    if (!activeProject) return;
+
+    setDetailError("");
+    setDetailSaving(true);
+
+    try {
+      if (!detailForm.client_name.trim()) {
+        setDetailError("Укажите клиента или название проекта.");
+        return;
+      }
+
+      const updated = await updateProject(activeProject.id, {
+        client_name: detailForm.client_name.trim(),
+        client_phone: detailForm.client_phone.trim(),
+        client_email: detailForm.client_email.trim(),
+        object_address: detailForm.object_address.trim(),
+        description: detailForm.description.trim(),
+        categories: detailForm.categories,
+        status: detailForm.status,
+        total_amount: detailForm.total_amount.trim() ? detailForm.total_amount.trim() : null,
+        works_with_contract: detailForm.works_with_contract,
+      });
+
+      setProjects((prev) => prev.map((project) => (project.id === updated.id ? updated : project)));
+    } catch (error) {
+      setDetailError(extractApiErrorMessage(error, "Не удалось сохранить проект."));
+    } finally {
+      setDetailSaving(false);
+    }
+  }
+
+  async function submitComment(event) {
+    event.preventDefault();
+    if (!activeProject) return;
+
+    setCommentError("");
+    setCommentSaving(true);
+
+    try {
+      if (!commentText.trim()) {
+        setCommentError("Введите комментарий.");
+        return;
+      }
+
+      const created = await createProjectComment({
+        project: activeProject.id,
+        text: commentText.trim(),
+      });
+
+      setComments((prev) => [created, ...prev]);
+      setCommentText("");
+    } catch (error) {
+      setCommentError(extractApiErrorMessage(error, "Не удалось добавить комментарий."));
+    } finally {
+      setCommentSaving(false);
+    }
+  }
+
+  async function handleCommentDelete(commentId) {
+    try {
+      await deleteProjectComment(commentId);
+      setComments((prev) => prev.filter((comment) => comment.id !== commentId));
+    } catch (error) {
+      setCommentError(extractApiErrorMessage(error, "Не удалось удалить комментарий."));
+    }
+  }
+
+  async function submitPayment(event) {
+    event.preventDefault();
+    if (!activeProject) return;
+
+    setPaymentError("");
+    setPaymentSaving(true);
+
+    try {
+      if (!paymentForm.amount.trim()) {
+        setPaymentError("Укажите сумму операции.");
+        return;
+      }
+
+      const created = await createPayment({
+        project: activeProject.id,
+        type: paymentForm.type,
+        amount: paymentForm.amount.trim(),
+        method: paymentForm.method,
+        comment: paymentForm.comment.trim(),
+        paid_at: paymentForm.paid_at || undefined,
+      });
+
+      setPayments((prev) => [created, ...prev]);
+      setPaymentForm(createEmptyPaymentForm());
+    } catch (error) {
+      setPaymentError(extractApiErrorMessage(error, "Не удалось сохранить операцию."));
+    } finally {
+      setPaymentSaving(false);
+    }
+  }
+
+  async function handlePaymentDelete(paymentId) {
+    try {
+      await deletePayment(paymentId);
+      setPayments((prev) => prev.filter((payment) => payment.id !== paymentId));
+    } catch (error) {
+      setPaymentError(extractApiErrorMessage(error, "Не удалось удалить операцию."));
+    }
+  }
+
+  async function handleProjectDelete() {
+    if (!activeProject) return;
+
+    try {
+      await deleteProject(activeProject.id);
+      setProjects((prev) => prev.filter((project) => project.id !== activeProject.id));
+      setPayments((prev) => prev.filter((payment) => payment.project !== activeProject.id));
+      closeProject();
+    } catch (error) {
+      setDetailError(extractApiErrorMessage(error, "Не удалось удалить проект."));
+    }
+  }
+
+  async function handleDocumentDownload(documentType = "contract") {
+    if (!activeProject) return;
+
+    if (documentType === "contract" && !detailForm.works_with_contract) {
+      setDetailError("Сначала включите признак «Работает по договору» и сохраните проект.");
+      return;
+    }
+
+    setDetailError("");
+    setDocumentLoading(true);
+
+    try {
+      const { blob, headers } = await downloadProjectDocument(activeProject.id, documentType);
+      const documentName = documentType === "contract" ? "dogovor" : "akt";
+      const fallback = `${documentName}-${sanitizeFileName(activeProject.client_name)}.pdf`;
+      saveBlob(blob, filenameFromDisposition(headers, fallback));
+    } catch (error) {
+      let message = extractApiErrorMessage(
+        error,
+        "Не удалось сформировать документ. Проверьте, что PDF-шаблон загружен в разделе «Система»."
+      );
+
+      const responseData = error?.response?.data;
+      if (responseData instanceof Blob) {
+        try {
+          const parsed = JSON.parse(await responseData.text());
+          message = parsed.detail || message;
+        } catch {
+          // Blob can be a non-JSON error page; fallback message is clearer for the CRM UI.
+        }
+      }
+
+      setDetailError(message);
+    } finally {
+      setDocumentLoading(false);
+    }
+  }
+
+  function requestDeleteProject() {
+    if (!activeProject) return;
+
+    setConfirmState({
+      kind: "project",
+      title: "Удалить проект",
+      message: `Проект «${activeProject.client_name}» будет удалён вместе с операциями и комментариями.`,
+    });
+  }
+
+  function requestDeletePayment(paymentId) {
+    setConfirmState({
+      kind: "payment",
+      id: paymentId,
+      title: "Удалить операцию",
+      message: "Операция будет удалена из карточки проекта и из общего раздела финансов.",
+    });
+  }
+
+  function requestDeleteComment(commentId) {
+    setConfirmState({
+      kind: "comment",
+      id: commentId,
+      title: "Удалить комментарий",
+      message: "Комментарий исчезнет из ленты проекта.",
+    });
+  }
+
+  async function submitDeleteConfirmation() {
+    if (!confirmState) return;
+
+    setConfirmDeleting(true);
+    try {
+      if (confirmState.kind === "project") {
+        await handleProjectDelete();
+      } else if (confirmState.kind === "payment") {
+        await handlePaymentDelete(confirmState.id);
+      } else if (confirmState.kind === "comment") {
+        await handleCommentDelete(confirmState.id);
+      }
+
+      setConfirmState(null);
+    } finally {
+      setConfirmDeleting(false);
+    }
+  }
+
+  async function moveProjectToStatus(projectId, nextStatus) {
+    const target = projects.find((project) => project.id === projectId);
+    if (!target || target.status === nextStatus) return;
+
+    const previousStatus = target.status;
+    setProjects((prev) =>
+      prev.map((project) => (project.id === projectId ? { ...project, status: nextStatus } : project))
+    );
+
+    try {
+      const updated = await updateProject(projectId, { status: nextStatus });
+      setProjects((prev) => prev.map((project) => (project.id === projectId ? updated : project)));
+
+      if (activeProjectId === projectId) {
+        setDetailForm((prev) => ({ ...prev, status: nextStatus }));
+      }
+    } catch (error) {
+      setProjects((prev) =>
+        prev.map((project) => (project.id === projectId ? { ...project, status: previousStatus } : project))
+      );
+      window.alert(extractApiErrorMessage(error, "Не удалось обновить статус проекта."));
+    }
+  }
+
+  function handleDrop(status) {
+    if (!dragProjectId) return;
+    moveProjectToStatus(dragProjectId, status).catch(() => {});
+    setDragProjectId(null);
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <div className="text-sm text-zinc-500">Проекты</div>
-          <div className="text-2xl font-semibold">Список проектов</div>
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div className="relative w-full max-w-[420px]">
+          <Search
+            size={21}
+            className="pointer-events-none absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"
+          />
+          <Input
+            className="h-14 rounded-[20px] border-slate-200/90 bg-white pl-14 pr-4 text-[1.02rem] shadow-[0_12px_28px_rgba(15,23,42,0.05)]"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Поиск проектов..."
+          />
         </div>
-        <div className="flex w-full gap-3 md:w-auto">
-          <div className="w-full md:w-80">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск: телефон, имя, адрес…" />
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 rounded-full bg-white p-1 shadow-sm ring-1 ring-slate-200/80">
+            <ModeButton active={viewMode === "kanban"} icon={LayoutGrid} label="Канбан" onClick={() => setViewMode("kanban")} />
+            <ModeButton active={viewMode === "list"} icon={List} label="Список" onClick={() => setViewMode("list")} />
           </div>
-          <Button onClick={() => setOpenCreate(true)}>+ Новый проект</Button>
+
+          <Button type="button" className="px-6" onClick={() => openCreateModal()}>
+            <Plus size={16} />
+            Создать проект
+          </Button>
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="font-semibold">Проекты</div>
-          <div className="text-sm text-zinc-500">Добавьте аванс — комиссия начислится автоматически</div>
-        </CardHeader>
-        <CardBody>
-          <div className="space-y-3">
-            {filtered.map((p) => {
-              const badges = categoriesToBadges(p.categories);
-              const pays = projectPayments(p.id);
-              const lastPay = pays[0];
+      {loading ? (
+        <Card>
+          <CardBody className="p-12 text-center text-sm text-slate-500">Загружаем проекты и операции...</CardBody>
+        </Card>
+      ) : viewMode === "kanban" ? (
+        <div className="overflow-x-auto pb-3">
+          <div className="grid min-w-max grid-flow-col auto-cols-[minmax(328px,396px)] gap-5">
+          {statusOptions.map((status) => {
+            const columnProjects = groupedProjects[status.value] || [];
+            const columnTotal = columnProjects.reduce((sum, project) => {
+              return sum + projectAmount(project, paymentsByProject);
+            }, 0);
 
-              return (
-                <div key={p.id} className="rounded-2xl border border-zinc-200 bg-white p-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                    <div className="space-y-1">
-                      <div className="text-base font-semibold">{p.client_name}</div>
-                      <div className="text-sm text-zinc-600">{p.client_phone}</div>
-                      {p.object_address && <div className="text-sm text-zinc-500">{p.object_address}</div>}
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {badges.map((b) => (
-                          <Badge key={b}>{b}</Badge>
-                        ))}
-                        <Badge>{p.status}</Badge>
+            return (
+              <div
+                key={status.value}
+                className="flex min-h-[602px] flex-col overflow-hidden rounded-[28px] border border-slate-200/90 bg-white shadow-[0_14px_36px_rgba(15,23,42,0.05)]"
+              >
+                <ColumnHeader status={status} count={columnProjects.length} totalAmount={columnTotal} />
+
+                <div
+                  className="flex min-h-[468px] flex-1 flex-col gap-3 bg-[#fbfcff] px-3 py-3"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={() => handleDrop(status.value)}
+                >
+                  <div className="space-y-3">
+                    {columnProjects.map((project) => {
+                      const amount = projectAmount(project, paymentsByProject);
+                      const ageDays = daysInWork(project.updated_at || project.created_at);
+
+                      return (
+                        <div
+                          key={project.id}
+                          draggable
+                          onDragStart={() => setDragProjectId(project.id)}
+                          onDragEnd={() => setDragProjectId(null)}
+                        >
+                          <ProjectKanbanCard
+                            project={project}
+                            amount={amount}
+                            ageDays={ageDays}
+                            onClick={() => openProject(project)}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {columnProjects.length === 0 && <EmptyColumn onCreate={() => openCreateModal(status.value)} />}
+                </div>
+
+                <div className="border-t border-slate-100 px-5 py-4">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-[0.98rem] font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-slate-800"
+                    onClick={() => openCreateModal(status.value)}
+                  >
+                    <Plus size={18} />
+                    Добавить проект
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {filteredProjects.map((project) => {
+            const rows = paymentsByProject.get(project.id) || [];
+            const total = rows.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+            const latestPayment = rows[0];
+            const statusMeta = statusMap.get(project.status);
+
+            return (
+              <Card key={project.id}>
+                <CardBody className="p-6 sm:p-8">
+                  <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="text-2xl font-black tracking-tight text-slate-900">{project.client_name}</div>
+                        <Badge className={statusBadgeClass(statusMeta?.color || project.status)}>
+                          {labelFor(statusOptions, project.status)}
+                        </Badge>
                       </div>
+
+                      <div className="grid gap-3 text-sm text-slate-500 sm:grid-cols-2">
+                        <div className="flex items-center gap-2">
+                          <Phone size={16} />
+                          {project.client_phone || "Телефон не указан"}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <MapPin size={16} />
+                          {project.object_address || "Адрес не указан"}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {categoryBadges(project.categories).map((item) => (
+                          <Badge key={`${project.id}-${item}`}>{item}</Badge>
+                        ))}
+                      </div>
+
+                      {project.description && <div className="max-w-3xl text-sm leading-6 text-slate-600">{project.description}</div>}
                     </div>
 
-                    <div className="flex flex-col items-start gap-2 md:items-end">
-                      <Button onClick={() => openAddAdvance(p)}>Добавить аванс</Button>
-                      {lastPay && (
-                        <div className="text-xs text-zinc-500">
-                          Последний платёж: {Number(lastPay.amount).toFixed(2)} • {String(lastPay.type)}
-                        </div>
-                      )}
+                    <div className="grid min-w-[280px] gap-3 lg:grid-cols-3 xl:grid-cols-1">
+                      <div className="rounded-[28px] bg-slate-50 px-5 py-4 ring-1 ring-slate-200/70">
+                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Операций</div>
+                        <div className="mt-2 text-2xl font-black text-slate-900">{rows.length}</div>
+                      </div>
+                      <div className="rounded-[28px] bg-slate-50 px-5 py-4 ring-1 ring-slate-200/70">
+                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Сумма</div>
+                        <div className="mt-2 text-2xl font-black text-slate-900">{formatMoney(total)}</div>
+                      </div>
+                      <Button type="button" className="justify-center" onClick={() => openProject(project)}>
+                        <Plus size={16} />
+                        Открыть карточку
+                      </Button>
                     </div>
                   </div>
 
-                  {p.description && <div className="mt-3 text-sm text-zinc-700">{p.description}</div>}
-
-                  {pays.length > 0 && (
-                    <div className="mt-4 overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead className="text-left text-zinc-500">
-                          <tr>
-                            <th className="py-2">Дата</th>
-                            <th className="py-2">Тип</th>
-                            <th className="py-2">Сумма</th>
-                            <th className="py-2">Способ</th>
-                            <th className="py-2">Комментарий</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {pays.map((x) => (
-                            <tr key={x.id} className="border-t border-zinc-100">
-                              <td className="py-2">{(x.paid_at || "").slice(0, 10)}</td>
-                              <td className="py-2">{x.type}</td>
-                              <td className="py-2">{Number(x.amount).toFixed(2)}</td>
-                              <td className="py-2">{x.method}</td>
-                              <td className="py-2">{x.comment}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                  {latestPayment && (
+                    <div className="mt-6 rounded-[28px] bg-slate-900 px-5 py-4 text-sm text-white">
+                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Последняя операция</div>
+                      <div className="mt-3 font-semibold">
+                        {labelFor(PAYMENT_TYPE_OPTIONS, latestPayment.type)} • {formatMoney(latestPayment.amount)} ₽ • {formatDate(latestPayment.paid_at)}
+                      </div>
                     </div>
                   )}
-                </div>
-              );
-            })}
+                </CardBody>
+              </Card>
+            );
+          })}
 
-            {filtered.length === 0 && (
-              <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center text-zinc-500">
-                Проекты не найдены
-              </div>
-            )}
+          {filteredProjects.length === 0 && (
+            <Card>
+              <CardBody className="p-12 text-center">
+                <div className="text-lg font-black tracking-tight text-slate-900">Проекты не найдены</div>
+                <div className="mt-2 text-sm text-slate-500">Измените запрос или создайте новый проект.</div>
+              </CardBody>
+            </Card>
+          )}
+        </div>
+      )}
+
+      <Modal open={openCreate} title="Создать проект" onClose={closeCreateModal}>
+        <form className="space-y-5" onSubmit={submitCreate}>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Клиент / проект</Label>
+              <Input
+                required
+                value={createForm.client_name}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, client_name: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Телефон</Label>
+              <Input
+                value={createForm.client_phone}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, client_phone: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Email</Label>
+              <Input
+                value={createForm.client_email}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, client_email: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Адрес объекта</Label>
+              <Input
+                value={createForm.object_address}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, object_address: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Статус</Label>
+              <Select
+                value={createForm.status}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, status: event.target.value }))}
+              >
+                {statusOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Категория</Label>
+              <Select
+                value={createForm.categories}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, categories: event.target.value }))}
+              >
+                {CATEGORY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Сумма проекта</Label>
+              <Input
+                value={createForm.total_amount}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, total_amount: event.target.value }))}
+                placeholder="Например, 120000"
+              />
+            </div>
+            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 md:col-span-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                checked={createForm.works_with_contract}
+                onChange={(event) =>
+                  setCreateForm((prev) => ({ ...prev, works_with_contract: event.target.checked }))
+                }
+              />
+              <span>
+                <span className="block text-sm font-bold text-slate-800">Работает по договору</span>
+                <span className="text-xs text-slate-500">
+                  Для таких клиентов можно сформировать договор из PDF-шаблона в разделе «Система».
+                </span>
+              </span>
+            </label>
           </div>
-        </CardBody>
-      </Card>
 
-      <Modal open={openCreate} title="Новый проект" onClose={() => setOpenCreate(false)}>
-        <form className="space-y-4" onSubmit={submitCreate}>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <div className="mb-2 text-sm text-zinc-600">Клиент</div>
-              <Input value={form.client_name} onChange={(e) => setForm({ ...form, client_name: e.target.value })} />
-            </div>
-            <div>
-              <div className="mb-2 text-sm text-zinc-600">Телефон</div>
-              <Input value={form.client_phone} onChange={(e) => setForm({ ...form, client_phone: e.target.value })} />
-            </div>
-            <div>
-              <div className="mb-2 text-sm text-zinc-600">Email</div>
-              <Input value={form.client_email} onChange={(e) => setForm({ ...form, client_email: e.target.value })} />
-            </div>
-            <div>
-              <div className="mb-2 text-sm text-zinc-600">Адрес</div>
-              <Input value={form.object_address} onChange={(e) => setForm({ ...form, object_address: e.target.value })} />
-            </div>
-          </div>
-
-          <div>
-            <div className="mb-2 text-sm text-zinc-600">Категория</div>
-            <Select value={form.categories} onChange={(e) => setForm({ ...form, categories: e.target.value })}>
-              {CAT_OPTIONS.map((c) => (
-                <option key={c.value} value={c.value}>
-                  {c.label}
-                </option>
-              ))}
-            </Select>
-            <div className="mt-2 text-xs text-zinc-500">Можно расширить до мультивыбора позже.</div>
-          </div>
-
-          <div>
-            <div className="mb-2 text-sm text-zinc-600">Описание / ТЗ</div>
+          <div className="space-y-2">
+            <Label>Комментарий / описание</Label>
             <textarea
-              className="min-h-24 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-900/20"
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              className="min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+              value={createForm.description}
+              onChange={(event) => setCreateForm((prev) => ({ ...prev, description: event.target.value }))}
             />
           </div>
 
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={() => setOpenCreate(false)}>
+          {createError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{createError}</div>}
+
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="secondary" onClick={closeCreateModal}>
               Отмена
             </Button>
-            <Button type="submit">Создать</Button>
+            <Button type="submit" disabled={createSaving}>
+              {createSaving ? "Создаём..." : "Создать"}
+            </Button>
           </div>
         </form>
       </Modal>
 
-      <Modal open={openPay} title={`Аванс — ${activeProject?.client_name || ""}`} onClose={() => setOpenPay(false)}>
-        <form className="space-y-4" onSubmit={submitAdvance}>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <div className="mb-2 text-sm text-zinc-600">Сумма аванса</div>
-              <Input
-                value={payForm.amount}
-                onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })}
-                placeholder="Напр. 25000"
-              />
+      <Modal
+        open={Boolean(activeProject)}
+        title={activeProject ? `Карточка проекта — ${activeProject.client_name}` : "Карточка проекта"}
+        onClose={closeProject}
+        widthClassName="max-w-6xl"
+        bodyClassName="max-h-[82vh] overflow-y-auto"
+      >
+        {activeProject && (
+          <div className="space-y-6">
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_360px]">
+              <div className="space-y-5">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Клиент / проект</Label>
+                    <Input
+                      value={detailForm.client_name}
+                      onChange={(event) => setDetailForm((prev) => ({ ...prev, client_name: event.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Телефон</Label>
+                    <Input
+                      value={detailForm.client_phone}
+                      onChange={(event) => setDetailForm((prev) => ({ ...prev, client_phone: event.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Email</Label>
+                    <Input
+                      value={detailForm.client_email}
+                      onChange={(event) => setDetailForm((prev) => ({ ...prev, client_email: event.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Адрес объекта</Label>
+                    <Input
+                      value={detailForm.object_address}
+                      onChange={(event) => setDetailForm((prev) => ({ ...prev, object_address: event.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Статус</Label>
+                    <Select
+                      value={detailForm.status}
+                      onChange={(event) => setDetailForm((prev) => ({ ...prev, status: event.target.value }))}
+                    >
+                      {statusOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Категория</Label>
+                    <Select
+                      value={detailForm.categories}
+                      onChange={(event) => setDetailForm((prev) => ({ ...prev, categories: event.target.value }))}
+                    >
+                      {CATEGORY_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>Сумма проекта</Label>
+                    <Input
+                      value={detailForm.total_amount}
+                      onChange={(event) => setDetailForm((prev) => ({ ...prev, total_amount: event.target.value }))}
+                      placeholder="Например, 120000"
+                    />
+                  </div>
+                  <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 md:col-span-2">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                      checked={detailForm.works_with_contract}
+                      onChange={(event) =>
+                        setDetailForm((prev) => ({ ...prev, works_with_contract: event.target.checked }))
+                      }
+                    />
+                    <span>
+                      <span className="block text-sm font-bold text-slate-800">Работает по договору</span>
+                      <span className="text-xs text-slate-500">
+                        После сохранения можно сформировать договор по загруженному PDF-шаблону.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Описание</Label>
+                  <textarea
+                    className="min-h-32 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+                    value={detailForm.description}
+                    onChange={(event) => setDetailForm((prev) => ({ ...prev, description: event.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-[28px] bg-slate-900 px-5 py-5 text-white">
+                  <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-300">Проект</div>
+                  <div className="mt-3 text-2xl font-black">{activeProject.client_name}</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Badge className="bg-white/15 text-white">{labelFor(statusOptions, detailForm.status)}</Badge>
+                    {categoryBadges(detailForm.categories).map((item) => (
+                      <Badge key={`modal-${item}`} className="bg-white/15 text-white">
+                        {item}
+                      </Badge>
+                    ))}
+                    {detailForm.works_with_contract && <Badge className="bg-white/15 text-white">Договор</Badge>}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                  <div className="rounded-[28px] bg-slate-50 px-5 py-4 ring-1 ring-slate-200/70">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Операций</div>
+                        <div className="mt-2 text-2xl font-black text-slate-900">{activeProjectPayments.length}</div>
+                      </div>
+                      <CreditCard size={18} className="text-slate-400" />
+                    </div>
+                  </div>
+
+                  <div className="rounded-[28px] bg-slate-50 px-5 py-4 ring-1 ring-slate-200/70">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Финансы</div>
+                        <div className="mt-2 text-2xl font-black text-slate-900">{formatMoney(activeProjectPaymentTotal)}</div>
+                      </div>
+                      <BadgeRussianRuble size={18} className="text-slate-400" />
+                    </div>
+                  </div>
+
+                  <div className="rounded-[28px] bg-slate-50 px-5 py-4 ring-1 ring-slate-200/70">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Комментариев</div>
+                        <div className="mt-2 text-2xl font-black text-slate-900">{comments.length}</div>
+                      </div>
+                      <MessageSquare size={18} className="text-slate-400" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {detailForm.works_with_contract ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="w-full justify-center"
+                      onClick={() => handleDocumentDownload("contract")}
+                      disabled={documentLoading}
+                    >
+                      <FileText size={16} />
+                      {documentLoading ? "Формируем..." : "Сформировать договор"}
+                    </Button>
+                  ) : null}
+                  <Button type="button" className="w-full justify-center" onClick={submitProjectUpdate} disabled={detailSaving}>
+                    {detailSaving ? "Сохраняем..." : "Сохранить изменения"}
+                  </Button>
+                  <Button type="button" variant="danger" className="w-full justify-center" onClick={requestDeleteProject}>
+                    <Trash2 size={16} />
+                    Удалить проект
+                  </Button>
+                </div>
+              </div>
             </div>
-            <div>
-              <div className="mb-2 text-sm text-zinc-600">Способ оплаты</div>
-              <Select value={payForm.method} onChange={(e) => setPayForm({ ...payForm, method: e.target.value })}>
-                <option value="transfer">Перевод</option>
-                <option value="cash">Наличные</option>
-                <option value="card">Карта</option>
-                <option value="other">Другое</option>
-              </Select>
+
+            {detailError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{detailError}</div>}
+
+            <div className="flex flex-wrap gap-2 rounded-[28px] bg-slate-100 p-1">
+              <Button
+                type="button"
+                variant={detailTab === "comments" ? "primary" : "ghost"}
+                className="px-4"
+                onClick={() => setDetailTab("comments")}
+              >
+                <MessageSquare size={16} />
+                Комментарии
+              </Button>
+              <Button
+                type="button"
+                variant={detailTab === "finances" ? "primary" : "ghost"}
+                className="px-4"
+                onClick={() => setDetailTab("finances")}
+              >
+                <Wallet size={16} />
+                Финансы
+              </Button>
             </div>
+
+            {detailTab === "comments" ? (
+              <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_380px]">
+                <Card className="border border-slate-100 shadow-none ring-0">
+                  <CardHeader>
+                    <div className="text-lg font-black tracking-tight text-slate-900">Лента комментариев</div>
+                    <div className="mt-1 text-sm text-slate-500">Все заметки по проекту в одном месте.</div>
+                  </CardHeader>
+                  <CardBody className="space-y-4">
+                    {commentsLoading ? (
+                      <div className="rounded-[24px] bg-slate-50 px-4 py-6 text-sm text-slate-500">Загружаем комментарии...</div>
+                    ) : comments.length === 0 ? (
+                      <div className="rounded-[24px] bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                        Пока нет комментариев. Добавьте первый комментарий справа.
+                      </div>
+                    ) : (
+                      comments.map((comment) => (
+                        <div key={comment.id} className="rounded-[24px] border border-slate-100 bg-slate-50 px-4 py-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <div className="text-sm font-black text-slate-900">{comment.author_name || `Пользователь #${comment.author}`}</div>
+                              <div className="mt-1 text-xs text-slate-400">{formatDateTime(comment.created_at)}</div>
+                            </div>
+                            <button
+                              type="button"
+                              className="rounded-full p-2 text-slate-400 transition hover:bg-white hover:text-red-600"
+                              onClick={() => requestDeleteComment(comment.id)}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                          <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{comment.text}</div>
+                        </div>
+                      ))
+                    )}
+                  </CardBody>
+                </Card>
+
+                <Card className="border border-slate-100 shadow-none ring-0">
+                  <CardHeader>
+                    <div className="text-lg font-black tracking-tight text-slate-900">Новый комментарий</div>
+                  </CardHeader>
+                  <CardBody>
+                    <form className="space-y-4" onSubmit={submitComment}>
+                      <div className="space-y-2">
+                        <Label>Текст комментария</Label>
+                        <textarea
+                          className="min-h-40 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+                          value={commentText}
+                          onChange={(event) => setCommentText(event.target.value)}
+                          placeholder="Например: согласовали замер на пятницу, ждём предоплату..."
+                        />
+                      </div>
+
+                      {commentError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{commentError}</div>}
+
+                      <Button type="submit" disabled={commentSaving}>
+                        {commentSaving ? "Сохраняем..." : "Добавить комментарий"}
+                      </Button>
+                    </form>
+                  </CardBody>
+                </Card>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-3">
+                  <StatCard icon={CreditCard} label="Операций" value={activeProjectPayments.length} dark />
+                  <StatCard icon={Wallet} label="Сумма" value={formatMoney(activeProjectPaymentTotal)} />
+                  <StatCard
+                    icon={BadgeRussianRuble}
+                    label="Проект"
+                    value={detailForm.total_amount ? formatMoney(detailForm.total_amount) : "—"}
+                  />
+                </div>
+
+                <Card className="border border-slate-100 shadow-none ring-0">
+                  <CardHeader>
+                    <div className="text-lg font-black tracking-tight text-slate-900">Добавить операцию</div>
+                    <div className="mt-1 text-sm text-slate-500">Операция сразу появится в карточке проекта и в разделе финансов.</div>
+                  </CardHeader>
+                  <CardBody>
+                    <form className="space-y-4" onSubmit={submitPayment}>
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                        <div className="space-y-2">
+                          <Label>Тип</Label>
+                          <Select
+                            value={paymentForm.type}
+                            onChange={(event) => setPaymentForm((prev) => ({ ...prev, type: event.target.value }))}
+                          >
+                            {PAYMENT_TYPE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Сумма</Label>
+                          <Input
+                            value={paymentForm.amount}
+                            onChange={(event) => setPaymentForm((prev) => ({ ...prev, amount: event.target.value }))}
+                            placeholder="25000"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Способ оплаты</Label>
+                          <Select
+                            value={paymentForm.method}
+                            onChange={(event) => setPaymentForm((prev) => ({ ...prev, method: event.target.value }))}
+                          >
+                            {PAYMENT_METHOD_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Дата</Label>
+                          <Input
+                            type="datetime-local"
+                            value={paymentForm.paid_at}
+                            onChange={(event) => setPaymentForm((prev) => ({ ...prev, paid_at: event.target.value }))}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Комментарий к операции</Label>
+                        <Input
+                          value={paymentForm.comment}
+                          onChange={(event) => setPaymentForm((prev) => ({ ...prev, comment: event.target.value }))}
+                          placeholder="Например: предоплата по замеру"
+                        />
+                      </div>
+
+                      {paymentError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{paymentError}</div>}
+
+                      <Button type="submit" disabled={paymentSaving}>
+                        {paymentSaving ? "Сохраняем..." : "Добавить операцию"}
+                      </Button>
+                    </form>
+                  </CardBody>
+                </Card>
+
+                <Card className="border border-slate-100 shadow-none ring-0">
+                  <CardHeader>
+                    <div className="text-lg font-black tracking-tight text-slate-900">Журнал операций</div>
+                  </CardHeader>
+                  <CardBody>
+                    {activeProjectPayments.length === 0 ? (
+                      <div className="rounded-[24px] bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                        По этому проекту ещё нет операций.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[760px] text-left text-sm">
+                          <thead className="text-slate-400">
+                            <tr>
+                              <th className="pb-3 font-black uppercase tracking-[0.18em]">Дата</th>
+                              <th className="pb-3 font-black uppercase tracking-[0.18em]">Тип</th>
+                              <th className="pb-3 font-black uppercase tracking-[0.18em]">Сумма</th>
+                              <th className="pb-3 font-black uppercase tracking-[0.18em]">Способ</th>
+                              <th className="pb-3 font-black uppercase tracking-[0.18em]">Комментарий</th>
+                              <th className="pb-3 text-right font-black uppercase tracking-[0.18em]">Действие</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {activeProjectPayments.map((payment) => (
+                              <tr key={payment.id} className="border-t border-slate-100">
+                                <td className="py-4 text-slate-500">{formatDateTime(payment.paid_at)}</td>
+                                <td className="py-4">
+                                  <Badge>{labelFor(PAYMENT_TYPE_OPTIONS, payment.type)}</Badge>
+                                </td>
+                                <td className="py-4 font-semibold text-slate-900">{formatMoney(payment.amount)}</td>
+                                <td className="py-4 text-slate-500">{labelFor(PAYMENT_METHOD_OPTIONS, payment.method)}</td>
+                                <td className="py-4 text-slate-500">{payment.comment || "—"}</td>
+                                <td className="py-4 text-right">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    className="px-3 text-red-600 hover:bg-red-50"
+                                    onClick={() => requestDeletePayment(payment.id)}
+                                  >
+                                    <Trash2 size={16} />
+                                    Удалить
+                                  </Button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </CardBody>
+                </Card>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={Boolean(confirmState)}
+        title={confirmState?.title || "Подтвердите действие"}
+        onClose={() => !confirmDeleting && setConfirmState(null)}
+        widthClassName="max-w-xl"
+      >
+        <div className="space-y-5">
+          <div className="rounded-[24px] bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
+            {confirmState?.message}
           </div>
 
-          <div>
-            <div className="mb-2 text-sm text-zinc-600">Дата поступления (опционально)</div>
-            <Input
-              value={payForm.paid_at}
-              onChange={(e) => setPayForm({ ...payForm, paid_at: e.target.value })}
-              placeholder="2026-01-04T12:00:00+02:00"
-            />
-            <div className="mt-2 text-xs text-zinc-500">Если пусто — будет “сейчас”.</div>
-          </div>
-
-          <div>
-            <div className="mb-2 text-sm text-zinc-600">Комментарий</div>
-            <Input
-              value={payForm.comment}
-              onChange={(e) => setPayForm({ ...payForm, comment: e.target.value })}
-              placeholder="Напр. предоплата по договору"
-            />
-          </div>
-
-          <div className="rounded-xl bg-zinc-50 p-3 text-xs text-zinc-600">
-            Комиссия начислится автоматически: 5% (1–3 продажи), с 4-й продажи — 8%.
-          </div>
-
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={() => setOpenPay(false)}>
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="secondary" disabled={confirmDeleting} onClick={() => setConfirmState(null)}>
               Отмена
             </Button>
-            <Button type="submit">Сохранить аванс</Button>
+            <Button type="button" variant="danger" disabled={confirmDeleting} onClick={submitDeleteConfirmation}>
+              {confirmDeleting ? "Удаляем..." : "Удалить"}
+            </Button>
           </div>
-        </form>
+        </div>
       </Modal>
     </div>
   );

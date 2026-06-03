@@ -8,12 +8,16 @@ __pycache__/
 *.egg-info/
 .env
 .env.*
+!.env.example
 venv/
 .venv/
+backend/.venv_test/
+.codex-temp/
 
 # Django
 staticfiles/
 media/
+backend/secrets/
 
 # Node / Vite
 node_modules/
