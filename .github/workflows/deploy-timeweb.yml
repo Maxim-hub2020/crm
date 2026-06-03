@@ -50,9 +50,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
-          printf '%s\n' "$TIMEWEB_SSH_KEY" > ~/.ssh/timeweb_deploy_key
+          printf '%s\n' "$TIMEWEB_SSH_KEY" | tr -d '\r' > ~/.ssh/timeweb_deploy_key
           chmod 600 ~/.ssh/timeweb_deploy_key
-          ssh-keyscan -p "$TIMEWEB_PORT" -H "$TIMEWEB_HOST" >> ~/.ssh/known_hosts
+          ssh-keyscan -T 20 -p "$TIMEWEB_PORT" -H "$TIMEWEB_HOST" >> ~/.ssh/known_hosts || true
 
       - name: Deploy on TimeWeb
         env:
@@ -62,7 +62,11 @@ jobs:
           set -euo pipefail
           ssh -i ~/.ssh/timeweb_deploy_key \
             -p "$TIMEWEB_PORT" \
-            -o StrictHostKeyChecking=yes \
+            -o StrictHostKeyChecking=accept-new \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=3 \
             "$TIMEWEB_USER@$TIMEWEB_HOST" \
             "DEPLOY_BRANCH='$DEPLOY_BRANCH' TIMEWEB_APP_DIR='$TIMEWEB_APP_DIR' bash -s" <<'REMOTE_SCRIPT'
           set -euo pipefail
