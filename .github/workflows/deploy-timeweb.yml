@@ -71,9 +71,7 @@ jobs:
       - name: Prepare server directory
         run: |
           set -euo pipefail
-          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p $DEPLOY_PORT -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
-          echo "Checking TCP access to $DEPLOY_HOST:$DEPLOY_PORT..."
-          timeout 20 bash -c "cat < /dev/null > /dev/tcp/$DEPLOY_HOST/$DEPLOY_PORT" && echo "TCP_OK" || echo "TCP_TIMEOUT"
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p $DEPLOY_PORT -o BatchMode=yes -o PreferredAuthentications=publickey -o KexAlgorithms=curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group14-sha256 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
           for i in 1 2 3 4; do
             echo "SSH attempt $i..."
             if timeout 90 ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_DIR' && test -f '$DEPLOY_DIR/.env' && echo DIR_OK"; then
@@ -88,14 +86,14 @@ jobs:
       - name: Upload release bundle to TimeWeb
         run: |
           set -euo pipefail
-          SCP_OPTS="-4 -i ~/.ssh/timeweb_key -P $DEPLOY_PORT -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          SCP_OPTS="-4 -i ~/.ssh/timeweb_key -P $DEPLOY_PORT -o KexAlgorithms=curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group14-sha256 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
           scp $SCP_OPTS /tmp/crm-files.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:/tmp/crm-files.tar.gz"
           scp $SCP_OPTS /tmp/crm-images.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:/tmp/crm-images.tar.gz"
 
       - name: Install release on TimeWeb
         run: |
           set -euo pipefail
-          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p $DEPLOY_PORT -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p $DEPLOY_PORT -o BatchMode=yes -o PreferredAuthentications=publickey -o KexAlgorithms=curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group14-sha256 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
           ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "
             set -eu
             mkdir -p /tmp/crm-preserve
@@ -118,7 +116,7 @@ jobs:
       - name: Deploy with Docker Compose
         run: |
           set -euo pipefail
-          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p $DEPLOY_PORT -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p $DEPLOY_PORT -o BatchMode=yes -o PreferredAuthentications=publickey -o KexAlgorithms=curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group14-sha256 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
           ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "
             set -eu
             cd '$DEPLOY_DIR'
