@@ -15,82 +15,40 @@ permissions:
 
 env:
   DEPLOY_BRANCH: codex/timeweb-production
-  TIMEWEB_HOST: 194.87.161.144
-  TIMEWEB_PORT: ${{ secrets.TIMEWEB_PORT || '22' }}
   TIMEWEB_APP_DIR: ${{ secrets.TIMEWEB_APP_DIR || '/opt/crm' }}
+  DEPLOY_TARGET: TimeWeb self-hosted runner
 
 jobs:
   deploy:
     name: Deploy production
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, timeweb, crm]
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Validate required secrets
-        env:
-          TIMEWEB_USER: ${{ secrets.TIMEWEB_USER }}
-          TIMEWEB_SSH_KEY: ${{ secrets.TIMEWEB_SSH_KEY }}
-        run: |
-          set -euo pipefail
-          missing=0
-          for name in TIMEWEB_HOST TIMEWEB_USER TIMEWEB_SSH_KEY; do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::$name is not configured for the deploy workflow"
-              missing=1
-            fi
-          done
-          exit "$missing"
-
-      - name: Configure SSH
-        env:
-          TIMEWEB_SSH_KEY: ${{ secrets.TIMEWEB_SSH_KEY }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          printf '%s\n' "$TIMEWEB_SSH_KEY" | tr -d '\r' > ~/.ssh/timeweb_deploy_key
-          chmod 600 ~/.ssh/timeweb_deploy_key
-          touch ~/.ssh/known_hosts
-
       - name: Deploy on TimeWeb
-        env:
-          TIMEWEB_USER: ${{ secrets.TIMEWEB_USER }}
         run: |
           set -euo pipefail
           set +e
           {
-            ssh -i ~/.ssh/timeweb_deploy_key \
-              -p "$TIMEWEB_PORT" \
-              -o BatchMode=yes \
-              -o StrictHostKeyChecking=accept-new \
-              -o UserKnownHostsFile=~/.ssh/known_hosts \
-              -o ConnectTimeout=20 \
-              -o ServerAliveInterval=30 \
-              -o ServerAliveCountMax=3 \
-              "$TIMEWEB_USER@$TIMEWEB_HOST" \
-              "DEPLOY_BRANCH='$DEPLOY_BRANCH' TIMEWEB_APP_DIR='$TIMEWEB_APP_DIR' bash -s" <<'REMOTE_SCRIPT'
-          set -euo pipefail
+            cd "$TIMEWEB_APP_DIR"
 
-          cd "$TIMEWEB_APP_DIR"
+            if [ ! -f ".env" ]; then
+              echo "Missing .env on TimeWeb server: $TIMEWEB_APP_DIR/.env"
+              exit 1
+            fi
 
-          if [ ! -f ".env" ]; then
-            echo "Missing .env on TimeWeb server: $TIMEWEB_APP_DIR/.env"
-            exit 1
-          fi
+            git config --global --add safe.directory "$TIMEWEB_APP_DIR"
+            git fetch origin "$DEPLOY_BRANCH"
+            if git show-ref --verify --quiet "refs/heads/$DEPLOY_BRANCH"; then
+              git checkout "$DEPLOY_BRANCH"
+            else
+              git checkout -b "$DEPLOY_BRANCH" "origin/$DEPLOY_BRANCH"
+            fi
+            git pull --ff-only origin "$DEPLOY_BRANCH"
 
-          git fetch origin "$DEPLOY_BRANCH"
-          if git show-ref --verify --quiet "refs/heads/$DEPLOY_BRANCH"; then
-            git checkout "$DEPLOY_BRANCH"
-          else
-            git checkout -b "$DEPLOY_BRANCH" "origin/$DEPLOY_BRANCH"
-          fi
-          git pull --ff-only origin "$DEPLOY_BRANCH"
-
-          docker compose --env-file .env -f docker-compose.prod.yml up -d --build
-          docker compose --env-file .env -f docker-compose.prod.yml ps
-          docker compose --env-file .env -f docker-compose.prod.yml exec -T backend python manage.py check
-          REMOTE_SCRIPT
+            docker compose --env-file .env -f docker-compose.prod.yml up -d --build
+            docker compose --env-file .env -f docker-compose.prod.yml ps
+            docker compose --env-file .env -f docker-compose.prod.yml exec -T backend python manage.py check
           } 2>&1 | tee deploy-output.log
           deploy_status=${PIPESTATUS[0]}
           set -e
@@ -121,7 +79,7 @@ jobs:
           message="<b>CRM deploy completed</b>
           Branch: ${GITHUB_REF_NAME}
           Commit: ${short_sha}
-          Server: ${TIMEWEB_HOST}
+          Server: ${DEPLOY_TARGET}
           Run: ${run_url}"
 
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
@@ -151,7 +109,7 @@ jobs:
           message="CRM deploy failed
           Branch: ${GITHUB_REF_NAME}
           Commit: ${short_sha}
-          Server: ${TIMEWEB_HOST}
+          Server: ${DEPLOY_TARGET}
           Run: ${run_url}
 
           Last deploy output:
