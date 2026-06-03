@@ -93,12 +93,18 @@ jobs:
           touch ~/.ssh/known_hosts
           timeout 15 ssh-keyscan -4 -T 5 -p "${{ env.DEPLOY_PORT }}" "${{ env.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
+      - name: Check SSH login
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-vvv -4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=10 -o ServerAliveCountMax=2 -o IPQoS=none"
+          timeout 35 ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" "echo SSH_OK"
+
       - name: Prepare server directory
         run: |
-          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
-          for i in 1 2 3 4; do
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=20 -o ConnectionAttempts=1 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o IPQoS=none"
+          for i in 1 2 3; do
             echo "SSH attempt $i..."
-            if timeout 75 ssh $SSH_OPTS \
+            if timeout 45 ssh $SSH_OPTS \
               "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" \
               "mkdir -p /opt/crm && test -f /opt/crm/.env && echo DIR_OK"; then
               exit 0
