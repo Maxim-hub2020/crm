@@ -17,7 +17,6 @@ env:
   DEPLOY_HOST: 194.87.161.144
   DEPLOY_PORT: ${{ secrets.TIMEWEB_PORT || '22' }}
   DEPLOY_USER: ${{ secrets.TIMEWEB_USER }}
-  DEPLOY_DIR: ${{ secrets.TIMEWEB_APP_DIR || '/opt/crm' }}
   BACKEND_IMAGE: crm-backend:prod
   NGINX_IMAGE: crm-nginx:latest
 
@@ -75,13 +74,13 @@ jobs:
             echo "SSH attempt $i..."
             if timeout 75 ssh $SSH_OPTS \
               "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" \
-              "mkdir -p ${{ env.DEPLOY_DIR }} && test -f ${{ env.DEPLOY_DIR }}/.env && echo DIR_OK"; then
+              "mkdir -p /opt/crm && test -f /opt/crm/.env && echo DIR_OK"; then
               exit 0
             fi
             echo "SSH failed, waiting before retry..."
             sleep 15
           done
-          echo "Missing ${{ env.DEPLOY_DIR }}/.env or SSH is unavailable."
+          echo "Missing /opt/crm/.env or SSH is unavailable."
           exit 1
 
       - name: Upload release bundle to TimeWeb
