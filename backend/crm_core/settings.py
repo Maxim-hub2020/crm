@@ -59,6 +59,9 @@ MEDIA_ROOT = BASE_DIR / "media"
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key-change-me-please-123456")
 DEBUG = env_bool("DJANGO_DEBUG", False)
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1")
+for internal_host in ["localhost", "127.0.0.1", "backend"]:
+    if internal_host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(internal_host)
 
 INSTALLED_APPS = [
     "daphne",

@@ -54,7 +54,7 @@ nano .env
 ```env
 APP_DOMAIN=crm.example.ru
 DJANGO_SECRET_KEY=long-random-secret
-ALLOWED_HOSTS=crm.example.ru
+ALLOWED_HOSTS=crm.example.ru,www.crm.example.ru,localhost,127.0.0.1,backend
 CSRF_TRUSTED_ORIGINS=https://crm.example.ru
 POSTGRES_PASSWORD=strong-password
 DATABASE_URL=postgres://crm:strong-password@db:5432/crm
