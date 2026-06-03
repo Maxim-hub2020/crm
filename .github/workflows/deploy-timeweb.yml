@@ -15,7 +15,7 @@ permissions:
 
 env:
   DEPLOY_HOST: 194.87.161.144
-  DEPLOY_PORT: ${{ secrets.TIMEWEB_PORT || '22' }}
+  DEPLOY_PORT: "22"
   DEPLOY_USER: ${{ secrets.TIMEWEB_USER }}
   DEPLOY_DIR: ${{ secrets.TIMEWEB_APP_DIR || '/opt/crm' }}
   BACKEND_IMAGE: crm-backend:prod
@@ -73,6 +73,8 @@ jobs:
         run: |
           set -euo pipefail
           SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p $DEPLOY_PORT -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          echo "Checking TCP access to $DEPLOY_HOST:$DEPLOY_PORT..."
+          timeout 20 bash -c "cat < /dev/null > /dev/tcp/$DEPLOY_HOST/$DEPLOY_PORT" && echo "TCP_OK" || echo "TCP_TIMEOUT"
           for i in 1 2 3 4; do
             echo "SSH attempt $i..."
             if timeout 90 ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_DIR' && test -f '$DEPLOY_DIR/.env' && echo DIR_OK"; then
