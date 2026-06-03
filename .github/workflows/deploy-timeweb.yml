@@ -51,7 +51,7 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$TIMEWEB_SSH_KEY" | tr -d '\r' > ~/.ssh/timeweb_deploy_key
           chmod 600 ~/.ssh/timeweb_deploy_key
-          ssh-keyscan -T 20 -p "$TIMEWEB_PORT" -H "$TIMEWEB_HOST" >> ~/.ssh/known_hosts || true
+          touch ~/.ssh/known_hosts
 
       - name: Deploy on TimeWeb
         env:
