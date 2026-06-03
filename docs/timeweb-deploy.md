@@ -38,7 +38,7 @@ cd /opt/crm
 Если используем отдельную ветку для релиза:
 
 ```bash
-git checkout main
+git checkout codex/timeweb-production
 git pull
 ```
 
@@ -108,20 +108,105 @@ curl https://crm.example.ru/api/health/
 docker compose -f docker-compose.prod.yml logs -f backend
 ```
 
-## 7. Обновление через GitHub
+## 7. Автодеплой через GitHub Actions
+
+После первого ручного запуска можно включить автоматическое обновление сервера при каждом push в ветку `codex/timeweb-production`.
+
+### 7.1. Создать SSH-ключ для GitHub Actions
+
+На локальном компьютере:
+
+```bash
+ssh-keygen -t ed25519 -C "github-actions-crm-timeweb" -f crm_timeweb_deploy_key
+```
+
+Публичный ключ нужно добавить на сервер TimeWeb:
+
+```bash
+cat crm_timeweb_deploy_key.pub
+```
+
+Скопируйте вывод и на сервере добавьте его в `authorized_keys`:
+
+```bash
+mkdir -p ~/.ssh
+nano ~/.ssh/authorized_keys
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/authorized_keys
+```
+
+Приватный ключ нужно добавить в GitHub Secrets:
+
+```bash
+cat crm_timeweb_deploy_key
+```
+
+### 7.2. Добавить Secrets в GitHub
+
+Откройте:
+
+`GitHub -> repository -> Settings -> Secrets and variables -> Actions -> New repository secret`
+
+Обязательные секреты:
+
+```text
+TIMEWEB_HOST=IP_или_домен_сервера
+TIMEWEB_USER=root
+TIMEWEB_SSH_KEY=приватный_ssh_ключ_из_crm_timeweb_deploy_key
+```
+
+Необязательные секреты:
+
+```text
+TIMEWEB_PORT=22
+TIMEWEB_APP_DIR=/opt/crm
+```
+
+### 7.3. Уведомления в Telegram
+
+1. Напишите `@BotFather` в Telegram.
+2. Создайте бота командой `/newbot`.
+3. Скопируйте token бота.
+4. Напишите любое сообщение своему новому боту.
+5. Откройте в браузере:
+
+```text
+https://api.telegram.org/botBOT_TOKEN/getUpdates
+```
+
+В ответе найдите `chat.id`.
+
+Добавьте в GitHub Secrets:
+
+```text
+TELEGRAM_BOT_TOKEN=токен_бота
+TELEGRAM_CHAT_ID=ваш_chat_id
+```
+
+После этого workflow `.github/workflows/deploy-timeweb.yml` будет:
+
+- запускаться при push в `codex/timeweb-production`;
+- заходить на сервер по SSH;
+- делать `git pull --ff-only`;
+- пересобирать `docker compose --env-file .env -f docker-compose.prod.yml up -d --build`;
+- проверять backend через `python manage.py check`;
+- отправлять сообщение в Telegram об успехе или ошибке.
+
+## 8. Ручное обновление через GitHub
 
 Рабочий процесс:
 
 ```bash
 cd /opt/crm
-git pull
-docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml ps
+git checkout codex/timeweb-production
+git pull --ff-only
+docker compose --env-file .env -f docker-compose.prod.yml up -d --build
+docker compose --env-file .env -f docker-compose.prod.yml ps
 ```
 
 Если появились новые миграции, backend применит их сам при старте.
 
-## 8. Бэкап базы
+## 9. Бэкап базы
 
 Создать бэкап:
 
@@ -136,7 +221,7 @@ docker compose -f docker-compose.prod.yml exec -T db pg_dump -U "$POSTGRES_USER"
 cat backups/crm-YYYY-MM-DD-HHMM.sql | docker compose -f docker-compose.prod.yml exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_DB"
 ```
 
-## 9. Полезные команды
+## 10. Полезные команды
 
 Логи:
 
@@ -162,7 +247,7 @@ docker compose -f docker-compose.prod.yml down
 docker compose -f docker-compose.prod.yml down -v
 ```
 
-## 10. Важные замечания
+## 11. Важные замечания
 
 - Голосовой помощник в браузере требует HTTPS, поэтому домен и Caddy обязательны для production.
 - Не коммитьте `.env` и `backend/secrets/vertex-sa.json` в GitHub.

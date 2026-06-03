@@ -1,0 +1,140 @@
+name: Deploy CRM to TimeWeb
+
+on:
+  push:
+    branches:
+      - codex/timeweb-production
+  workflow_dispatch:
+
+concurrency:
+  group: timeweb-production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DEPLOY_BRANCH: codex/timeweb-production
+  TIMEWEB_PORT: ${{ secrets.TIMEWEB_PORT || '22' }}
+  TIMEWEB_APP_DIR: ${{ secrets.TIMEWEB_APP_DIR || '/opt/crm' }}
+
+jobs:
+  deploy:
+    name: Deploy production
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        env:
+          TIMEWEB_HOST: ${{ secrets.TIMEWEB_HOST }}
+          TIMEWEB_USER: ${{ secrets.TIMEWEB_USER }}
+          TIMEWEB_SSH_KEY: ${{ secrets.TIMEWEB_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in TIMEWEB_HOST TIMEWEB_USER TIMEWEB_SSH_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is not configured in GitHub repository secrets"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Configure SSH
+        env:
+          TIMEWEB_HOST: ${{ secrets.TIMEWEB_HOST }}
+          TIMEWEB_SSH_KEY: ${{ secrets.TIMEWEB_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$TIMEWEB_SSH_KEY" > ~/.ssh/timeweb_deploy_key
+          chmod 600 ~/.ssh/timeweb_deploy_key
+          ssh-keyscan -p "$TIMEWEB_PORT" -H "$TIMEWEB_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy on TimeWeb
+        env:
+          TIMEWEB_HOST: ${{ secrets.TIMEWEB_HOST }}
+          TIMEWEB_USER: ${{ secrets.TIMEWEB_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/timeweb_deploy_key \
+            -p "$TIMEWEB_PORT" \
+            -o StrictHostKeyChecking=yes \
+            "$TIMEWEB_USER@$TIMEWEB_HOST" \
+            "DEPLOY_BRANCH='$DEPLOY_BRANCH' TIMEWEB_APP_DIR='$TIMEWEB_APP_DIR' bash -s" <<'REMOTE_SCRIPT'
+          set -euo pipefail
+
+          cd "$TIMEWEB_APP_DIR"
+
+          if [ ! -f ".env" ]; then
+            echo "Missing .env on TimeWeb server: $TIMEWEB_APP_DIR/.env"
+            exit 1
+          fi
+
+          git fetch origin "$DEPLOY_BRANCH"
+          if git show-ref --verify --quiet "refs/heads/$DEPLOY_BRANCH"; then
+            git checkout "$DEPLOY_BRANCH"
+          else
+            git checkout -b "$DEPLOY_BRANCH" "origin/$DEPLOY_BRANCH"
+          fi
+          git pull --ff-only origin "$DEPLOY_BRANCH"
+
+          docker compose --env-file .env -f docker-compose.prod.yml up -d --build
+          docker compose --env-file .env -f docker-compose.prod.yml ps
+          docker compose --env-file .env -f docker-compose.prod.yml exec -T backend python manage.py check
+          REMOTE_SCRIPT
+
+      - name: Notify Telegram success
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TIMEWEB_HOST: ${{ secrets.TIMEWEB_HOST }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets are not configured, skipping notification."
+            exit 0
+          fi
+
+          short_sha="${GITHUB_SHA:0:7}"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          message="<b>CRM deploy completed</b>
+          Branch: ${GITHUB_REF_NAME}
+          Commit: ${short_sha}
+          Server: ${TIMEWEB_HOST}
+          Run: ${run_url}"
+
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "parse_mode=HTML" \
+            --data-urlencode "text=${message}"
+
+      - name: Notify Telegram failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TIMEWEB_HOST: ${{ secrets.TIMEWEB_HOST }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram secrets are not configured, skipping notification."
+            exit 0
+          fi
+
+          short_sha="${GITHUB_SHA:0:7}"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          message="<b>CRM deploy failed</b>
+          Branch: ${GITHUB_REF_NAME}
+          Commit: ${short_sha}
+          Server: ${TIMEWEB_HOST}
+          Run: ${run_url}"
+
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "parse_mode=HTML" \
+            --data-urlencode "text=${message}"
