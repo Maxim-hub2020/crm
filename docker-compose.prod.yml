@@ -79,6 +79,7 @@ services:
       sh -c "python manage.py refresh_crm_memory --force --interval $${CRM_AI_MEMORY_REFRESH_INTERVAL_SECONDS:-120}"
 
   nginx:
+    image: crm-nginx:latest
     build:
       context: .
       dockerfile: docker/nginx/Dockerfile

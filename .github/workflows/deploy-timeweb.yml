@@ -15,7 +15,7 @@ permissions:
 
 env:
   DEPLOY_HOST: 194.87.161.144
-  DEPLOY_PORT: "22"
+  DEPLOY_PORT: ${{ secrets.TIMEWEB_PORT || '22' }}
   DEPLOY_USER: ${{ secrets.TIMEWEB_USER }}
   DEPLOY_DIR: ${{ secrets.TIMEWEB_APP_DIR || '/opt/crm' }}
   BACKEND_IMAGE: crm-backend:prod
@@ -62,69 +62,67 @@ jobs:
 
       - name: Setup SSH
         run: |
-          set -euo pipefail
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.TIMEWEB_SSH_KEY }}" | tr -d '\r' > ~/.ssh/timeweb_key
           chmod 600 ~/.ssh/timeweb_key
           touch ~/.ssh/known_hosts
+          ssh-keyscan -4 -T 45 -p "${{ env.DEPLOY_PORT }}" "${{ env.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Prepare server directory
         run: |
-          set -euo pipefail
-          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p $DEPLOY_PORT -o BatchMode=yes -o PreferredAuthentications=publickey -o KexAlgorithms=curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group14-sha256 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
           for i in 1 2 3 4; do
             echo "SSH attempt $i..."
-            if timeout 90 ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_DIR' && test -f '$DEPLOY_DIR/.env' && echo DIR_OK"; then
+            if timeout 75 ssh $SSH_OPTS \
+              "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" \
+              "mkdir -p ${{ env.DEPLOY_DIR }} && test -f ${{ env.DEPLOY_DIR }}/.env && echo DIR_OK"; then
               exit 0
             fi
             echo "SSH failed, waiting before retry..."
             sleep 15
           done
-          echo "Missing $DEPLOY_DIR/.env or SSH is unavailable."
+          echo "Missing ${{ env.DEPLOY_DIR }}/.env or SSH is unavailable."
           exit 1
 
       - name: Upload release bundle to TimeWeb
         run: |
-          set -euo pipefail
-          SCP_OPTS="-4 -i ~/.ssh/timeweb_key -P $DEPLOY_PORT -o KexAlgorithms=curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group14-sha256 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
-          scp $SCP_OPTS /tmp/crm-files.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:/tmp/crm-files.tar.gz"
-          scp $SCP_OPTS /tmp/crm-images.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:/tmp/crm-images.tar.gz"
+          SCP_OPTS="-4 -i ~/.ssh/timeweb_key -P ${{ env.DEPLOY_PORT }} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          scp $SCP_OPTS /tmp/crm-files.tar.gz "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:/tmp/crm-files.tar.gz"
+          scp $SCP_OPTS /tmp/crm-images.tar.gz "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:/tmp/crm-images.tar.gz"
 
       - name: Install release on TimeWeb
         run: |
-          set -euo pipefail
-          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p $DEPLOY_PORT -o BatchMode=yes -o PreferredAuthentications=publickey -o KexAlgorithms=curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group14-sha256 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
-          ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" '
             set -eu
             mkdir -p /tmp/crm-preserve
-            cp '$DEPLOY_DIR/.env' /tmp/crm-preserve/.env
-            if [ -d '$DEPLOY_DIR/backend/secrets' ]; then
+            cp /opt/crm/.env /tmp/crm-preserve/.env
+            if [ -d /opt/crm/backend/secrets ]; then
               mkdir -p /tmp/crm-preserve/backend
-              cp -a '$DEPLOY_DIR/backend/secrets' /tmp/crm-preserve/backend/secrets
+              cp -a /opt/crm/backend/secrets /tmp/crm-preserve/backend/secrets
             fi
-            find '$DEPLOY_DIR' -mindepth 1 ! -name '.env' -exec rm -rf {} +
-            tar -xzf /tmp/crm-files.tar.gz -C '$DEPLOY_DIR'
-            cp /tmp/crm-preserve/.env '$DEPLOY_DIR/.env'
+            find /opt/crm -mindepth 1 ! -name ".env" -exec rm -rf {} +
+            tar -xzf /tmp/crm-files.tar.gz -C /opt/crm
+            cp /tmp/crm-preserve/.env /opt/crm/.env
             if [ -d /tmp/crm-preserve/backend/secrets ]; then
-              mkdir -p '$DEPLOY_DIR/backend'
-              cp -a /tmp/crm-preserve/backend/secrets '$DEPLOY_DIR/backend/secrets'
+              mkdir -p /opt/crm/backend
+              cp -a /tmp/crm-preserve/backend/secrets /opt/crm/backend/secrets
             fi
             docker load < /tmp/crm-images.tar.gz
             rm -rf /tmp/crm-files.tar.gz /tmp/crm-images.tar.gz /tmp/crm-preserve
-          "
+          '
 
       - name: Deploy with Docker Compose
         run: |
-          set -euo pipefail
-          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p $DEPLOY_PORT -o BatchMode=yes -o PreferredAuthentications=publickey -o KexAlgorithms=curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group14-sha256 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
-          ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" '
             set -eu
-            cd '$DEPLOY_DIR'
+            cd /opt/crm
             docker compose -p crm --env-file .env -f docker-compose.prod.yml up -d --no-build
             docker compose -p crm --env-file .env -f docker-compose.prod.yml ps
             docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T backend python manage.py check
             docker image prune -f
-          "
+          '
 
       - name: Notify Telegram
         if: always()
