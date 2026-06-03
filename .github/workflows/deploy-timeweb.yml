@@ -60,15 +60,18 @@ jobs:
           TIMEWEB_USER: ${{ secrets.TIMEWEB_USER }}
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/timeweb_deploy_key \
-            -p "$TIMEWEB_PORT" \
-            -o StrictHostKeyChecking=accept-new \
-            -o UserKnownHostsFile=~/.ssh/known_hosts \
-            -o ConnectTimeout=20 \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=3 \
-            "$TIMEWEB_USER@$TIMEWEB_HOST" \
-            "DEPLOY_BRANCH='$DEPLOY_BRANCH' TIMEWEB_APP_DIR='$TIMEWEB_APP_DIR' bash -s" <<'REMOTE_SCRIPT'
+          set +e
+          {
+            ssh -i ~/.ssh/timeweb_deploy_key \
+              -p "$TIMEWEB_PORT" \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=accept-new \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              -o ConnectTimeout=20 \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=3 \
+              "$TIMEWEB_USER@$TIMEWEB_HOST" \
+              "DEPLOY_BRANCH='$DEPLOY_BRANCH' TIMEWEB_APP_DIR='$TIMEWEB_APP_DIR' bash -s" <<'REMOTE_SCRIPT'
           set -euo pipefail
 
           cd "$TIMEWEB_APP_DIR"
@@ -90,6 +93,18 @@ jobs:
           docker compose --env-file .env -f docker-compose.prod.yml ps
           docker compose --env-file .env -f docker-compose.prod.yml exec -T backend python manage.py check
           REMOTE_SCRIPT
+          } 2>&1 | tee deploy-output.log
+          deploy_status=${PIPESTATUS[0]}
+          set -e
+
+          {
+            echo "### Deploy output"
+            echo '```text'
+            tail -n 120 deploy-output.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "$deploy_status"
 
       - name: Notify Telegram success
         if: success()
@@ -132,13 +147,20 @@ jobs:
 
           short_sha="${GITHUB_SHA:0:7}"
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          message="<b>CRM deploy failed</b>
+          deploy_tail=""
+          if [ -f deploy-output.log ]; then
+            deploy_tail="$(tail -n 80 deploy-output.log | tail -c 2800)"
+          fi
+
+          message="CRM deploy failed
           Branch: ${GITHUB_REF_NAME}
           Commit: ${short_sha}
           Server: ${TIMEWEB_HOST}
-          Run: ${run_url}"
+          Run: ${run_url}
+
+          Last deploy output:
+          ${deploy_tail}"
 
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            -d "parse_mode=HTML" \
             --data-urlencode "text=${message}"
