@@ -7,66 +7,135 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: timeweb-production
+  group: crm-production
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 env:
-  DEPLOY_BRANCH: codex/timeweb-production
-  TIMEWEB_APP_DIR: ${{ secrets.TIMEWEB_APP_DIR || '/opt/crm' }}
-  DEPLOY_TARGET: TimeWeb self-hosted runner
+  DEPLOY_HOST: 194.87.161.144
+  DEPLOY_PORT: ${{ secrets.TIMEWEB_PORT || '22' }}
+  DEPLOY_USER: ${{ secrets.TIMEWEB_USER }}
+  DEPLOY_DIR: ${{ secrets.TIMEWEB_APP_DIR || '/opt/crm' }}
+  BACKEND_IMAGE: crm-backend:prod
+  NGINX_IMAGE: crm-nginx:latest
 
 jobs:
   deploy:
     name: Deploy production
-    runs-on: self-hosted
-    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
-      - name: Deploy on TimeWeb
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker images on GitHub
         run: |
           set -euo pipefail
-          set +e
-          {
-            cd "$TIMEWEB_APP_DIR"
+          docker build \
+            -t "$BACKEND_IMAGE" \
+            -f backend/Dockerfile.prod \
+            ./backend
+          docker build \
+            -t "$NGINX_IMAGE" \
+            -f docker/nginx/Dockerfile \
+            .
 
-            if [ ! -f ".env" ]; then
-              echo "Missing .env on TimeWeb server: $TIMEWEB_APP_DIR/.env"
-              exit 1
+      - name: Pack Docker images and project files
+        run: |
+          set -euo pipefail
+          docker save "$BACKEND_IMAGE" "$NGINX_IMAGE" | gzip > /tmp/crm-images.tar.gz
+          tar \
+            --exclude=".git" \
+            --exclude=".github" \
+            --exclude=".codex-temp" \
+            --exclude=".env" \
+            --exclude="backend/.venv" \
+            --exclude="backend/.venv_test" \
+            --exclude="backend/secrets" \
+            --exclude="backend/db.sqlite3" \
+            --exclude="crm-ui/node_modules" \
+            --exclude="crm-ui/dist" \
+            -czf /tmp/crm-files.tar.gz .
+
+      - name: Setup SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.TIMEWEB_SSH_KEY }}" | tr -d '\r' > ~/.ssh/timeweb_key
+          chmod 600 ~/.ssh/timeweb_key
+          touch ~/.ssh/known_hosts
+          ssh-keyscan -4 -T 45 -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Prepare server directory
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p $DEPLOY_PORT -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          for i in 1 2 3 4; do
+            echo "SSH attempt $i..."
+            if timeout 90 ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_DIR' && test -f '$DEPLOY_DIR/.env' && echo DIR_OK"; then
+              exit 0
             fi
+            echo "SSH failed, waiting before retry..."
+            sleep 15
+          done
+          echo "Missing $DEPLOY_DIR/.env or SSH is unavailable."
+          exit 1
 
-            git config --global --add safe.directory "$TIMEWEB_APP_DIR"
-            git fetch origin "$DEPLOY_BRANCH"
-            if git show-ref --verify --quiet "refs/heads/$DEPLOY_BRANCH"; then
-              git checkout "$DEPLOY_BRANCH"
-            else
-              git checkout -b "$DEPLOY_BRANCH" "origin/$DEPLOY_BRANCH"
+      - name: Upload release bundle to TimeWeb
+        run: |
+          set -euo pipefail
+          SCP_OPTS="-4 -i ~/.ssh/timeweb_key -P $DEPLOY_PORT -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          scp $SCP_OPTS /tmp/crm-files.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:/tmp/crm-files.tar.gz"
+          scp $SCP_OPTS /tmp/crm-images.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:/tmp/crm-images.tar.gz"
+
+      - name: Install release on TimeWeb
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p $DEPLOY_PORT -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "
+            set -eu
+            mkdir -p /tmp/crm-preserve
+            cp '$DEPLOY_DIR/.env' /tmp/crm-preserve/.env
+            if [ -d '$DEPLOY_DIR/backend/secrets' ]; then
+              mkdir -p /tmp/crm-preserve/backend
+              cp -a '$DEPLOY_DIR/backend/secrets' /tmp/crm-preserve/backend/secrets
             fi
-            git pull --ff-only origin "$DEPLOY_BRANCH"
+            find '$DEPLOY_DIR' -mindepth 1 ! -name '.env' -exec rm -rf {} +
+            tar -xzf /tmp/crm-files.tar.gz -C '$DEPLOY_DIR'
+            cp /tmp/crm-preserve/.env '$DEPLOY_DIR/.env'
+            if [ -d /tmp/crm-preserve/backend/secrets ]; then
+              mkdir -p '$DEPLOY_DIR/backend'
+              cp -a /tmp/crm-preserve/backend/secrets '$DEPLOY_DIR/backend/secrets'
+            fi
+            docker load < /tmp/crm-images.tar.gz
+            rm -rf /tmp/crm-files.tar.gz /tmp/crm-images.tar.gz /tmp/crm-preserve
+          "
 
-            docker compose --env-file .env -f docker-compose.prod.yml up -d --build
-            docker compose --env-file .env -f docker-compose.prod.yml ps
-            docker compose --env-file .env -f docker-compose.prod.yml exec -T backend python manage.py check
-          } 2>&1 | tee deploy-output.log
-          deploy_status=${PIPESTATUS[0]}
-          set -e
+      - name: Deploy with Docker Compose
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p $DEPLOY_PORT -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          ssh $SSH_OPTS "$DEPLOY_USER@$DEPLOY_HOST" "
+            set -eu
+            cd '$DEPLOY_DIR'
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml up -d --no-build
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml ps
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T backend python manage.py check
+            docker image prune -f
+          "
 
-          {
-            echo "### Deploy output"
-            echo '```text'
-            tail -n 120 deploy-output.log
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          exit "$deploy_status"
-
-      - name: Notify Telegram success
-        if: success()
+      - name: Notify Telegram
+        if: always()
+        continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          JOB_STATUS: ${{ job.status }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
@@ -74,47 +143,21 @@ jobs:
             exit 0
           fi
 
-          short_sha="${GITHUB_SHA:0:7}"
-          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          message="<b>CRM deploy completed</b>
-          Branch: ${GITHUB_REF_NAME}
-          Commit: ${short_sha}
-          Server: ${DEPLOY_TARGET}
-          Run: ${run_url}"
-
-          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            -d "parse_mode=HTML" \
-            --data-urlencode "text=${message}"
-
-      - name: Notify Telegram failure
-        if: failure()
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          set -euo pipefail
-          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
-            echo "Telegram secrets are not configured, skipping notification."
-            exit 0
+          short_sha="$(printf '%s' "$COMMIT_SHA" | cut -c1-7)"
+          if [ "$JOB_STATUS" = "success" ]; then
+            title="CRM deploy completed"
+          else
+            title="CRM deploy finished with status $JOB_STATUS"
           fi
 
-          short_sha="${GITHUB_SHA:0:7}"
-          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          deploy_tail=""
-          if [ -f deploy-output.log ]; then
-            deploy_tail="$(tail -n 80 deploy-output.log | tail -c 2800)"
-          fi
-
-          message="CRM deploy failed
-          Branch: ${GITHUB_REF_NAME}
-          Commit: ${short_sha}
-          Server: ${DEPLOY_TARGET}
-          Run: ${run_url}
-
-          Last deploy output:
-          ${deploy_tail}"
+          text="$(cat <<EOF
+          $title
+          Commit: $short_sha
+          Log: $RUN_URL
+          EOF
+          )"
 
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            --data-urlencode "text=${message}"
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${text}" \
+            --data-urlencode "disable_web_page_preview=true"

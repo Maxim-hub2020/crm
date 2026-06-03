@@ -112,69 +112,58 @@ docker compose -f docker-compose.prod.yml logs -f backend
 
 После первого ручного запуска можно включить автоматическое обновление сервера при каждом push в ветку `codex/timeweb-production`.
 
-### 7.1. Подготовить пользователя для runner
+### 7.1. Создать SSH-ключ для GitHub Actions
 
-На сервере TimeWeb:
-
-```bash
-adduser --disabled-password --gecos "" github-runner
-usermod -aG docker github-runner
-chown -R github-runner:github-runner /opt/crm
-```
-
-Если Docker был установлен недавно, перезапустите SSH-сессию или выполните:
+На локальном компьютере:
 
 ```bash
-newgrp docker
+ssh-keygen -t ed25519 -C "github-actions-crm-timeweb" -f crm_timeweb_deploy_key
 ```
 
-### 7.2. Создать self-hosted runner в GitHub
-
-Откройте:
-
-`GitHub -> repository -> Settings -> Actions -> Runners -> New self-hosted runner`
-
-Выберите `Linux` и `x64`. GitHub покажет команды установки. Выполняйте их на сервере под пользователем `github-runner`:
+Публичный ключ нужно добавить на сервер TimeWeb:
 
 ```bash
-su - github-runner
-mkdir actions-runner
-cd actions-runner
+cat crm_timeweb_deploy_key.pub
 ```
 
-Скопируйте и выполните команды `Download` и `Configure` из GitHub. Дополнительные labels можно оставить стандартными. Если хотите добавить свои, используйте:
-
-```text
-timeweb,crm
-```
-
-После настройки установите runner как сервис:
+Скопируйте вывод и на сервере добавьте его в `authorized_keys`:
 
 ```bash
-exit
-cd /home/github-runner/actions-runner
-./svc.sh install github-runner
-./svc.sh start
-./svc.sh status
+mkdir -p ~/.ssh
+nano ~/.ssh/authorized_keys
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/authorized_keys
 ```
 
-Runner должен появиться в GitHub со статусом `Idle`. Workflow использует `runs-on: self-hosted`, поэтому дополнительные labels не обязательны.
+Приватный ключ нужно добавить в GitHub Secrets:
 
-### 7.3. Добавить Secrets в GitHub
+```bash
+cat crm_timeweb_deploy_key
+```
+
+### 7.2. Добавить Secrets в GitHub
 
 Откройте:
 
 `GitHub -> repository -> Settings -> Secrets and variables -> Actions -> New repository secret`
 
-Необязательный секрет:
+Обязательные секреты:
 
 ```text
+TIMEWEB_USER=root
+TIMEWEB_SSH_KEY=приватный_ssh_ключ_из_crm_timeweb_deploy_key
+TELEGRAM_BOT_TOKEN=токен_бота
+TELEGRAM_CHAT_ID=ваш_chat_id
+```
+
+Необязательные секреты:
+
+```text
+TIMEWEB_PORT=22
 TIMEWEB_APP_DIR=/opt/crm
 ```
 
-SSH-секреты `TIMEWEB_HOST`, `TIMEWEB_USER`, `TIMEWEB_SSH_KEY`, `TIMEWEB_PORT` для self-hosted runner больше не нужны.
-
-### 7.4. Уведомления в Telegram
+### 7.3. Уведомления в Telegram
 
 1. Напишите `@BotFather` в Telegram.
 2. Создайте бота командой `/newbot`.
@@ -188,19 +177,13 @@ https://api.telegram.org/botBOT_TOKEN/getUpdates
 
 В ответе найдите `chat.id`.
 
-Добавьте в GitHub Secrets:
-
-```text
-TELEGRAM_BOT_TOKEN=токен_бота
-TELEGRAM_CHAT_ID=ваш_chat_id
-```
-
 После этого workflow `.github/workflows/deploy-timeweb.yml` будет:
 
 - запускаться при push в `codex/timeweb-production`;
-- выполняться прямо на TimeWeb через self-hosted runner;
-- делать `git pull --ff-only`;
-- пересобирать `docker compose --env-file .env -f docker-compose.prod.yml up -d --build`;
+- собирать Docker-образы backend и nginx на GitHub;
+- загружать образы и файлы проекта на TimeWeb через `scp`;
+- сохранять серверные `.env` и `backend/secrets`;
+- запускать `docker compose --env-file .env -f docker-compose.prod.yml up -d --no-build`;
 - проверять backend через `python manage.py check`;
 - отправлять сообщение в Telegram об успехе или ошибке.
 
