@@ -59,13 +59,39 @@ jobs:
             --exclude="crm-ui/dist" \
             -czf /tmp/crm-files.tar.gz .
 
+      - name: Diagnose TimeWeb SSH route
+        run: |
+          set -euo pipefail
+          echo "Runner public IPv4:"
+          curl -4 -fsS https://ifconfig.me || true
+          echo
+          python3 - <<'PY'
+          import os
+          import socket
+          import sys
+          import time
+
+          host = os.environ["DEPLOY_HOST"]
+          port = int(os.environ["DEPLOY_PORT"])
+          timeout = 10
+          started = time.monotonic()
+          try:
+              with socket.create_connection((host, port), timeout=timeout):
+                  elapsed = time.monotonic() - started
+                  print(f"TCP_OK {host}:{port} in {elapsed:.2f}s")
+          except OSError as exc:
+              elapsed = time.monotonic() - started
+              print(f"TCP_FAILED {host}:{port} after {elapsed:.2f}s: {exc}")
+              sys.exit(1)
+          PY
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.TIMEWEB_SSH_KEY }}" | tr -d '\r' > ~/.ssh/timeweb_key
           chmod 600 ~/.ssh/timeweb_key
           touch ~/.ssh/known_hosts
-          ssh-keyscan -4 -T 45 -p "${{ env.DEPLOY_PORT }}" "${{ env.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          timeout 15 ssh-keyscan -4 -T 5 -p "${{ env.DEPLOY_PORT }}" "${{ env.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Prepare server directory
         run: |
