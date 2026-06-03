@@ -97,7 +97,25 @@ jobs:
         run: |
           set -euo pipefail
           SSH_OPTS="-vvv -4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=10 -o ServerAliveCountMax=2 -o IPQoS=none"
-          timeout 35 ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" "echo SSH_OK"
+          set +e
+          timeout 35 ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" "echo SSH_OK" > /tmp/crm-ssh-check.log 2>&1
+          status=$?
+          set -e
+          tail -n 120 /tmp/crm-ssh-check.log
+          {
+            echo "SSH_CHECK_SUMMARY<<EOF"
+            tail -n 25 /tmp/crm-ssh-check.log
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+          exit "$status"
+
+      - name: Upload SSH debug log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crm-ssh-check-log
+          path: /tmp/crm-ssh-check.log
+          if-no-files-found: ignore
 
       - name: Prepare server directory
         run: |
@@ -182,6 +200,9 @@ jobs:
           $title
           Commit: $short_sha
           Log: $RUN_URL
+          ${SSH_CHECK_SUMMARY:+
+          SSH:
+          $SSH_CHECK_SUMMARY}
           EOF
           )"
 
