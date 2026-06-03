@@ -142,7 +142,7 @@ mkdir actions-runner
 cd actions-runner
 ```
 
-Скопируйте и выполните команды `Download` и `Configure` из GitHub. При настройке runner укажите labels:
+Скопируйте и выполните команды `Download` и `Configure` из GitHub. Дополнительные labels можно оставить стандартными. Если хотите добавить свои, используйте:
 
 ```text
 timeweb,crm
@@ -158,7 +158,7 @@ cd /home/github-runner/actions-runner
 ./svc.sh status
 ```
 
-Runner должен появиться в GitHub со статусом `Idle`.
+Runner должен появиться в GitHub со статусом `Idle`. Workflow использует `runs-on: self-hosted`, поэтому дополнительные labels не обязательны.
 
 ### 7.3. Добавить Secrets в GitHub
 

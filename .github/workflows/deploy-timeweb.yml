@@ -21,7 +21,7 @@ env:
 jobs:
   deploy:
     name: Deploy production
-    runs-on: [self-hosted, timeweb, crm]
+    runs-on: self-hosted
     timeout-minutes: 45
 
     steps:
