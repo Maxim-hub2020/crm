@@ -130,6 +130,31 @@ jobs:
             docker compose -p crm --env-file .env -f docker-compose.prod.yml ps
           '
 
+      - name: Collect Docker diagnostics
+        if: failure()
+        continue-on-error: true
+        run: |
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" '
+            set +e
+            cd /opt/crm
+            echo "== docker compose ps =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml ps
+            echo "== backend health inspect =="
+            docker inspect --format="{{json .State.Health}}" crm-backend-1
+            echo
+            echo "== backend direct health request =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T backend python -c "import urllib.request; r=urllib.request.urlopen(\"http://localhost:8000/api/health/\", timeout=5); print(r.status, r.read())"
+            echo "== backend logs =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=160 backend
+            echo "== nginx logs =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=120 nginx
+            echo "== caddy logs =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=120 caddy
+            echo "== ai-memory-worker logs =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=120 ai-memory-worker
+          '
+
       - name: Notify Telegram
         if: always()
         continue-on-error: true
