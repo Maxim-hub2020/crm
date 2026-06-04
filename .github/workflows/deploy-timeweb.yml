@@ -3,6 +3,7 @@ name: Deploy CRM to TimeWeb
 on:
   push:
     branches:
+      - main
       - codex/timeweb-production
   workflow_dispatch:
 
@@ -10,21 +11,16 @@ concurrency:
   group: crm-production
   cancel-in-progress: true
 
-permissions:
-  contents: read
-
 env:
   DEPLOY_HOST: 194.87.161.144
-  DEPLOY_PORT: 22
+  DEPLOY_PORT: ${{ secrets.TIMEWEB_PORT || '22' }}
   DEPLOY_USER: ${{ secrets.TIMEWEB_USER }}
   BACKEND_IMAGE: crm-backend:prod
   NGINX_IMAGE: crm-nginx:latest
 
 jobs:
   deploy:
-    name: Deploy production
     runs-on: ubuntu-latest
-    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -32,11 +28,11 @@ jobs:
 
       - name: Build Docker images on GitHub
         run: |
-          set -euo pipefail
           docker build \
             -t "$BACKEND_IMAGE" \
             -f backend/Dockerfile.prod \
             ./backend
+
           docker build \
             -t "$NGINX_IMAGE" \
             -f docker/nginx/Dockerfile \
@@ -44,7 +40,6 @@ jobs:
 
       - name: Pack Docker images and project files
         run: |
-          set -euo pipefail
           docker save "$BACKEND_IMAGE" "$NGINX_IMAGE" | gzip > /tmp/crm-images.tar.gz
           tar \
             --exclude=".git" \
@@ -59,70 +54,20 @@ jobs:
             --exclude="crm-ui/dist" \
             -czf /tmp/crm-files.tar.gz .
 
-      - name: Diagnose TimeWeb SSH route
-        run: |
-          set -euo pipefail
-          echo "Runner public IPv4:"
-          curl -4 -fsS https://ifconfig.me || true
-          echo
-          python3 - <<'PY'
-          import os
-          import socket
-          import sys
-          import time
-
-          host = os.environ["DEPLOY_HOST"]
-          port = int(os.environ["DEPLOY_PORT"])
-          timeout = 10
-          started = time.monotonic()
-          try:
-              with socket.create_connection((host, port), timeout=timeout):
-                  elapsed = time.monotonic() - started
-                  print(f"TCP_OK {host}:{port} in {elapsed:.2f}s")
-          except OSError as exc:
-              elapsed = time.monotonic() - started
-              print(f"TCP_FAILED {host}:{port} after {elapsed:.2f}s: {exc}")
-              sys.exit(1)
-          PY
-
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.TIMEWEB_SSH_KEY }}" | tr -d '\r' > ~/.ssh/timeweb_key
           chmod 600 ~/.ssh/timeweb_key
           touch ~/.ssh/known_hosts
-          timeout 15 ssh-keyscan -4 -T 5 -p "${{ env.DEPLOY_PORT }}" "${{ env.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
-
-      - name: Check SSH login
-        run: |
-          set -euo pipefail
-          SSH_OPTS="-vvv -4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=10 -o ServerAliveCountMax=2 -o IPQoS=none"
-          set +e
-          timeout 35 ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" "echo SSH_OK" > /tmp/crm-ssh-check.log 2>&1
-          status=$?
-          set -e
-          tail -n 120 /tmp/crm-ssh-check.log
-          {
-            echo "SSH_CHECK_SUMMARY<<EOF"
-            tail -n 25 /tmp/crm-ssh-check.log
-            echo "EOF"
-          } >> "$GITHUB_ENV"
-          exit "$status"
-
-      - name: Upload SSH debug log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: crm-ssh-check-log
-          path: /tmp/crm-ssh-check.log
-          if-no-files-found: ignore
+          ssh-keyscan -4 -T 45 -p "${{ env.DEPLOY_PORT }}" "${{ env.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Prepare server directory
         run: |
-          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=20 -o ConnectionAttempts=1 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o IPQoS=none"
-          for i in 1 2 3; do
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          for i in 1 2 3 4; do
             echo "SSH attempt $i..."
-            if timeout 45 ssh $SSH_OPTS \
+            if timeout 75 ssh $SSH_OPTS \
               "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" \
               "mkdir -p /opt/crm && test -f /opt/crm/.env && echo DIR_OK"; then
               exit 0
@@ -167,10 +112,22 @@ jobs:
           ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" '
             set -eu
             cd /opt/crm
-            docker compose -p crm --env-file .env -f docker-compose.prod.yml up -d --no-build
-            docker compose -p crm --env-file .env -f docker-compose.prod.yml ps
-            docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T backend python manage.py check
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml up -d --no-build --force-recreate db backend ai-memory-worker nginx caddy
+            checked=0
+            for i in 1 2 3 4 5 6; do
+              if docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T backend python manage.py check; then
+                checked=1
+                break
+              fi
+              echo "Django check failed or backend is still starting, retrying..."
+              sleep 10
+            done
+            if [ "$checked" != "1" ]; then
+              echo "Django check failed after retries."
+              exit 1
+            fi
             docker image prune -f
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml ps
           '
 
       - name: Notify Telegram
@@ -183,30 +140,27 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          set -euo pipefail
-          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
             echo "Telegram secrets are not configured, skipping notification."
             exit 0
           fi
 
-          short_sha="$(printf '%s' "$COMMIT_SHA" | cut -c1-7)"
+          SHORT_SHA="$(printf '%s' "$COMMIT_SHA" | cut -c1-7)"
+
           if [ "$JOB_STATUS" = "success" ]; then
-            title="CRM deploy completed"
+            TITLE="CRM: деплой успешно завершен"
           else
-            title="CRM deploy finished with status $JOB_STATUS"
+            TITLE="CRM: деплой завершился со статусом $JOB_STATUS"
           fi
 
-          text="$(cat <<EOF
-          $title
-          Commit: $short_sha
-          Log: $RUN_URL
-          ${SSH_CHECK_SUMMARY:+
-          SSH:
-          $SSH_CHECK_SUMMARY}
+          TEXT="$(cat <<EOF
+          $TITLE
+          Коммит: $SHORT_SHA
+          Лог: $RUN_URL
           EOF
           )"
 
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-            --data-urlencode "text=${text}" \
+            --data-urlencode "text=${TEXT}" \
             --data-urlencode "disable_web_page_preview=true"
