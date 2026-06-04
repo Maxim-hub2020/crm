@@ -924,6 +924,13 @@ class TestBillingApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertIn("Подписка", str(response.data))
 
+    def test_admin_can_use_business_api_without_active_subscription(self):
+        client = self.auth_client_for(self.admin)
+
+        response = client.get("/api/projects/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
     def test_admin_can_create_and_activate_invoice(self):
         client = self.auth_client_for(self.admin)
 

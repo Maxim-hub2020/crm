@@ -16,6 +16,9 @@ class HasActiveSubscription(BasePermission):
         if not request.user.is_authenticated:
             return False
 
+        if getattr(request.user, "is_superuser", False) or getattr(request.user, "is_admin", lambda: False)():
+            return True
+
         from .subscription import is_subscription_active
 
         return is_subscription_active()
