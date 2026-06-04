@@ -11,7 +11,7 @@
 Проверка DNS с локального компьютера:
 
 ```bash
-nslookup crm.example.ru
+nslookup cehcrm.ru
 ```
 
 ## 2. Подготовить сервер
@@ -52,10 +52,10 @@ nano .env
 Минимально проверьте:
 
 ```env
-APP_DOMAIN=crm.example.ru
+APP_DOMAIN=cehcrm.ru
 DJANGO_SECRET_KEY=long-random-secret
-ALLOWED_HOSTS=crm.example.ru,www.crm.example.ru,localhost,127.0.0.1,backend
-CSRF_TRUSTED_ORIGINS=https://crm.example.ru
+ALLOWED_HOSTS=cehcrm.ru,localhost,127.0.0.1,backend
+CSRF_TRUSTED_ORIGINS=https://cehcrm.ru
 POSTGRES_PASSWORD=strong-password
 DATABASE_URL=postgres://crm:strong-password@db:5432/crm
 GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/vertex-sa.json
@@ -103,8 +103,8 @@ docker compose -f docker-compose.prod.yml exec backend python manage.py createsu
 Проверки:
 
 ```bash
-curl -I https://crm.example.ru
-curl https://crm.example.ru/api/health/
+curl -I https://cehcrm.ru
+curl https://cehcrm.ru/api/health/
 docker compose -f docker-compose.prod.yml logs -f backend
 ```
 

@@ -58,8 +58,13 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key-change-me-please-123456")
 DEBUG = env_bool("DJANGO_DEBUG", False)
+APP_DOMAINS = [
+    item.strip().removeprefix("https://").removeprefix("http://").strip("/")
+    for item in os.getenv("APP_DOMAIN", "").replace(",", " ").split()
+    if item.strip()
+]
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1")
-for internal_host in ["localhost", "127.0.0.1", "backend"]:
+for internal_host in ["localhost", "127.0.0.1", "backend", *APP_DOMAINS]:
     if internal_host not in ALLOWED_HOSTS:
         ALLOWED_HOSTS.append(internal_host)
 
@@ -141,6 +146,10 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL", False)
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS")
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
+for app_domain in APP_DOMAINS:
+    csrf_origin = f"https://{app_domain}"
+    if csrf_origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(csrf_origin)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True
 SECURE_SSL_REDIRECT = env_bool("DJANGO_SECURE_SSL_REDIRECT", False)
