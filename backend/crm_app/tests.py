@@ -916,6 +916,15 @@ class TestBillingApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["plan"]["price_rub"], "1500.00")
         self.assertFalse(response.data["subscription"]["is_active_now"])
 
+    def test_admin_profile_reports_subscription_access(self):
+        client = self.auth_client_for(self.admin)
+
+        response = client.get("/api/me/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["is_admin"])
+        self.assertTrue(response.data["subscription_active"])
+
     def test_inactive_subscription_blocks_business_api(self):
         client = self.auth_client_for(self.manager)
 

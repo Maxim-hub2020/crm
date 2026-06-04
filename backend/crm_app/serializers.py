@@ -42,6 +42,8 @@ class MeSerializer(serializers.ModelSerializer):
         return obj.is_admin()
 
     def get_subscription_active(self, obj):
+        if obj.is_admin():
+            return True
         return is_subscription_active()
 
 

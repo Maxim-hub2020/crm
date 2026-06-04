@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Briefcase } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-import { fetchBillingSummary, fetchMe, login } from "../api";
+import { fetchBillingSummary, fetchMe, isAdminUser, login } from "../api";
 import { Input } from "../components/ui.jsx";
 
 export default function Login() {
@@ -19,7 +19,12 @@ export default function Login() {
 
     try {
       await login(username, password);
-      await fetchMe();
+      const me = await fetchMe();
+      if (isAdminUser(me)) {
+        nav("/");
+        return;
+      }
+
       const billing = await fetchBillingSummary();
       nav(billing?.subscription?.is_active_now ? "/" : "/billing");
     } catch {
