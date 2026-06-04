@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  DEPLOY_HOST: 194.87.161.144
+  DEPLOY_HOST: 93.183.82.177
   DEPLOY_PORT: ${{ secrets.TIMEWEB_PORT || '22' }}
   DEPLOY_USER: ${{ secrets.TIMEWEB_USER }}
   BACKEND_IMAGE: crm-backend:prod
