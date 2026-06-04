@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="CehCRM">
+  <defs>
+    <linearGradient id="bg" x1="92" y1="52" x2="420" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0f172a"/>
+      <stop offset="0.58" stop-color="#1d4ed8"/>
+      <stop offset="1" stop-color="#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="card" x1="156" y1="128" x2="356" y2="380" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dbeafe"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <path d="M148 180c0-31 25-56 56-56h112c31 0 56 25 56 56v192H148V180Z" fill="url(#card)" opacity="0.96"/>
+  <path d="M206 124h108c7 0 12 5 12 12v20H194v-20c0-7 5-12 12-12Z" fill="#e0f2fe"/>
+  <path d="M190 224h132M190 274h96M190 324h132" stroke="#0f172a" stroke-width="28" stroke-linecap="round"/>
+  <circle cx="352" cy="214" r="44" fill="#22c55e"/>
+  <path d="m334 214 14 14 28-34" fill="none" stroke="#fff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

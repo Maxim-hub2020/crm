@@ -109,11 +109,11 @@ export default function Subscription() {
   }
 
   if (loading) {
-    return <div className="min-h-screen bg-[#f5f5f7]" />;
+    return <div className="app-screen bg-[#f5f5f7]" />;
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f5f7] px-4 py-8 sm:px-6 lg:px-10">
+    <div className="app-screen bg-[#f5f5f7] px-4 py-8 sm:px-6 lg:px-10">
       <div className="mx-auto flex max-w-6xl flex-col gap-6">
         <div className="flex items-start justify-between gap-4">
           <div>

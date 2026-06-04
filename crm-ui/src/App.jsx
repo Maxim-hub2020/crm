@@ -64,7 +64,7 @@ function AdminOnly({ children }) {
     };
   }, []);
 
-  if (loading) return <div className="min-h-screen bg-[#f5f5f7]" />;
+  if (loading) return <div className="app-screen bg-[#f5f5f7]" />;
   if (!allowed) return <Navigate to="/" replace />;
   return children;
 }
@@ -110,7 +110,7 @@ function SubscriptionOnly({ children }) {
     };
   }, []);
 
-  if (loading) return <div className="min-h-screen bg-[#f5f5f7]" />;
+  if (loading) return <div className="app-screen bg-[#f5f5f7]" />;
   if (!allowed) return <Navigate to="/billing" replace />;
   return children;
 }

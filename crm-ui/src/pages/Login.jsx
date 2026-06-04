@@ -35,7 +35,7 @@ export default function Login() {
   }
 
   return (
-    <div className="flex h-screen items-center justify-center bg-[#F5F5F7] p-4">
+    <div className="app-screen flex items-center justify-center bg-[#F5F5F7] p-4">
       <div className="w-full max-w-sm rounded-3xl bg-white p-8 shadow-2xl ring-1 ring-black/5 sm:rounded-[40px] sm:p-10">
         <div className="mb-6 flex justify-center">
           <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-black text-white shadow-lg">

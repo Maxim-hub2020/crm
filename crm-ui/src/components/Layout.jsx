@@ -82,7 +82,7 @@ export default function Layout({ children }) {
   }
 
   return (
-    <div className="relative flex h-screen overflow-hidden bg-[#F5F5F7] selection:bg-blue-100">
+    <div className="app-shell relative flex overflow-hidden bg-[#F5F5F7] selection:bg-blue-100">
       {sidebarOpen && <div className="fixed inset-0 z-40 bg-black/30 md:hidden" onClick={closeSidebar} />}
 
       <aside
