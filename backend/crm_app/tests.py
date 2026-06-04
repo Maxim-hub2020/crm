@@ -1,6 +1,7 @@
 import os
 from unittest.mock import patch
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
@@ -36,6 +37,15 @@ class AuthenticatedApiMixin:
         ensure_subscription_defaults()
         invoice = issue_subscription_invoice(actor=actor)
         return activate_subscription_invoice(invoice)
+
+
+class TestHealthApi(APITestCase):
+    @override_settings(SECURE_SSL_REDIRECT=True, SECURE_REDIRECT_EXEMPT=[r"^api/health/$"])
+    def test_health_endpoint_does_not_redirect_when_ssl_redirect_is_enabled(self):
+        response = self.client.get("/api/health/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["status"], "ok")
 
 
 class TestAuthApi(AuthenticatedApiMixin, APITestCase):
