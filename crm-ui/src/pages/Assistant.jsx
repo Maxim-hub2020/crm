@@ -181,6 +181,11 @@ function shouldUseRecorderFallback() {
   return IOS_DEVICE || !getSpeechRecognitionCtor();
 }
 
+function getAudioContextCtor() {
+  if (typeof window === "undefined") return null;
+  return window.AudioContext || window.webkitAudioContext || null;
+}
+
 function withTimeout(promise, timeoutMs, errorMessage) {
   let timer = null;
   const timeoutPromise = new Promise((_, reject) => {
@@ -222,6 +227,8 @@ export default function Assistant() {
   const stoppingRef = useRef(false);
   const audioElementRef = useRef(null);
   const audioUrlRef = useRef("");
+  const outputAudioContextRef = useRef(null);
+  const outputAudioSourceRef = useRef(null);
   const latestAudioRef = useRef(null);
   const historyRef = useRef(history);
   const activeConversationRef = useRef(readStoredArray(window.sessionStorage, SESSION_STORAGE_KEY));
@@ -815,6 +822,8 @@ export default function Assistant() {
   }
 
   function stopPlayback() {
+    stopOutputAudioSource();
+
     if (audioElementRef.current) {
       audioElementRef.current.pause();
       audioElementRef.current.src = "";
@@ -861,12 +870,110 @@ export default function Assistant() {
     }, delay);
   }
 
+  function stopOutputAudioSource() {
+    if (outputAudioSourceRef.current) {
+      const source = outputAudioSourceRef.current;
+      outputAudioSourceRef.current = null;
+      try {
+        source.onended = null;
+      } catch {}
+      try {
+        source.stop();
+      } catch {}
+      try {
+        source.disconnect();
+      } catch {}
+    }
+  }
+
+  function unlockAudioOutput() {
+    const AudioContextCtor = getAudioContextCtor();
+    if (!AudioContextCtor) return null;
+
+    let context = outputAudioContextRef.current;
+    if (!context || context.state === "closed") {
+      context = new AudioContextCtor();
+      outputAudioContextRef.current = context;
+    }
+
+    try {
+      if (context.state === "suspended") {
+        void context.resume();
+      }
+
+      const source = context.createBufferSource();
+      source.buffer = context.createBuffer(1, 1, context.sampleRate);
+      source.connect(context.destination);
+      source.start(0);
+    } catch {}
+
+    return context;
+  }
+
+  async function playWithOutputAudioContext(blob, { autoResume, epoch }) {
+    const context = unlockAudioOutput();
+    if (!context) return false;
+
+    try {
+      if (context.state === "suspended") {
+        await context.resume();
+      }
+
+      const audioBuffer = await context.decodeAudioData(await blob.arrayBuffer());
+
+      return await new Promise((resolve) => {
+        stopOutputAudioSource();
+
+        const source = context.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(context.destination);
+        outputAudioSourceRef.current = source;
+
+        let finished = false;
+        const finish = (playbackOk = true) => {
+          if (finished) return;
+          finished = true;
+          if (outputAudioSourceRef.current === source) {
+            outputAudioSourceRef.current = null;
+          }
+          try {
+            source.disconnect();
+          } catch {}
+          speakingRef.current = false;
+          setSpeaking(false);
+          if (autoResume && sessionActiveRef.current && epoch === requestEpochRef.current) {
+            scheduleAutoResume();
+          }
+          resolve(playbackOk);
+        };
+
+        speakingRef.current = true;
+        setSpeaking(true);
+        source.onended = finish;
+
+        try {
+          source.start(0);
+        } catch {
+          finish(false);
+        }
+      });
+    } catch {
+      stopOutputAudioSource();
+      speakingRef.current = false;
+      setSpeaking(false);
+      return false;
+    }
+  }
+
   async function playGeminiAudio(audioBase64, mimeType, { autoResume = false, epoch = requestEpochRef.current } = {}) {
     if (!audioBase64) return;
 
     stopPlayback();
 
     const blob = base64ToBlob(audioBase64, mimeType);
+    const playedWithOutputContext = await playWithOutputAudioContext(blob, { autoResume, epoch });
+    if (playedWithOutputContext) return;
+
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audio.preload = "auto";
@@ -1536,6 +1643,7 @@ export default function Assistant() {
 
   async function handleOrbClick() {
     if (!sessionActive) {
+      unlockAudioOutput();
       requestEpochRef.current += 1;
       activeConversationRef.current = [];
       window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
