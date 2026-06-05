@@ -16,7 +16,8 @@ const MIN_SPEECH_MS = 220;
 const MAX_UTTERANCE_MS = 30000;
 const LIVE_ASSISTANT_CONFIG_ENABLED = import.meta.env.VITE_ASSISTANT_LIVE === "1";
 const LIVE_ASSISTANT_FORCE_IOS = import.meta.env.VITE_ASSISTANT_LIVE_IOS === "1";
-const LIVE_ASSISTANT_ENABLED = LIVE_ASSISTANT_CONFIG_ENABLED && (!isIOSDevice() || LIVE_ASSISTANT_FORCE_IOS);
+const IOS_DEVICE = isIOSDevice();
+const LIVE_ASSISTANT_ENABLED = LIVE_ASSISTANT_CONFIG_ENABLED && (!IOS_DEVICE || LIVE_ASSISTANT_FORCE_IOS);
 const LIVE_INPUT_SAMPLE_RATE = 16000;
 const LIVE_OUTPUT_SAMPLE_RATE = 24000;
 const LIVE_CLIENT_SILENCE_MS = clampNumber(readEnvNumber(import.meta.env.VITE_ASSISTANT_CLIENT_SILENCE_MS, 1600), 900, 2000);
@@ -30,7 +31,8 @@ const STABLE_CLIENT_SILENCE_MS = Number(import.meta.env.VITE_ASSISTANT_STABLE_SI
 const STABLE_MAX_UTTERANCE_MS = clampNumber(readEnvNumber(import.meta.env.VITE_ASSISTANT_STABLE_MAX_UTTERANCE_MS, 30000), 8000, 60000);
 const BROWSER_TTS_MAX_MS = Number(import.meta.env.VITE_ASSISTANT_TTS_MAX_MS || 18000);
 const ASSISTANT_TEXT_REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_ASSISTANT_TEXT_TIMEOUT_MS || 22000);
-const ASSISTANT_PENDING_WATCHDOG_MS = Number(import.meta.env.VITE_ASSISTANT_PENDING_WATCHDOG_MS || 26000);
+const RAW_ASSISTANT_PENDING_WATCHDOG_MS = Number(import.meta.env.VITE_ASSISTANT_PENDING_WATCHDOG_MS || 26000);
+const ASSISTANT_PENDING_WATCHDOG_MS = IOS_DEVICE ? Math.max(RAW_ASSISTANT_PENDING_WATCHDOG_MS, 60000) : RAW_ASSISTANT_PENDING_WATCHDOG_MS;
 
 function readEnvNumber(value, fallback) {
   const parsed = Number(value);
@@ -173,6 +175,10 @@ function writeStoredArray(storage, key, value) {
 function getSpeechRecognitionCtor() {
   if (typeof window === "undefined") return null;
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function shouldUseRecorderFallback() {
+  return IOS_DEVICE || !getSpeechRecognitionCtor();
 }
 
 function withTimeout(promise, timeoutMs, errorMessage) {
@@ -863,6 +869,8 @@ export default function Assistant() {
     const blob = base64ToBlob(audioBase64, mimeType);
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
+    audio.preload = "auto";
+    audio.playsInline = true;
 
     audioElementRef.current = audio;
     audioUrlRef.current = url;
@@ -1032,6 +1040,10 @@ export default function Assistant() {
   }
 
   function startStableVoiceRecognition() {
+    if (IOS_DEVICE) {
+      return false;
+    }
+
     const SpeechRecognitionCtor = getSpeechRecognitionCtor();
     if (!SpeechRecognitionCtor) {
       setError("В этом браузере нет встроенного распознавания речи. Включите VITE_ASSISTANT_LIVE=1 или используйте Chrome/Яндекс Браузер.");
@@ -1536,10 +1548,14 @@ export default function Assistant() {
           deactivateSession();
         }
       } else {
-        const stableStarted = startStableVoiceRecognition();
-        if (!stableStarted) {
+        if (shouldUseRecorderFallback()) {
           const recorderStarted = await startRecording();
           if (!recorderStarted) {
+            deactivateSession();
+          }
+        } else {
+          const stableStarted = startStableVoiceRecognition();
+          if (!stableStarted) {
             deactivateSession();
           }
         }
@@ -1679,6 +1695,20 @@ export default function Assistant() {
               ))
             )}
           </div>
+        </div>
+      ) : null}
+
+      {!showDialog && (heardText || replyText) ? (
+        <div className="voice-mode-last-reply">
+          {heardText ? <div className="voice-mode-last-heard">{heardText}</div> : null}
+          <div className="voice-mode-last-answer">
+            {replyText || "Жду ответ AI-помощника..."}
+          </div>
+          {latestAudioRef.current?.audioBase64 ? (
+            <button type="button" className="voice-mode-last-repeat" onClick={replayLatestReply} disabled={pending}>
+              Повторить
+            </button>
+          ) : null}
         </div>
       ) : null}
 

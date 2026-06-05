@@ -418,7 +418,7 @@ export async function sendAssistantVoiceMessage({ audioBlob, history }) {
   const formData = new FormData();
   formData.append("audio", audioBlob, "voice-command.wav");
   formData.append("history", JSON.stringify(history || []));
-  const { data } = await api.post("/api/assistant/voice/", formData, { timeout: 30000 });
+  const { data } = await api.post("/api/assistant/voice/", formData, { timeout: 60000 });
   return data;
 }
 

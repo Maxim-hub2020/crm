@@ -235,9 +235,9 @@ input[type="number"]::-webkit-inner-spin-button {
 .voice-mode-screen {
   position: relative;
   box-sizing: border-box;
-  height: 100%;
-  min-height: 0;
-  max-height: 100dvh;
+  height: var(--app-height, 100dvh);
+  min-height: var(--app-height, 100dvh);
+  max-height: var(--app-height, 100dvh);
   overflow: hidden;
   background:
     radial-gradient(circle at 12% 12%, rgba(66, 133, 244, 0.08), transparent 22%),
@@ -261,7 +261,11 @@ input[type="number"]::-webkit-inner-spin-button {
   z-index: 4;
   display: flex;
   justify-content: flex-end;
-  padding: 24px 28px 0;
+  padding:
+    calc(env(safe-area-inset-top, 0px) + 24px)
+    calc(env(safe-area-inset-right, 0px) + 28px)
+    0
+    calc(env(safe-area-inset-left, 0px) + 28px);
   pointer-events: none;
 }
 
@@ -539,6 +543,53 @@ input[type="number"]::-webkit-inner-spin-button {
   color: #0f172a;
 }
 
+.voice-mode-last-reply {
+  position: fixed;
+  right: 28px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 22px);
+  left: 108px;
+  z-index: 3;
+  display: grid;
+  gap: 8px;
+  max-height: min(28vh, 220px);
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 24px;
+  padding: 16px 18px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(18px);
+  text-align: left;
+}
+
+.voice-mode-last-heard {
+  font-size: 12px;
+  font-weight: 800;
+  color: #64748b;
+}
+
+.voice-mode-last-answer {
+  font-size: 15px;
+  line-height: 1.65;
+  color: #0f172a;
+}
+
+.voice-mode-last-repeat {
+  justify-self: start;
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.voice-mode-last-repeat:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .voice-mode-history {
   display: grid;
   gap: 10px;
@@ -591,7 +642,8 @@ input[type="number"]::-webkit-inner-spin-button {
 }
 
 .voice-mode-error--compact {
-  bottom: 34px;
+  top: calc(env(safe-area-inset-top, 0px) + 92px);
+  bottom: auto;
 }
 
 @keyframes voiceBlobFloat {
@@ -664,7 +716,11 @@ input[type="number"]::-webkit-inner-spin-button {
 
 @media (max-width: 768px) {
   .voice-mode-topbar {
-    padding: 16px 16px 0;
+    padding:
+      calc(env(safe-area-inset-top, 0px) + 12px)
+      calc(env(safe-area-inset-right, 0px) + 16px)
+      0
+      calc(env(safe-area-inset-left, 0px) + 16px);
   }
 
   .voice-mode-topbar-actions {
@@ -692,15 +748,24 @@ input[type="number"]::-webkit-inner-spin-button {
 
   .voice-mode-dock {
     right: 16px;
-    bottom: 16px;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
     left: 16px;
     max-height: min(44vh, 340px);
     padding: 14px;
   }
 
+  .voice-mode-last-reply {
+    right: calc(env(safe-area-inset-right, 0px) + 16px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+    left: calc(env(safe-area-inset-left, 0px) + 16px);
+    max-height: min(30vh, 240px);
+    padding: 14px 15px;
+  }
+
   .voice-mode-error {
     right: 16px;
-    bottom: 270px;
+    top: calc(env(safe-area-inset-top, 0px) + 82px);
+    bottom: auto;
     left: 16px;
     transform: none;
   }
