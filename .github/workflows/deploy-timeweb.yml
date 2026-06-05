@@ -69,7 +69,7 @@ jobs:
             echo "SSH attempt $i..."
             if timeout 75 ssh $SSH_OPTS \
               "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" \
-              "mkdir -p /opt/crm && test -f /opt/crm/.env && echo DIR_OK"; then
+              "mkdir -p /opt/crm && test -f /opt/crm/.env && rm -f /tmp/crm-files.tar.gz /tmp/crm-images.tar.gz && (docker image prune -af >/dev/null 2>&1 || true) && echo DIR_OK"; then
               exit 0
             fi
             echo "SSH failed, waiting before retry..."
@@ -102,6 +102,7 @@ jobs:
               mkdir -p /opt/crm/backend
               cp -a /tmp/crm-preserve/backend/secrets /opt/crm/backend/secrets
             fi
+            docker image prune -af >/dev/null 2>&1 || true
             docker load < /tmp/crm-images.tar.gz
             rm -rf /tmp/crm-files.tar.gz /tmp/crm-images.tar.gz /tmp/crm-preserve
           '
