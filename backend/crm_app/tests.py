@@ -1,5 +1,6 @@
 import os
 from unittest.mock import patch
+from asgiref.sync import async_to_sync
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.utils import timezone
@@ -7,6 +8,7 @@ from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
 from .ai_assistant import humanize_gemini_error
+from .live_assistant import _has_live_assistant_access
 from .models import Payment, Project, ProjectComment, ProjectStatus, SubscriptionInvoice, Task, User
 from .subscription import activate_subscription_invoice, ensure_subscription_defaults, issue_subscription_invoice
 
@@ -924,6 +926,10 @@ class TestBillingApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data["is_admin"])
         self.assertTrue(response.data["subscription_active"])
+
+    def test_admin_can_use_live_assistant_without_active_subscription(self):
+        self.assertTrue(async_to_sync(_has_live_assistant_access)(self.admin))
+        self.assertFalse(async_to_sync(_has_live_assistant_access)(self.manager))
 
     def test_inactive_subscription_blocks_business_api(self):
         client = self.auth_client_for(self.manager)

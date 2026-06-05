@@ -57,7 +57,9 @@ def _authenticate_websocket_token(raw_token):
 
 
 @database_sync_to_async
-def _has_active_subscription():
+def _has_live_assistant_access(user):
+    if user and (getattr(user, "is_superuser", False) or getattr(user, "is_admin", lambda: False)()):
+        return True
     return is_subscription_active()
 
 
@@ -118,7 +120,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
             await self.close(code=4401)
             return
 
-        if not await _has_active_subscription():
+        if not await _has_live_assistant_access(self.user):
             await self.close(code=4403)
             return
 

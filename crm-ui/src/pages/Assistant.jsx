@@ -14,7 +14,9 @@ const SILENCE_MS = 3000;
 const MIN_RECORDING_MS = 1200;
 const MIN_SPEECH_MS = 220;
 const MAX_UTTERANCE_MS = 30000;
-const LIVE_ASSISTANT_ENABLED = import.meta.env.VITE_ASSISTANT_LIVE === "1";
+const LIVE_ASSISTANT_CONFIG_ENABLED = import.meta.env.VITE_ASSISTANT_LIVE === "1";
+const LIVE_ASSISTANT_FORCE_IOS = import.meta.env.VITE_ASSISTANT_LIVE_IOS === "1";
+const LIVE_ASSISTANT_ENABLED = LIVE_ASSISTANT_CONFIG_ENABLED && (!isIOSDevice() || LIVE_ASSISTANT_FORCE_IOS);
 const LIVE_INPUT_SAMPLE_RATE = 16000;
 const LIVE_OUTPUT_SAMPLE_RATE = 24000;
 const LIVE_CLIENT_SILENCE_MS = clampNumber(readEnvNumber(import.meta.env.VITE_ASSISTANT_CLIENT_SILENCE_MS, 1600), 900, 2000);
@@ -37,6 +39,12 @@ function readEnvNumber(value, fallback) {
 
 function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function isIOSDevice() {
+  if (typeof navigator === "undefined") return false;
+  const userAgent = navigator.userAgent || "";
+  return /iPad|iPhone|iPod/.test(userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
 function statusText({ sessionActive, recording, pending, speaking }) {
@@ -600,7 +608,7 @@ export default function Assistant() {
     resetLiveTurnDetection();
   }
 
-  function scheduleLiveReconnect(reason = "") {
+  function scheduleLiveReconnect(reason = "", { silent = false } = {}) {
     if (!sessionActiveRef.current) return;
 
     clearLiveResponseWatchdogTimer();
@@ -1413,11 +1421,11 @@ export default function Assistant() {
   async function startRecording() {
     if (!voiceSupported) {
       setError("В этом браузере недоступна запись микрофона.");
-      return;
+      return false;
     }
 
     if (!sessionActiveRef.current || recordingRef.current || pendingRef.current || speakingRef.current) {
-      return;
+      return false;
     }
 
     clearResumeTimer();
@@ -1505,10 +1513,12 @@ export default function Assistant() {
       sampleRateRef.current = audioContext.sampleRate;
       recordingRef.current = true;
       setRecording(true);
+      return true;
     } catch {
       teardownRecorder();
       setError("Браузер не дал доступ к микрофону. Разрешите его для этого сайта.");
       deactivateSession();
+      return false;
     }
   }
 
@@ -1528,7 +1538,10 @@ export default function Assistant() {
       } else {
         const stableStarted = startStableVoiceRecognition();
         if (!stableStarted) {
-          deactivateSession();
+          const recorderStarted = await startRecording();
+          if (!recorderStarted) {
+            deactivateSession();
+          }
         }
       }
       return;
