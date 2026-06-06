@@ -1489,8 +1489,9 @@ export default function Assistant() {
           epoch,
         });
       } else {
-        if (response.speech_error) {
-          setError(response.speech_error);
+        await speakBrowserReply(nextReply);
+        if (epoch !== requestEpochRef.current) {
+          return;
         }
         if (sessionActiveRef.current) {
           scheduleAutoResume();

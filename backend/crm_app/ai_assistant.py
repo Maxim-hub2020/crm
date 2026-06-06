@@ -282,9 +282,9 @@ class GeminiClient:
         if not clean_text:
             raise GeminiRequestError("Нельзя озвучить пустой текст.")
 
-        if self.backend == "vertex_ai":
-            return self._generate_speech_with_vertex_tts(clean_text)
+        return self._generate_speech_with_gemini_tts(clean_text)
 
+    def _generate_speech_with_gemini_tts(self, clean_text):
         prompt = f"{self.tts_style}\n\nТекст ответа:\n{clean_text}"
         response = self.generate_content(
             model=self.tts_model,

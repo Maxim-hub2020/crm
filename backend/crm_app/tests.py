@@ -1,3 +1,4 @@
+import base64
 import os
 from unittest.mock import patch
 from asgiref.sync import async_to_sync
@@ -7,7 +8,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
-from .ai_assistant import humanize_gemini_error
+from .ai_assistant import GeminiClient, GeminiRequestError, humanize_gemini_error
 from .live_assistant import _has_live_assistant_access
 from .models import Payment, Project, ProjectComment, ProjectStatus, SubscriptionInvoice, Task, User
 from .subscription import activate_subscription_invoice, ensure_subscription_defaults, issue_subscription_invoice
@@ -893,7 +894,81 @@ class TestAssistantApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["voice_name"], "Kore")
         self.assertTrue(response.data["audio_base64"])
 
+    @patch("crm_app.ai_assistant.GeminiClient.generate_speech")
+    @patch("crm_app.ai_assistant.GeminiClient.transcribe_audio")
+    @patch("crm_app.ai_assistant.GeminiClient.generate_content")
+    def test_voice_endpoint_keeps_text_reply_when_tts_fails(
+        self,
+        mocked_generate_content,
+        mocked_transcribe_audio,
+        mocked_generate_speech,
+    ):
+        os.environ["GEMINI_BACKEND"] = "google_ai"
+        os.environ["GEMINI_API_KEY"] = "test-key"
+        mocked_transcribe_audio.return_value = "Привет"
+        mocked_generate_content.return_value = self.make_text_response("Приветствую, я слушаю вас.")
+        mocked_generate_speech.side_effect = GeminiRequestError("Gemini TTS test error")
+
+        client = self.auth_client_for(self.admin)
+        response = client.post(
+            "/api/assistant/voice/",
+            {
+                "audio": SimpleUploadedFile("voice-command.wav", b"fake-wav-data", content_type="audio/wav"),
+                "history": "[]",
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["reply"], "Здравствуйте. Слушаю вас.")
+        self.assertEqual(response.data["audio_base64"], "")
+        self.assertIn("Gemini TTS test error", response.data["speech_error"])
+
 class TestGeminiErrors(APITestCase):
+    @patch.object(GeminiClient, "_post")
+    def test_vertex_tts_uses_gemini_audio_generation(self, mocked_post):
+        previous = {
+            name: os.environ.get(name)
+            for name in ("GEMINI_BACKEND", "VERTEX_AI_PROJECT_ID", "GEMINI_TTS_MODEL", "GEMINI_TTS_VOICE")
+        }
+        os.environ["GEMINI_BACKEND"] = "vertex_ai"
+        os.environ["VERTEX_AI_PROJECT_ID"] = "test-project"
+        os.environ["GEMINI_TTS_MODEL"] = "gemini-2.5-flash-preview-tts"
+        os.environ["GEMINI_TTS_VOICE"] = "Kore"
+        mocked_post.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "inlineData": {
+                                    "data": base64.b64encode(b"\x00\x00").decode("ascii"),
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        try:
+            client = GeminiClient()
+            speech = client.generate_speech("Привет")
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        payload = mocked_post.call_args.args[0]
+        self.assertEqual(mocked_post.call_args.kwargs["model"], "gemini-2.5-flash-preview-tts")
+        self.assertEqual(payload["generationConfig"]["responseModalities"], ["AUDIO"])
+        self.assertEqual(
+            payload["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"],
+            "Kore",
+        )
+        self.assertEqual(speech["mime_type"], "audio/wav")
+
     def test_location_error_points_to_vertex_ai(self):
         message = humanize_gemini_error(
             '{"error":{"code":400,"message":"User location is not supported for the API use.","status":"FAILED_PRECONDITION"}}',
