@@ -194,7 +194,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return Response({"detail": f"Не удалось сформировать PDF: {exc}"}, status=drf_status.HTTP_400_BAD_REQUEST)
 
         document_label = "dogovor" if document_type == DocumentTemplate.Type.CONTRACT else "akt"
-        safe_project_name = "".join(ch for ch in project.client_name if ch.isalnum() or ch in (" ", "-", "_")).strip()
+        safe_project_name = "".join(ch for ch in (project.title or project.client_name) if ch.isalnum() or ch in (" ", "-", "_")).strip()
         filename = f"{document_label}-{safe_project_name or project.id}.pdf"
         return FileResponse(BytesIO(content), as_attachment=True, filename=filename, content_type="application/pdf")
 
@@ -209,7 +209,7 @@ def render_pdf_template(template, project):
         "CLIENT_EMAIL": (client.email if client else project.client_email) or "",
         "CLIENT_ADDRESS": (client.address if client else project.object_address) or "",
         "DEAL_VALUE": str(project.total_amount or ""),
-        "PROJECT_TITLE": project.client_name or "",
+        "PROJECT_TITLE": project.title or project.client_name or "",
         "DOCUMENT_DATE": timezone.localdate().strftime("%d.%m.%Y"),
         "REMARKS": "Замечания отсутствуют",
     }

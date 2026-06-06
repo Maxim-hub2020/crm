@@ -761,7 +761,7 @@ class CRMAssistantService:
     def _fast_project_line(self, project, status_map, extra=None):
         status_name = status_map.get(project.status) or project.status or "\u0431\u0435\u0437 \u0441\u0442\u0430\u0442\u0443\u0441\u0430"
         parts = [
-            f"#{project.id} {project.client_name}",
+            f"#{project.id} {self._project_display_name(project)}",
             f"\u0441\u0442\u0430\u0442\u0443\u0441: {status_name}",
         ]
         if project.total_amount is not None:
@@ -1171,6 +1171,7 @@ class CRMAssistantService:
                     "type": "object",
                     "properties": {
                         "client_name": {"type": "string"},
+                        "title": {"type": "string", "description": "Наименование проекта, если отличается от имени клиента."},
                         "client_phone": {"type": "string"},
                         "client_email": {"type": "string"},
                         "object_address": {"type": "string"},
@@ -1219,6 +1220,7 @@ class CRMAssistantService:
                     "properties": {
                         "project_id": {"type": "integer"},
                         "project_query": {"type": "string"},
+                        "title": {"type": "string"},
                         "client_name": {"type": "string"},
                         "client_phone": {"type": "string"},
                         "client_email": {"type": "string"},
@@ -1653,6 +1655,7 @@ class CRMAssistantService:
             stuck_after_days = self._project_stuck_after_days(project, status_obj)
             row = {
                 "project_id": project.id,
+                "title": self._project_display_name(project),
                 "client_name": (client.name if client else project.client_name) or "",
                 "status": status_map.get(project.status, project.status),
                 "status_code": project.status,
@@ -1848,10 +1851,14 @@ class CRMAssistantService:
             return list(User.objects.filter(is_active=True).order_by("first_name", "last_name", "username"))
         return [self.user]
 
+    def _project_display_name(self, project):
+        return project.title or project.client_name or f"Проект #{project.id}"
+
     def _serialize_project(self, project, include_payments=False, include_comments=False):
         client = project.client
         payload = {
             "project_id": project.id,
+            "title": self._project_display_name(project),
             "client_id": client.id if client else None,
             "client_name": (client.name if client else project.client_name) or "",
             "client_phone": (client.phone if client else project.client_phone) or "",
@@ -2051,6 +2058,7 @@ class CRMAssistantService:
                 " ".join(
                     [
                         str(project.id),
+                        project.title or "",
                         project.client_name or "",
                         project.client_phone or "",
                         project.client_email or "",
@@ -2100,7 +2108,7 @@ class CRMAssistantService:
         if len(matches) > 1:
             return None, self._clarification(
                 "Нашёл несколько похожих проектов. Уточните, какой именно нужен.",
-                [f"{project.id}: {project.client_name}" for project in matches[:6]],
+                [f"{project.id}: {self._project_display_name(project)}" for project in matches[:6]],
             )
         return matches[0], None
 
@@ -2380,6 +2388,7 @@ class CRMAssistantService:
         client_name = str(arguments.get("client_name") or "").strip()
         if not client_name:
             return self._clarification("Чтобы создать проект, мне нужно имя клиента или название проекта.", [])
+        project_title = str(arguments.get("title") or "").strip() or client_name
 
         manager = self.user
         if self.user.is_admin() and arguments.get("manager_name"):
@@ -2403,6 +2412,7 @@ class CRMAssistantService:
         project = Project.objects.create(
             manager=manager,
             client=client,
+            title=project_title,
             client_name=client_name,
             client_phone=client.phone or "",
             client_email=client.email,
@@ -2417,7 +2427,7 @@ class CRMAssistantService:
         return {
             "ok": True,
             "needs_clarification": False,
-            "summary": f"Создан проект «{project.client_name}» со статусом «{self._status_name(project.status)}».",
+            "summary": f"Создан проект «{self._project_display_name(project)}» со статусом «{self._status_name(project.status)}».",
             "project": self._serialize_project(project, include_payments=True, include_comments=True),
         }
 
@@ -2452,6 +2462,7 @@ class CRMAssistantService:
 
         updates = {}
         text_fields = [
+            "title",
             "client_name",
             "client_phone",
             "client_email",

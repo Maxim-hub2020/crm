@@ -19,6 +19,10 @@ function projectAge(project) {
   return Math.max(0, Math.ceil((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24)));
 }
 
+function projectDisplayName(project) {
+  return project?.title || project?.client_name || `Проект #${project?.id || ""}`;
+}
+
 function Panel({ icon: Icon, iconClassName, title, children }) {
   return (
     <div>
@@ -81,10 +85,11 @@ export default function Dashboard() {
             <button
               key={project.id}
               type="button"
-              onClick={() => navigate("/projects", { state: { q: project.client_name } })}
+              onClick={() => navigate("/projects", { state: { q: projectDisplayName(project) } })}
               className="w-full rounded-2xl bg-gray-50 p-4 text-left transition hover:bg-gray-100"
             >
-              <h4 className="font-bold text-gray-800">{project.client_name}</h4>
+              <h4 className="font-bold text-gray-800">{projectDisplayName(project)}</h4>
+              <p className="mt-1 text-xs text-gray-500">{project.client_name || "Клиент не указан"}</p>
               <p className="mt-1 text-xs text-gray-500">{project.object_address || "Адрес не указан"}</p>
               <p className="mt-1 text-xs font-semibold text-red-500">
                 Без изменений {projectAge(project)} дн. • {formatDate(project.updated_at || project.created_at)}

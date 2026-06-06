@@ -45,12 +45,6 @@ import {
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
 
-const CATEGORY_OPTIONS = [
-  { value: "mirrors", label: "Зеркала" },
-  { value: "furniture", label: "Мебель" },
-  { value: "shower", label: "Душевые" },
-];
-
 const DEFAULT_STATUS_OPTIONS = [
   { value: "active", label: "В работе", short: "Работа", color: "sky", is_default: true },
   { value: "closed", label: "Завершено", short: "Готово", color: "emerald", is_default: false },
@@ -88,6 +82,7 @@ function normalizeStatusOption(status) {
 
 function createEmptyProjectForm(status = "active") {
   return {
+    title: "",
     client: "",
     client_query: "",
     client_name: "",
@@ -95,7 +90,6 @@ function createEmptyProjectForm(status = "active") {
     client_email: "",
     object_address: "",
     description: "",
-    categories: "mirrors",
     total_amount: "",
     works_with_contract: false,
     status,
@@ -114,6 +108,7 @@ function createEmptyPaymentForm() {
 
 function normalizeProjectForm(project, fallbackStatus = "active") {
   return {
+    title: project?.title || "",
     client: project?.client || project?.client_info?.id || "",
     client_query: project?.client_name || "",
     client_name: project?.client_name || "",
@@ -121,7 +116,6 @@ function normalizeProjectForm(project, fallbackStatus = "active") {
     client_email: project?.client_email || "",
     object_address: project?.object_address || "",
     description: project?.description || "",
-    categories: project?.categories || "mirrors",
     total_amount: project?.total_amount ? String(project.total_amount) : "",
     works_with_contract: Boolean(project?.client_info?.works_with_contract ?? project?.works_with_contract),
     status: project?.status || fallbackStatus,
@@ -132,19 +126,12 @@ function labelFor(options, value) {
   return options.find((option) => option.value === value)?.label || value;
 }
 
-function categoryBadges(csv) {
-  const selected = new Set(
-    (csv || "")
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean)
-  );
-
-  return CATEGORY_OPTIONS.filter((item) => selected.has(item.value)).map((item) => item.label);
-}
-
 function formatMoney(value) {
   return moneyFormatter.format(Number(value || 0));
+}
+
+function projectDisplayName(project) {
+  return project?.title || project?.client_name || `Проект #${project?.id || ""}`;
 }
 
 function normalizeSearchText(value) {
@@ -311,9 +298,9 @@ function ProjectKanbanCard({ project, amount, ageDays, onClick }) {
       className="w-full rounded-[22px] border border-slate-200/90 bg-white px-4 py-4 text-left shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_14px_32px_rgba(15,23,42,0.08)]"
     >
       <div className="line-clamp-2 text-[1.02rem] font-black leading-6 tracking-tight text-slate-800">
-        {project.client_name}
+        {projectDisplayName(project)}
       </div>
-      <div className="mt-1.5 text-sm text-slate-500">{project.client_phone || "Клиент не назначен"}</div>
+      <div className="mt-1.5 text-sm text-slate-500">{project.client_name || project.client_phone || "Клиент не назначен"}</div>
       <div className="mt-4 flex items-end justify-between gap-3">
         <div className="text-[1.05rem] font-black tracking-tight text-blue-600">{formatMoney(amount)} ₽</div>
         <span className={`rounded-full px-3 py-1 text-sm font-semibold ${ageBadgeClass(ageDays)}`}>
@@ -511,7 +498,7 @@ export default function Projects() {
     if (!value) return projects;
 
     return projects.filter((project) =>
-      [project.client_name, project.client_phone, project.object_address, project.description]
+      [project.title, project.client_name, project.client_phone, project.object_address, project.description]
         .filter(Boolean)
         .some((field) => field.toLowerCase().includes(value))
     );
@@ -633,19 +620,25 @@ export default function Projects() {
     setCreateSaving(true);
 
     try {
+      if (!createForm.title.trim()) {
+        setCreateError("Укажите наименование проекта.");
+        return;
+      }
+
       if (!createForm.client_name.trim() && !createForm.client && !createForm.client_phone.trim()) {
         setCreateError("Выберите клиента или укажите имя для новой карточки клиента.");
         return;
       }
 
       const created = await createProject({
+        title: createForm.title.trim(),
         client: createForm.client || undefined,
         client_name: createForm.client_name.trim(),
         client_phone: createForm.client_phone.trim(),
         client_email: createForm.client_email.trim() || undefined,
         object_address: createForm.object_address.trim(),
         description: createForm.description.trim(),
-        categories: createForm.categories,
+        categories: "",
         status: createForm.status,
         total_amount: createForm.total_amount.trim() ? createForm.total_amount.trim() : null,
       });
@@ -675,18 +668,24 @@ export default function Projects() {
     setDetailSaving(true);
 
     try {
+      if (!detailForm.title.trim()) {
+        setDetailError("Укажите наименование проекта.");
+        return;
+      }
+
       if (!detailForm.client_name.trim()) {
-        setDetailError("Укажите клиента или название проекта.");
+        setDetailError("Укажите клиента.");
         return;
       }
 
       const updated = await updateProject(activeProject.id, {
+        title: detailForm.title.trim(),
         client_name: detailForm.client_name.trim(),
         client_phone: detailForm.client_phone.trim(),
         client_email: detailForm.client_email.trim(),
         object_address: detailForm.object_address.trim(),
         description: detailForm.description.trim(),
-        categories: detailForm.categories,
+        categories: "",
         status: detailForm.status,
         total_amount: detailForm.total_amount.trim() ? detailForm.total_amount.trim() : null,
       });
@@ -805,7 +804,7 @@ export default function Projects() {
     try {
       const { blob, headers } = await downloadProjectDocument(activeProject.id, documentType);
       const documentName = documentType === "contract" ? "dogovor" : "akt";
-      const fallback = `${documentName}-${sanitizeFileName(activeProject.client_name)}.pdf`;
+      const fallback = `${documentName}-${sanitizeFileName(projectDisplayName(activeProject))}.pdf`;
       saveBlob(blob, filenameFromDisposition(headers, fallback));
     } catch (error) {
       let message = extractApiErrorMessage(
@@ -835,7 +834,7 @@ export default function Projects() {
     setConfirmState({
       kind: "project",
       title: "Удалить проект",
-      message: `Проект «${activeProject.client_name}» будет удалён вместе с операциями и комментариями.`,
+      message: `Проект «${projectDisplayName(activeProject)}» будет удалён вместе с операциями и комментариями.`,
     });
   }
 
@@ -1015,13 +1014,14 @@ export default function Projects() {
                   <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
                     <div className="space-y-4">
                       <div className="flex flex-wrap items-center gap-3">
-                        <div className="text-2xl font-black tracking-tight text-slate-900">{project.client_name}</div>
+                        <div className="text-2xl font-black tracking-tight text-slate-900">{projectDisplayName(project)}</div>
                         <Badge className={statusBadgeClass(statusMeta?.color || project.status)}>
                           {labelFor(statusOptions, project.status)}
                         </Badge>
                       </div>
 
                       <div className="grid gap-3 text-sm text-slate-500 sm:grid-cols-2">
+                        <div className="font-semibold text-slate-700">{project.client_name || "Клиент не указан"}</div>
                         <div className="flex items-center gap-2">
                           <Phone size={16} />
                           {project.client_phone || "Телефон не указан"}
@@ -1030,12 +1030,6 @@ export default function Projects() {
                           <MapPin size={16} />
                           {project.object_address || "Адрес не указан"}
                         </div>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        {categoryBadges(project.categories).map((item) => (
-                          <Badge key={`${project.id}-${item}`}>{item}</Badge>
-                        ))}
                       </div>
 
                       {project.description && <div className="max-w-3xl text-sm leading-6 text-slate-600">{project.description}</div>}
@@ -1085,6 +1079,15 @@ export default function Projects() {
         <form className="space-y-5" onSubmit={submitCreate}>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2 md:col-span-2">
+              <Label>Наименование проекта</Label>
+              <Input
+                required
+                value={createForm.title}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, title: event.target.value }))}
+                placeholder="Например, Кухня и зеркала на Ленина"
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
               <Label>Клиент</Label>
               <Input
                 type="tel"
@@ -1096,75 +1099,55 @@ export default function Projects() {
                 placeholder="Введите телефон клиента"
               />
             </div>
-            <div className="space-y-2 md:col-span-2">
-              <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-3">
-                <div className="flex items-center justify-between gap-3 px-1">
-                  <div>
-                    <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Проверка клиента</div>
-                    <div className="mt-1 text-sm font-semibold text-slate-600">
-                      Поиск идет по телефону, имени и адресу в клиентской базе.
-                    </div>
+            {createClientLookup.queryReady && (
+              <div className="space-y-2 md:col-span-2">
+                {selectedCreateClient ? (
+                  <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
+                    Выбран клиент: {selectedCreateClient.client_name || "без имени"} • {selectedCreateClient.client_phone || "телефон не указан"}
                   </div>
-                  {selectedCreateClient ? (
-                    <Badge className="bg-blue-100 text-blue-700">Выбран</Badge>
-                  ) : createClientLookup.queryReady ? (
-                    <Badge className={createClientLookup.matches.length ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}>
-                      {createClientLookup.matches.length ? `Найдено: ${createClientLookup.matches.length}` : "Новый"}
-                    </Badge>
-                  ) : null}
-                </div>
-
-                {createClientLookup.queryReady && (
-                  <div className="mt-3 space-y-2">
-                    {selectedCreateClient ? (
-                      <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
-                        Выбран клиент: {selectedCreateClient.client_name || "без имени"} • {selectedCreateClient.client_phone || "телефон не указан"}
+                ) : createClientLookup.matches.length > 0 ? (
+                  createClientLookup.matches.map((client) => (
+                    <button
+                      key={client.key}
+                      type="button"
+                      onClick={() => applyClientFromSearch(client)}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-blue-200 hover:bg-blue-50"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-black text-slate-800">{client.client_name || "Клиент без имени"}</span>
+                        <span className="text-xs font-bold text-blue-600">Выбрать</span>
                       </div>
-                    ) : createClientLookup.matches.length > 0 ? (
-                      createClientLookup.matches.map((client) => (
-                        <button
-                          key={client.key}
-                          type="button"
-                          onClick={() => applyClientFromSearch(client)}
-                          className="w-full rounded-2xl border border-white bg-white px-4 py-3 text-left shadow-sm transition hover:border-blue-200 hover:bg-blue-50"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="font-black text-slate-800">{client.client_name || "Клиент без имени"}</span>
-                            <span className="text-xs font-bold text-blue-600">Выбрать</span>
-                          </div>
-                          <div className="mt-1 text-sm text-slate-500">
-                            {client.client_phone || "телефон не указан"} • {client.object_address || "адрес не указан"} • проектов: {client.project_count}
-                          </div>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="space-y-3 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-3">
-                        <div className="text-sm font-semibold text-slate-500">
-                          Клиент в базе не найден. Заполните имя, и карточка клиента создастся вместе с проектом.
-                        </div>
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <Input
-                            value={createForm.client_name}
-                            onChange={(event) => setCreateForm((prev) => ({ ...prev, client_name: event.target.value }))}
-                            autoComplete="name"
-                            placeholder="Имя клиента"
-                          />
-                          <Input
-                            type="tel"
-                            inputMode="numeric"
-                            autoComplete="tel"
-                            pattern="[0-9+()\\-\\s]*"
-                            value={createForm.client_phone}
-                            onChange={(event) => setCreateForm((prev) => ({ ...prev, client_phone: event.target.value }))}
-                            placeholder="+7..."
-                          />
-                        </div>
+                      <div className="mt-1 text-sm text-slate-500">
+                        {client.client_phone || "телефон не указан"} • {client.object_address || "адрес не указан"} • проектов: {client.project_count}
                       </div>
-                    )}
+                    </button>
+                  ))
+                ) : (
+                  <div className="space-y-3 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-3">
+                    <div className="text-sm font-semibold text-slate-500">
+                      Клиент в базе не найден. Заполните имя, и карточка клиента создастся вместе с проектом.
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <Input
+                        value={createForm.client_name}
+                        onChange={(event) => setCreateForm((prev) => ({ ...prev, client_name: event.target.value }))}
+                        autoComplete="name"
+                        placeholder="Имя клиента"
+                      />
+                      <Input
+                        type="tel"
+                        inputMode="numeric"
+                        autoComplete="tel"
+                        pattern="[0-9+()\\-\\s]*"
+                        value={createForm.client_phone}
+                        onChange={(event) => setCreateForm((prev) => ({ ...prev, client_phone: event.target.value }))}
+                        placeholder="+7..."
+                      />
+                    </div>
                   </div>
                 )}
               </div>
-            </div>
+            )}
             <div className="space-y-2 md:col-span-2">
               <Label>Адрес объекта</Label>
               <Input
@@ -1172,26 +1155,13 @@ export default function Projects() {
                 onChange={(event) => setCreateForm((prev) => ({ ...prev, object_address: event.target.value }))}
               />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2 md:col-span-2">
               <Label>Статус</Label>
               <Select
                 value={createForm.status}
                 onChange={(event) => setCreateForm((prev) => ({ ...prev, status: event.target.value }))}
               >
                 {statusOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Категория</Label>
-              <Select
-                value={createForm.categories}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, categories: event.target.value }))}
-              >
-                {CATEGORY_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -1232,7 +1202,7 @@ export default function Projects() {
 
       <Modal
         open={Boolean(activeProject)}
-        title={activeProject ? `Карточка проекта — ${activeProject.client_name}` : "Карточка проекта"}
+        title={activeProject ? `Карточка проекта — ${projectDisplayName(activeProject)}` : "Карточка проекта"}
         onClose={closeProject}
         widthClassName="max-w-6xl"
         bodyClassName="max-h-[82vh] overflow-y-auto"
@@ -1242,6 +1212,13 @@ export default function Projects() {
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_360px]">
               <div className="space-y-5">
                 <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>Наименование проекта</Label>
+                    <Input
+                      value={detailForm.title}
+                      onChange={(event) => setDetailForm((prev) => ({ ...prev, title: event.target.value }))}
+                    />
+                  </div>
                   <div className="space-y-2">
                     <Label>Клиент</Label>
                     <Input
@@ -1280,19 +1257,6 @@ export default function Projects() {
                       ))}
                     </Select>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Категория</Label>
-                    <Select
-                      value={detailForm.categories}
-                      onChange={(event) => setDetailForm((prev) => ({ ...prev, categories: event.target.value }))}
-                    >
-                      {CATEGORY_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
                   <div className="space-y-2 md:col-span-2">
                     <Label>Сумма проекта</Label>
                     <Input
@@ -1316,14 +1280,9 @@ export default function Projects() {
               <div className="space-y-4">
                 <div className="rounded-[28px] bg-slate-900 px-5 py-5 text-white">
                   <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-300">Проект</div>
-                  <div className="mt-3 text-2xl font-black">{activeProject.client_name}</div>
+                  <div className="mt-3 text-2xl font-black">{projectDisplayName(activeProject)}</div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Badge className="bg-white/15 text-white">{labelFor(statusOptions, detailForm.status)}</Badge>
-                    {categoryBadges(detailForm.categories).map((item) => (
-                      <Badge key={`modal-${item}`} className="bg-white/15 text-white">
-                        {item}
-                      </Badge>
-                    ))}
                     {detailForm.works_with_contract && <Badge className="bg-white/15 text-white">Договор</Badge>}
                   </div>
                 </div>

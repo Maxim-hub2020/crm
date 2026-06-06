@@ -148,6 +148,9 @@ class ProjectSerializer(serializers.ModelSerializer):
         has_phone = str(attrs.get("client_phone", getattr(self.instance, "client_phone", "")) or "").strip()
         if not has_client and not has_name and not has_phone:
             raise serializers.ValidationError({"client_name": "Укажите клиента."})
+        title = str(attrs.get("title", getattr(self.instance, "title", "")) or "").strip()
+        if self.instance is None and not title:
+            attrs["title"] = has_name or "Новый проект"
         if self.instance is None and not attrs.get("status"):
             default_status = ProjectStatus.objects.filter(is_default=True).first() or ProjectStatus.objects.first()
             if default_status:
@@ -166,6 +169,7 @@ class ProjectSerializer(serializers.ModelSerializer):
         read_only_fields = ["manager", "created_at", "updated_at", "client_info"]
         extra_kwargs = {
             "client": {"required": False, "allow_null": True},
+            "title": {"required": False, "allow_blank": True},
             "client_name": {"required": False, "allow_blank": True},
             "client_phone": {"required": False, "allow_blank": True},
             "client_email": {"required": False, "allow_blank": True, "allow_null": True},

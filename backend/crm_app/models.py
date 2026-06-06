@@ -67,6 +67,7 @@ class Client(models.Model):
 class Project(models.Model):
     manager = models.ForeignKey(User, on_delete=models.PROTECT, related_name="projects")
     client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="projects", blank=True, null=True)
+    title = models.CharField(max_length=200, blank=True, default="")
     client_name = models.CharField(max_length=200)
     client_phone = models.CharField(max_length=50, db_index=True)
     client_email = models.EmailField(blank=True, null=True)
@@ -81,6 +82,11 @@ class Project(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        if not self.title:
+            self.title = self.client_name or "Проект"
+        super().save(*args, **kwargs)
 
 
 class FinanceCategory(models.Model):

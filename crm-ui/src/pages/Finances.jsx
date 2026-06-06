@@ -39,6 +39,10 @@ function paymentSignedAmount(payment) {
   return payment?.type === "refund" || payment?.type === "correction" ? -amount : amount;
 }
 
+function projectDisplayName(project) {
+  return project?.title || project?.client_name || `Проект #${project?.id || ""}`;
+}
+
 function StatTile({ label, value, tone = "light" }) {
   return (
     <div className={`rounded-3xl p-4 shadow-lg sm:p-6 ${tone === "dark" ? "bg-gray-900 text-white" : "bg-white"}`}>
@@ -78,7 +82,7 @@ export default function Finances() {
       const project = projectMap.get(payment.project);
       const matchesSearch =
         !value ||
-        [project?.client_name, project?.client_phone, payment.comment, payment.type]
+        [project?.title, project?.client_name, project?.client_phone, payment.comment, payment.type]
           .filter(Boolean)
           .some((field) => field.toLowerCase().includes(value));
 
@@ -158,7 +162,7 @@ export default function Finances() {
                 <tr key={payment.id} className="transition hover:bg-gray-50/50">
                   <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{formatDate(payment.paid_at)}</td>
                   <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-gray-800">
-                    {projectMap.get(payment.project)?.client_name || `Проект #${payment.project}`}
+                    {projectDisplayName(projectMap.get(payment.project))}
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-sm">
                     <Badge>{TYPE_LABELS[payment.type] || payment.type}</Badge>
@@ -197,7 +201,7 @@ export default function Finances() {
                 <div className="text-xs text-gray-500">{formatDate(payment.paid_at)}</div>
               </div>
               <div className="border-t pt-2 text-sm text-gray-600">
-                <p className="font-semibold text-gray-800">{projectMap.get(payment.project)?.client_name || `Проект #${payment.project}`}</p>
+                <p className="font-semibold text-gray-800">{projectDisplayName(projectMap.get(payment.project))}</p>
                 <p>{TYPE_LABELS[payment.type] || payment.type} • {METHOD_LABELS[payment.method] || payment.method}</p>
                 <p className="truncate">{payment.comment || "Без комментария"}</p>
               </div>

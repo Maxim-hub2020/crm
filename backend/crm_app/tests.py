@@ -144,6 +144,7 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
             "/api/projects/",
             {
                 "manager": self.other_manager.id,
+                "title": "Kitchen Project",
                 "client_name": "New Client",
                 "client_phone": "+70000000003",
                 "categories": "mirrors",
@@ -156,6 +157,8 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
 
         created_project = Project.objects.get(id=response.data["id"])
         self.assertEqual(created_project.manager_id, self.manager.id)
+        self.assertEqual(created_project.title, "Kitchen Project")
+        self.assertEqual(response.data["title"], "Kitchen Project")
 
     def test_project_create_creates_or_reuses_client_card(self):
         client = self.auth_client_for(self.manager)
