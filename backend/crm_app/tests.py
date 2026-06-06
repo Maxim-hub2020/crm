@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 from unittest.mock import patch
 from asgiref.sync import async_to_sync
@@ -954,31 +955,37 @@ class TestAssistantApi(AuthenticatedApiMixin, APITestCase):
         mocked_generate_speech.assert_not_called()
 
 class TestGeminiErrors(APITestCase):
-    @patch.object(GeminiClient, "_post")
-    def test_vertex_tts_uses_gemini_audio_generation(self, mocked_post):
+    @patch.object(GeminiClient, "_vertex_access_token")
+    @patch("crm_app.ai_assistant.urllib_request.urlopen")
+    def test_vertex_tts_uses_cloud_text_to_speech(self, mocked_urlopen, mocked_access_token):
         previous = {
             name: os.environ.get(name)
-            for name in ("GEMINI_BACKEND", "VERTEX_AI_PROJECT_ID", "GEMINI_TTS_MODEL", "GEMINI_TTS_VOICE")
+            for name in (
+                "GEMINI_BACKEND",
+                "VERTEX_AI_PROJECT_ID",
+                "GEMINI_TTS_PROVIDER",
+                "GEMINI_TTS_CLOUD_VOICE",
+                "GEMINI_TTS_AUDIO_ENCODING",
+            )
         }
         os.environ["GEMINI_BACKEND"] = "vertex_ai"
         os.environ["VERTEX_AI_PROJECT_ID"] = "test-project"
-        os.environ["GEMINI_TTS_MODEL"] = "gemini-2.5-flash-preview-tts"
-        os.environ["GEMINI_TTS_VOICE"] = "Kore"
-        mocked_post.return_value = {
-            "candidates": [
-                {
-                    "content": {
-                        "parts": [
-                            {
-                                "inlineData": {
-                                    "data": base64.b64encode(b"\x00\x00").decode("ascii"),
-                                }
-                            }
-                        ]
-                    }
-                }
-            ]
-        }
+        os.environ["GEMINI_TTS_PROVIDER"] = "cloud_tts"
+        os.environ["GEMINI_TTS_CLOUD_VOICE"] = "ru-RU-Chirp3-HD-Aoede"
+        os.environ["GEMINI_TTS_AUDIO_ENCODING"] = "MP3"
+        mocked_access_token.return_value = "test-token"
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps({"audioContent": base64.b64encode(b"mp3-demo").decode("ascii")}).encode("utf-8")
+
+        mocked_urlopen.return_value = FakeResponse()
 
         try:
             client = GeminiClient()
@@ -990,14 +997,13 @@ class TestGeminiErrors(APITestCase):
                 else:
                     os.environ[name] = value
 
-        payload = mocked_post.call_args.args[0]
-        self.assertEqual(mocked_post.call_args.kwargs["model"], "gemini-2.5-flash-preview-tts")
-        self.assertEqual(payload["generationConfig"]["responseModalities"], ["AUDIO"])
-        self.assertEqual(
-            payload["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"],
-            "Kore",
-        )
-        self.assertEqual(speech["mime_type"], "audio/wav")
+        request = mocked_urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertIn("texttospeech.googleapis.com/v1/text:synthesize", request.full_url)
+        self.assertEqual(payload["voice"]["name"], "ru-RU-Chirp3-HD-Aoede")
+        self.assertEqual(payload["audioConfig"]["audioEncoding"], "MP3")
+        self.assertEqual(speech["mime_type"], "audio/mpeg")
+        self.assertEqual(speech["audio_bytes"], b"mp3-demo")
 
     def test_location_error_points_to_vertex_ai(self):
         message = humanize_gemini_error(

@@ -59,7 +59,10 @@ CSRF_TRUSTED_ORIGINS=https://cehcrm.ru
 POSTGRES_PASSWORD=strong-password
 DATABASE_URL=postgres://crm:strong-password@db:5432/crm
 GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/vertex-sa.json
-VITE_ASSISTANT_LIVE=1
+GEMINI_TTS_PROVIDER=cloud_tts
+GEMINI_TTS_CLOUD_VOICE=ru-RU-Chirp3-HD-Aoede
+GEMINI_TTS_AUDIO_ENCODING=MP3
+VITE_ASSISTANT_LIVE=0
 ```
 
 Сгенерировать секрет Django можно так:

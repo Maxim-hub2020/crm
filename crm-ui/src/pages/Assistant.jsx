@@ -33,7 +33,7 @@ const BROWSER_TTS_MAX_MS = Number(import.meta.env.VITE_ASSISTANT_TTS_MAX_MS || 1
 const ASSISTANT_TEXT_REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_ASSISTANT_TEXT_TIMEOUT_MS || 22000);
 const RAW_ASSISTANT_PENDING_WATCHDOG_MS = Number(import.meta.env.VITE_ASSISTANT_PENDING_WATCHDOG_MS || 26000);
 const ASSISTANT_PENDING_WATCHDOG_MS = IOS_DEVICE ? Math.max(RAW_ASSISTANT_PENDING_WATCHDOG_MS, 60000) : RAW_ASSISTANT_PENDING_WATCHDOG_MS;
-const USE_BROWSER_VOICE_OUTPUT = IOS_DEVICE;
+const USE_BROWSER_VOICE_OUTPUT = false;
 
 function readEnvNumber(value, fallback) {
   const parsed = Number(value);
@@ -183,7 +183,7 @@ function getSpeechRecognitionCtor() {
 }
 
 function shouldUseRecorderFallback() {
-  return IOS_DEVICE || !getSpeechRecognitionCtor();
+  return true;
 }
 
 function getAudioContextCtor() {
@@ -1554,10 +1554,6 @@ export default function Assistant() {
           epoch,
         });
       } else {
-        await speakBrowserReply(nextReply);
-        if (epoch !== requestEpochRef.current) {
-          return;
-        }
         if (sessionActiveRef.current) {
           scheduleAutoResume();
         }
@@ -1759,11 +1755,6 @@ export default function Assistant() {
   async function replayLatestReply() {
     if (latestAudioRef.current?.audioBase64) {
       await playGeminiAudio(latestAudioRef.current.audioBase64, latestAudioRef.current.audioMimeType);
-      return;
-    }
-
-    if (replyText) {
-      await speakBrowserReply(replyText);
     }
   }
 

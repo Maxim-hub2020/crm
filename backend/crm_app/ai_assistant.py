@@ -199,6 +199,12 @@ class GeminiClient:
         self.audio_model = os.getenv("GEMINI_AUDIO_MODEL", self.model).strip() or self.model
         self.tts_model = os.getenv("GEMINI_TTS_MODEL", default_tts_model).strip() or default_tts_model
         self.tts_voice = os.getenv("GEMINI_TTS_VOICE", "Kore").strip() or "Kore"
+        self.tts_provider = os.getenv(
+            "GEMINI_TTS_PROVIDER",
+            "cloud_tts" if self.backend == "vertex_ai" else "gemini",
+        ).strip().lower() or "gemini"
+        self.tts_cloud_voice = os.getenv("GEMINI_TTS_CLOUD_VOICE", "ru-RU-Chirp3-HD-Aoede").strip()
+        self.tts_audio_encoding = os.getenv("GEMINI_TTS_AUDIO_ENCODING", "MP3").strip().upper() or "MP3"
         self.tts_style = os.getenv(
             "GEMINI_TTS_STYLE",
             "Прочитай ответ по-русски естественно, дружелюбно и уверенно, как умный голосовой CRM-помощник.",
@@ -281,6 +287,9 @@ class GeminiClient:
         clean_text = str(text or "").strip()
         if not clean_text:
             raise GeminiRequestError("Нельзя озвучить пустой текст.")
+
+        if self.backend == "vertex_ai" and self.tts_provider == "cloud_tts":
+            return self._generate_speech_with_cloud_tts(clean_text)
 
         return self._generate_speech_with_gemini_tts(clean_text)
 
@@ -373,19 +382,24 @@ class GeminiClient:
         except urllib_error.URLError as exc:
             raise GeminiRequestError(f"Не удалось связаться с Vertex AI Gemini: {exc}") from exc
 
-    def _generate_speech_with_vertex_tts(self, clean_text):
+    def _generate_speech_with_cloud_tts(self, clean_text):
+        audio_encoding = self.tts_audio_encoding
+        if audio_encoding not in {"MP3", "LINEAR16", "OGG_OPUS"}:
+            audio_encoding = "MP3"
+
+        voice = {
+            "languageCode": self.tts_language_code,
+        }
+        if self.tts_cloud_voice:
+            voice["name"] = self.tts_cloud_voice
+
         payload = {
             "input": {
-                "prompt": self.tts_style,
                 "text": clean_text,
             },
-            "voice": {
-                "languageCode": self.tts_language_code,
-                "name": self.tts_voice,
-                "model_name": self._normalize_vertex_model_name(self.tts_model),
-            },
+            "voice": voice,
             "audioConfig": {
-                "audioEncoding": "LINEAR16",
+                "audioEncoding": audio_encoding,
             },
         }
 
@@ -414,12 +428,18 @@ class GeminiClient:
 
         audio_content = response_data.get("audioContent")
         if not audio_content:
-            raise GeminiRequestError("Vertex AI TTS не вернул аудиоданные.")
+            raise GeminiRequestError("Cloud Text-to-Speech не вернул аудиоданные.")
+
+        mime_type = {
+            "MP3": "audio/mpeg",
+            "LINEAR16": "audio/wav",
+            "OGG_OPUS": "audio/ogg",
+        }.get(audio_encoding, "audio/mpeg")
 
         return {
             "audio_bytes": base64.b64decode(audio_content),
-            "mime_type": "audio/wav",
-            "voice_name": self.tts_voice,
+            "mime_type": mime_type,
+            "voice_name": self.tts_cloud_voice or self.tts_language_code,
         }
 
     def _vertex_access_token(self):

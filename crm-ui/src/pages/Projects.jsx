@@ -142,6 +142,14 @@ function formatMoney(value) {
   return moneyFormatter.format(Number(value || 0));
 }
 
+function normalizeSearchText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function phoneDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
 function formatDateTime(value) {
   if (!value) return "—";
   const date = new Date(value);
@@ -424,6 +432,83 @@ export default function Projects() {
     return map;
   }, [payments]);
 
+  const clientDirectory = useMemo(() => {
+    const map = new Map();
+
+    for (const project of projects) {
+      const digits = phoneDigits(project.client_phone);
+      const fallbackKey = normalizeSearchText(project.client_name);
+      const key = digits || fallbackKey;
+      if (!key) continue;
+
+      const current = map.get(key) || {
+        key,
+        client_name: project.client_name || "",
+        client_phone: project.client_phone || "",
+        client_email: project.client_email || "",
+        object_address: project.object_address || "",
+        works_with_contract: Boolean(project.works_with_contract),
+        project_count: 0,
+        latest_project_id: project.id,
+        latest_project_name: project.client_name || "",
+        updated_at: project.updated_at || project.created_at || "",
+        searchText: "",
+        phoneDigits: digits,
+      };
+
+      current.project_count += 1;
+
+      const currentDate = new Date(current.updated_at || 0).getTime();
+      const nextDate = new Date(project.updated_at || project.created_at || 0).getTime();
+      if (nextDate >= currentDate) {
+        current.client_name = project.client_name || current.client_name;
+        current.client_phone = project.client_phone || current.client_phone;
+        current.client_email = project.client_email || current.client_email;
+        current.object_address = project.object_address || current.object_address;
+        current.works_with_contract = Boolean(project.works_with_contract);
+        current.latest_project_id = project.id;
+        current.latest_project_name = project.client_name || current.latest_project_name;
+        current.updated_at = project.updated_at || project.created_at || current.updated_at;
+        current.phoneDigits = phoneDigits(project.client_phone) || current.phoneDigits;
+      }
+
+      current.searchText = normalizeSearchText(
+        [
+          current.client_name,
+          current.client_phone,
+          current.client_email,
+          current.object_address,
+          current.latest_project_name,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      );
+      map.set(key, current);
+    }
+
+    return Array.from(map.values()).sort((left, right) => (right.updated_at || "").localeCompare(left.updated_at || ""));
+  }, [projects]);
+
+  const createClientLookup = useMemo(() => {
+    const textQuery = normalizeSearchText(`${createForm.client_name} ${createForm.client_phone}`);
+    const digitsQuery = phoneDigits(createForm.client_phone || createForm.client_name);
+    const queryReady = textQuery.length >= 2 || digitsQuery.length >= 3;
+
+    if (!openCreate || !queryReady) {
+      return { queryReady: false, matches: [] };
+    }
+
+    const matches = clientDirectory
+      .filter((client) => {
+        const byPhone = digitsQuery.length >= 3 && client.phoneDigits.includes(digitsQuery);
+        const byText = textQuery.length >= 2 && client.searchText.includes(textQuery);
+        return byPhone || byText;
+      })
+      .slice(0, 5);
+
+    return { queryReady: true, matches };
+  }, [clientDirectory, createForm.client_name, createForm.client_phone, openCreate]);
+
   const filteredProjects = useMemo(() => {
     const value = deferredQuery.trim().toLowerCase();
     if (!value) return projects;
@@ -498,6 +583,17 @@ export default function Projects() {
     setCreateForm(createEmptyProjectForm(defaultStatusValue));
   }
 
+  function applyClientFromSearch(client) {
+    setCreateForm((prev) => ({
+      ...prev,
+      client_name: client.client_name || prev.client_name,
+      client_phone: client.client_phone || prev.client_phone,
+      client_email: client.client_email || prev.client_email,
+      object_address: client.object_address || prev.object_address,
+      works_with_contract: Boolean(client.works_with_contract),
+    }));
+  }
+
   function openProject(project, tab = "comments") {
     setActiveProjectId(project.id);
     setDetailTab(tab);
@@ -525,7 +621,7 @@ export default function Projects() {
       const created = await createProject({
         client_name: createForm.client_name.trim(),
         client_phone: createForm.client_phone.trim(),
-        client_email: createForm.client_email.trim(),
+        client_email: createForm.client_email.trim() || undefined,
         object_address: createForm.object_address.trim(),
         description: createForm.description.trim(),
         categories: createForm.categories,
@@ -964,23 +1060,67 @@ export default function Projects() {
                 required
                 value={createForm.client_name}
                 onChange={(event) => setCreateForm((prev) => ({ ...prev, client_name: event.target.value }))}
+                autoComplete="name"
+                placeholder="Начните вводить имя или проект"
               />
             </div>
             <div className="space-y-2">
               <Label>Телефон</Label>
               <Input
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel"
+                pattern="[0-9+()\\-\\s]*"
                 value={createForm.client_phone}
                 onChange={(event) => setCreateForm((prev) => ({ ...prev, client_phone: event.target.value }))}
+                placeholder="+7..."
               />
             </div>
-            <div className="space-y-2">
-              <Label>Email</Label>
-              <Input
-                value={createForm.client_email}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, client_email: event.target.value }))}
-              />
+            <div className="space-y-2 md:col-span-2">
+              <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-3">
+                <div className="flex items-center justify-between gap-3 px-1">
+                  <div>
+                    <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Проверка клиента</div>
+                    <div className="mt-1 text-sm font-semibold text-slate-600">
+                      Поиск идет по телефону, имени и адресу среди уже созданных проектов.
+                    </div>
+                  </div>
+                  {createClientLookup.queryReady ? (
+                    <Badge className={createClientLookup.matches.length ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}>
+                      {createClientLookup.matches.length ? `Найдено: ${createClientLookup.matches.length}` : "Новый"}
+                    </Badge>
+                  ) : null}
+                </div>
+
+                {createClientLookup.queryReady && (
+                  <div className="mt-3 space-y-2">
+                    {createClientLookup.matches.length > 0 ? (
+                      createClientLookup.matches.map((client) => (
+                        <button
+                          key={client.key}
+                          type="button"
+                          onClick={() => applyClientFromSearch(client)}
+                          className="w-full rounded-2xl border border-white bg-white px-4 py-3 text-left shadow-sm transition hover:border-blue-200 hover:bg-blue-50"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-black text-slate-800">{client.client_name || "Клиент без имени"}</span>
+                            <span className="text-xs font-bold text-blue-600">Выбрать</span>
+                          </div>
+                          <div className="mt-1 text-sm text-slate-500">
+                            {client.client_phone || "телефон не указан"} • {client.object_address || "адрес не указан"} • проектов: {client.project_count}
+                          </div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-500">
+                        Клиент в базе не найден. При создании проекта он будет добавлен как новый.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2 md:col-span-2">
               <Label>Адрес объекта</Label>
               <Input
                 value={createForm.object_address}
@@ -1083,6 +1223,10 @@ export default function Projects() {
                   <div className="space-y-2">
                     <Label>Телефон</Label>
                     <Input
+                      type="tel"
+                      inputMode="numeric"
+                      autoComplete="tel"
+                      pattern="[0-9+()\\-\\s]*"
                       value={detailForm.client_phone}
                       onChange={(event) => setDetailForm((prev) => ({ ...prev, client_phone: event.target.value }))}
                     />

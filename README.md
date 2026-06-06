@@ -12,7 +12,7 @@
 - Stores projects and client cards
 - Stores payments linked to projects
 - Supports `admin` and `manager` roles
-- Supports Gemini Live voice assistant through backend WebSocket `/ws/assistant/live/`
+- Supports Gemini/Vertex voice assistant through backend endpoint `/api/assistant/voice/`
 - Does not calculate manager commissions in the current version
 
 ## Local run
@@ -69,8 +69,8 @@ Backend:
 - `GET/POST /api/payments/`
 - `WS /ws/assistant/live/`
 
-## Gemini Live / Vertex AI
-Realtime voice mode uses Vertex AI Gemini Live API through the Django backend. The browser never connects to Google directly.
+## Gemini / Vertex AI Voice Assistant
+The stable voice mode records microphone audio in the browser, sends it to Django at `/api/assistant/voice/`, and the backend uses Vertex AI Gemini for transcription, CRM reasoning/tool calls, and speech generation. The browser does not use Web Speech recognition or browser TTS in this mode.
 
 Required backend `.env` values:
 
@@ -79,6 +79,11 @@ GEMINI_BACKEND=vertex_ai
 VERTEX_AI_PROJECT_ID=your-google-cloud-project
 VERTEX_AI_LOCATION=global
 GOOGLE_APPLICATION_CREDENTIALS=C:/path/to/vertex-sa.json
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_AUDIO_MODEL=gemini-2.5-flash
+GEMINI_TTS_PROVIDER=cloud_tts
+GEMINI_TTS_CLOUD_VOICE=ru-RU-Chirp3-HD-Aoede
+GEMINI_TTS_AUDIO_ENCODING=MP3
 GEMINI_LIVE_LOCATION=europe-west1
 GEMINI_LIVE_MODEL=gemini-live-2.5-flash-native-audio
 GEMINI_LIVE_SILENCE_MS=2000
@@ -87,7 +92,7 @@ GEMINI_LIVE_SILENCE_MS=2000
 Frontend `.env` values live in `crm-ui/.env`:
 
 ```env
-VITE_ASSISTANT_LIVE=1
+VITE_ASSISTANT_LIVE=0
 VITE_ASSISTANT_CLIENT_SILENCE_MS=1600
 VITE_ASSISTANT_LIVE_RESPONSE_WATCHDOG_MS=14000
 VITE_ASSISTANT_LIVE_MAX_UTTERANCE_MS=30000
@@ -95,7 +100,7 @@ VITE_ASSISTANT_LIVE_REFRESH_AFTER_TURN=1
 VITE_ASSISTANT_STABLE_MAX_UTTERANCE_MS=30000
 ```
 
-For production, run ASGI, not WSGI. The Docker production entrypoint uses `daphne crm_core.asgi:application`, and Nginx proxies `/ws/` with WebSocket upgrade headers.
+For production, run ASGI, not WSGI. The Docker production entrypoint uses `daphne crm_core.asgi:application`. Gemini Live WebSocket support is still available behind `VITE_ASSISTANT_LIVE=1`, but the default production voice mode is the stable backend voice endpoint.
 
 For faster overview answers, keep CRM snapshots warm with a scheduler:
 

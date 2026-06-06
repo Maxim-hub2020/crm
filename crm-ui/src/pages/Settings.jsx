@@ -309,6 +309,10 @@ export default function Settings() {
               placeholder="Email"
             />
             <Input
+              type="tel"
+              inputMode="numeric"
+              autoComplete="tel"
+              pattern="[0-9+()\\-\\s]*"
               value={managerForm.phone}
               onChange={(event) => setManagerForm((prev) => ({ ...prev, phone: event.target.value }))}
               placeholder="Телефон"
