@@ -24,6 +24,7 @@ import {
   deleteProjectComment,
   downloadProjectDocument,
   extractApiErrorMessage,
+  fetchClients,
   fetchPayments,
   fetchProjectComments,
   fetchProjects,
@@ -87,6 +88,8 @@ function normalizeStatusOption(status) {
 
 function createEmptyProjectForm(status = "active") {
   return {
+    client: "",
+    client_query: "",
     client_name: "",
     client_phone: "",
     client_email: "",
@@ -111,6 +114,8 @@ function createEmptyPaymentForm() {
 
 function normalizeProjectForm(project, fallbackStatus = "active") {
   return {
+    client: project?.client || project?.client_info?.id || "",
+    client_query: project?.client_name || "",
     client_name: project?.client_name || "",
     client_phone: project?.client_phone || "",
     client_email: project?.client_email || "",
@@ -118,7 +123,7 @@ function normalizeProjectForm(project, fallbackStatus = "active") {
     description: project?.description || "",
     categories: project?.categories || "mirrors",
     total_amount: project?.total_amount ? String(project.total_amount) : "",
-    works_with_contract: Boolean(project?.works_with_contract),
+    works_with_contract: Boolean(project?.client_info?.works_with_contract ?? project?.works_with_contract),
     status: project?.status || fallbackStatus,
   };
 }
@@ -219,6 +224,28 @@ function projectAmount(project, paymentsByProject) {
   return rows.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
 }
 
+function paymentSignedAmount(payment) {
+  const amount = Number(payment?.amount || 0);
+  return payment?.type === "refund" || payment?.type === "correction" ? -amount : amount;
+}
+
+function projectFinanceStats(rows) {
+  return rows.reduce(
+    (stats, payment) => {
+      const signedAmount = paymentSignedAmount(payment);
+      if (signedAmount >= 0) {
+        stats.income += signedAmount;
+      } else {
+        stats.expense += Math.abs(signedAmount);
+      }
+      stats.margin = stats.income - stats.expense;
+      stats.marginPercent = stats.income > 0 ? (stats.margin / stats.income) * 100 : 0;
+      return stats;
+    },
+    { income: 0, expense: 0, margin: 0, marginPercent: 0 }
+  );
+}
+
 function ageBadgeClass(days) {
   if (days >= 8) return "bg-red-50 text-red-600";
   if (days >= 4) return "bg-amber-50 text-amber-600";
@@ -301,6 +328,7 @@ export default function Projects() {
   const location = useLocation();
 
   const [projects, setProjects] = useState([]);
+  const [clients, setClients] = useState([]);
   const [payments, setPayments] = useState([]);
   const [statusRows, setStatusRows] = useState(DEFAULT_STATUS_OPTIONS);
   const [loading, setLoading] = useState(true);
@@ -353,13 +381,15 @@ export default function Projects() {
     }
 
     try {
-      const [projectRows, paymentRows, statusItems] = await Promise.all([
+      const [projectRows, clientRows, paymentRows, statusItems] = await Promise.all([
         fetchProjects(),
+        fetchClients(),
         fetchPayments(),
         fetchProjectStatuses(),
       ]);
 
       setProjects(projectRows);
+      setClients(clientRows);
       setPayments(paymentRows);
       setStatusRows(statusItems.length > 0 ? statusItems : DEFAULT_STATUS_OPTIONS);
     } finally {
@@ -389,6 +419,7 @@ export default function Projects() {
   useEffect(() => {
     reloadData().catch(() => {
       setProjects([]);
+      setClients([]);
       setPayments([]);
       setStatusRows(DEFAULT_STATUS_OPTIONS);
       setLoading(false);
@@ -433,65 +464,26 @@ export default function Projects() {
   }, [payments]);
 
   const clientDirectory = useMemo(() => {
-    const map = new Map();
-
-    for (const project of projects) {
-      const digits = phoneDigits(project.client_phone);
-      const fallbackKey = normalizeSearchText(project.client_name);
-      const key = digits || fallbackKey;
-      if (!key) continue;
-
-      const current = map.get(key) || {
-        key,
-        client_name: project.client_name || "",
-        client_phone: project.client_phone || "",
-        client_email: project.client_email || "",
-        object_address: project.object_address || "",
-        works_with_contract: Boolean(project.works_with_contract),
-        project_count: 0,
-        latest_project_id: project.id,
-        latest_project_name: project.client_name || "",
-        updated_at: project.updated_at || project.created_at || "",
-        searchText: "",
-        phoneDigits: digits,
-      };
-
-      current.project_count += 1;
-
-      const currentDate = new Date(current.updated_at || 0).getTime();
-      const nextDate = new Date(project.updated_at || project.created_at || 0).getTime();
-      if (nextDate >= currentDate) {
-        current.client_name = project.client_name || current.client_name;
-        current.client_phone = project.client_phone || current.client_phone;
-        current.client_email = project.client_email || current.client_email;
-        current.object_address = project.object_address || current.object_address;
-        current.works_with_contract = Boolean(project.works_with_contract);
-        current.latest_project_id = project.id;
-        current.latest_project_name = project.client_name || current.latest_project_name;
-        current.updated_at = project.updated_at || project.created_at || current.updated_at;
-        current.phoneDigits = phoneDigits(project.client_phone) || current.phoneDigits;
-      }
-
-      current.searchText = normalizeSearchText(
-        [
-          current.client_name,
-          current.client_phone,
-          current.client_email,
-          current.object_address,
-          current.latest_project_name,
-        ]
-          .filter(Boolean)
-          .join(" ")
-      );
-      map.set(key, current);
-    }
-
-    return Array.from(map.values()).sort((left, right) => (right.updated_at || "").localeCompare(left.updated_at || ""));
-  }, [projects]);
+    return clients
+      .map((client) => ({
+        key: client.id,
+        client_id: client.id,
+        client_name: client.name || "",
+        client_phone: client.phone || "",
+        client_email: client.email || "",
+        object_address: client.address || "",
+        works_with_contract: Boolean(client.works_with_contract),
+        project_count: client.project_count || 0,
+        updated_at: client.updated_at || client.created_at || "",
+        searchText: normalizeSearchText([client.name, client.phone, client.email, client.address].filter(Boolean).join(" ")),
+        phoneDigits: phoneDigits(client.phone),
+      }))
+      .sort((left, right) => (right.updated_at || "").localeCompare(left.updated_at || ""));
+  }, [clients]);
 
   const createClientLookup = useMemo(() => {
-    const textQuery = normalizeSearchText(`${createForm.client_name} ${createForm.client_phone}`);
-    const digitsQuery = phoneDigits(createForm.client_phone || createForm.client_name);
+    const textQuery = normalizeSearchText(createForm.client_query || createForm.client_name || createForm.client_phone);
+    const digitsQuery = phoneDigits(createForm.client_query || createForm.client_phone);
     const queryReady = textQuery.length >= 2 || digitsQuery.length >= 3;
 
     if (!openCreate || !queryReady) {
@@ -507,7 +499,12 @@ export default function Projects() {
       .slice(0, 5);
 
     return { queryReady: true, matches };
-  }, [clientDirectory, createForm.client_name, createForm.client_phone, openCreate]);
+  }, [clientDirectory, createForm.client_name, createForm.client_phone, createForm.client_query, openCreate]);
+
+  const selectedCreateClient = useMemo(() => {
+    if (!createForm.client) return null;
+    return clientDirectory.find((client) => String(client.client_id) === String(createForm.client)) || null;
+  }, [clientDirectory, createForm.client]);
 
   const filteredProjects = useMemo(() => {
     const value = deferredQuery.trim().toLowerCase();
@@ -544,9 +541,19 @@ export default function Projects() {
     return paymentsByProject.get(activeProjectId) || [];
   }, [activeProjectId, paymentsByProject]);
 
-  const activeProjectPaymentTotal = useMemo(
-    () => activeProjectPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0),
+  const activeProjectFinanceStats = useMemo(
+    () => projectFinanceStats(activeProjectPayments),
     [activeProjectPayments]
+  );
+
+  const activeProjectPaymentTotal = useMemo(
+    () => activeProjectFinanceStats.margin,
+    [activeProjectFinanceStats]
+  );
+
+  const activeProjectMarginLabel = useMemo(
+    () => `${formatMoney(activeProjectFinanceStats.margin)} ₽ / ${activeProjectFinanceStats.marginPercent.toFixed(0)}%`,
+    [activeProjectFinanceStats]
   );
 
   useEffect(() => {
@@ -586,11 +593,24 @@ export default function Projects() {
   function applyClientFromSearch(client) {
     setCreateForm((prev) => ({
       ...prev,
+      client: client.client_id || "",
+      client_query: client.client_phone || client.client_name || prev.client_query,
       client_name: client.client_name || prev.client_name,
       client_phone: client.client_phone || prev.client_phone,
       client_email: client.client_email || prev.client_email,
       object_address: client.object_address || prev.object_address,
       works_with_contract: Boolean(client.works_with_contract),
+    }));
+  }
+
+  function handleCreateClientQuery(value) {
+    const digits = phoneDigits(value);
+    setCreateForm((prev) => ({
+      ...prev,
+      client: "",
+      client_query: value,
+      client_phone: digits ? value : prev.client_phone,
+      client_name: digits ? prev.client_name : value,
     }));
   }
 
@@ -613,12 +633,13 @@ export default function Projects() {
     setCreateSaving(true);
 
     try {
-      if (!createForm.client_name.trim()) {
-        setCreateError("Укажите клиента или название проекта.");
+      if (!createForm.client_name.trim() && !createForm.client && !createForm.client_phone.trim()) {
+        setCreateError("Выберите клиента или укажите имя для новой карточки клиента.");
         return;
       }
 
       const created = await createProject({
+        client: createForm.client || undefined,
         client_name: createForm.client_name.trim(),
         client_phone: createForm.client_phone.trim(),
         client_email: createForm.client_email.trim() || undefined,
@@ -627,10 +648,17 @@ export default function Projects() {
         categories: createForm.categories,
         status: createForm.status,
         total_amount: createForm.total_amount.trim() ? createForm.total_amount.trim() : null,
-        works_with_contract: createForm.works_with_contract,
       });
 
       setProjects((prev) => [created, ...prev]);
+      if (created.client_info) {
+        setClients((prev) => {
+          const exists = prev.some((client) => client.id === created.client_info.id);
+          return exists
+            ? prev.map((client) => (client.id === created.client_info.id ? created.client_info : client))
+            : [created.client_info, ...prev];
+        });
+      }
       closeCreateModal();
       openProject(created);
     } catch (error) {
@@ -661,10 +689,12 @@ export default function Projects() {
         categories: detailForm.categories,
         status: detailForm.status,
         total_amount: detailForm.total_amount.trim() ? detailForm.total_amount.trim() : null,
-        works_with_contract: detailForm.works_with_contract,
       });
 
       setProjects((prev) => prev.map((project) => (project.id === updated.id ? updated : project)));
+      if (updated.client_info) {
+        setClients((prev) => prev.map((client) => (client.id === updated.client_info.id ? updated.client_info : client)));
+      }
     } catch (error) {
       setDetailError(extractApiErrorMessage(error, "Не удалось сохранить проект."));
     } finally {
@@ -765,7 +795,7 @@ export default function Projects() {
     if (!activeProject) return;
 
     if (documentType === "contract" && !detailForm.works_with_contract) {
-      setDetailError("Сначала включите признак «Работает по договору» и сохраните проект.");
+      setDetailError("Включите «Работает по договору» в карточке клиента, затем сформируйте договор.");
       return;
     }
 
@@ -1054,26 +1084,16 @@ export default function Projects() {
       <Modal open={openCreate} title="Создать проект" onClose={closeCreateModal}>
         <form className="space-y-5" onSubmit={submitCreate}>
           <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Клиент / проект</Label>
-              <Input
-                required
-                value={createForm.client_name}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, client_name: event.target.value }))}
-                autoComplete="name"
-                placeholder="Начните вводить имя или проект"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Телефон</Label>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Клиент</Label>
               <Input
                 type="tel"
                 inputMode="numeric"
                 autoComplete="tel"
                 pattern="[0-9+()\\-\\s]*"
-                value={createForm.client_phone}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, client_phone: event.target.value }))}
-                placeholder="+7..."
+                value={createForm.client_query}
+                onChange={(event) => handleCreateClientQuery(event.target.value)}
+                placeholder="Введите телефон клиента"
               />
             </div>
             <div className="space-y-2 md:col-span-2">
@@ -1082,10 +1102,12 @@ export default function Projects() {
                   <div>
                     <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Проверка клиента</div>
                     <div className="mt-1 text-sm font-semibold text-slate-600">
-                      Поиск идет по телефону, имени и адресу среди уже созданных проектов.
+                      Поиск идет по телефону, имени и адресу в клиентской базе.
                     </div>
                   </div>
-                  {createClientLookup.queryReady ? (
+                  {selectedCreateClient ? (
+                    <Badge className="bg-blue-100 text-blue-700">Выбран</Badge>
+                  ) : createClientLookup.queryReady ? (
                     <Badge className={createClientLookup.matches.length ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}>
                       {createClientLookup.matches.length ? `Найдено: ${createClientLookup.matches.length}` : "Новый"}
                     </Badge>
@@ -1094,7 +1116,11 @@ export default function Projects() {
 
                 {createClientLookup.queryReady && (
                   <div className="mt-3 space-y-2">
-                    {createClientLookup.matches.length > 0 ? (
+                    {selectedCreateClient ? (
+                      <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
+                        Выбран клиент: {selectedCreateClient.client_name || "без имени"} • {selectedCreateClient.client_phone || "телефон не указан"}
+                      </div>
+                    ) : createClientLookup.matches.length > 0 ? (
                       createClientLookup.matches.map((client) => (
                         <button
                           key={client.key}
@@ -1112,8 +1138,27 @@ export default function Projects() {
                         </button>
                       ))
                     ) : (
-                      <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-500">
-                        Клиент в базе не найден. При создании проекта он будет добавлен как новый.
+                      <div className="space-y-3 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-3">
+                        <div className="text-sm font-semibold text-slate-500">
+                          Клиент в базе не найден. Заполните имя, и карточка клиента создастся вместе с проектом.
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <Input
+                            value={createForm.client_name}
+                            onChange={(event) => setCreateForm((prev) => ({ ...prev, client_name: event.target.value }))}
+                            autoComplete="name"
+                            placeholder="Имя клиента"
+                          />
+                          <Input
+                            type="tel"
+                            inputMode="numeric"
+                            autoComplete="tel"
+                            pattern="[0-9+()\\-\\s]*"
+                            value={createForm.client_phone}
+                            onChange={(event) => setCreateForm((prev) => ({ ...prev, client_phone: event.target.value }))}
+                            placeholder="+7..."
+                          />
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1161,22 +1206,6 @@ export default function Projects() {
                 placeholder="Например, 120000"
               />
             </div>
-            <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 md:col-span-2">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-slate-300 text-blue-600"
-                checked={createForm.works_with_contract}
-                onChange={(event) =>
-                  setCreateForm((prev) => ({ ...prev, works_with_contract: event.target.checked }))
-                }
-              />
-              <span>
-                <span className="block text-sm font-bold text-slate-800">Работает по договору</span>
-                <span className="text-xs text-slate-500">
-                  Для таких клиентов можно сформировать договор из PDF-шаблона в разделе «Система».
-                </span>
-              </span>
-            </label>
           </div>
 
           <div className="space-y-2">
@@ -1214,7 +1243,7 @@ export default function Projects() {
               <div className="space-y-5">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label>Клиент / проект</Label>
+                    <Label>Клиент</Label>
                     <Input
                       value={detailForm.client_name}
                       onChange={(event) => setDetailForm((prev) => ({ ...prev, client_name: event.target.value }))}
@@ -1229,13 +1258,6 @@ export default function Projects() {
                       pattern="[0-9+()\\-\\s]*"
                       value={detailForm.client_phone}
                       onChange={(event) => setDetailForm((prev) => ({ ...prev, client_phone: event.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Email</Label>
-                    <Input
-                      value={detailForm.client_email}
-                      onChange={(event) => setDetailForm((prev) => ({ ...prev, client_email: event.target.value }))}
                     />
                   </div>
                   <div className="space-y-2">
@@ -1279,22 +1301,6 @@ export default function Projects() {
                       placeholder="Например, 120000"
                     />
                   </div>
-                  <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 md:col-span-2">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 rounded border-slate-300 text-blue-600"
-                      checked={detailForm.works_with_contract}
-                      onChange={(event) =>
-                        setDetailForm((prev) => ({ ...prev, works_with_contract: event.target.checked }))
-                      }
-                    />
-                    <span>
-                      <span className="block text-sm font-bold text-slate-800">Работает по договору</span>
-                      <span className="text-xs text-slate-500">
-                        После сохранения можно сформировать договор по загруженному PDF-шаблону.
-                      </span>
-                    </span>
-                  </label>
                 </div>
 
                 <div className="space-y-2">
@@ -1465,13 +1471,14 @@ export default function Projects() {
               </div>
             ) : (
               <div className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <StatCard icon={CreditCard} label="Операций" value={activeProjectPayments.length} dark />
-                  <StatCard icon={Wallet} label="Сумма" value={formatMoney(activeProjectPaymentTotal)} />
+                  <StatCard icon={Wallet} label="Доходы" value={`${formatMoney(activeProjectFinanceStats.income)} ₽`} />
+                  <StatCard icon={BadgeRussianRuble} label="Расходы" value={`${formatMoney(activeProjectFinanceStats.expense)} ₽`} />
                   <StatCard
                     icon={BadgeRussianRuble}
-                    label="Проект"
-                    value={detailForm.total_amount ? formatMoney(detailForm.total_amount) : "—"}
+                    label="Маржа"
+                    value={activeProjectMarginLabel}
                   />
                 </div>
 
@@ -1568,28 +1575,33 @@ export default function Projects() {
                             </tr>
                           </thead>
                           <tbody>
-                            {activeProjectPayments.map((payment) => (
-                              <tr key={payment.id} className="border-t border-slate-100">
-                                <td className="py-4 text-slate-500">{formatDateTime(payment.paid_at)}</td>
-                                <td className="py-4">
-                                  <Badge>{labelFor(PAYMENT_TYPE_OPTIONS, payment.type)}</Badge>
-                                </td>
-                                <td className="py-4 font-semibold text-slate-900">{formatMoney(payment.amount)}</td>
-                                <td className="py-4 text-slate-500">{labelFor(PAYMENT_METHOD_OPTIONS, payment.method)}</td>
-                                <td className="py-4 text-slate-500">{payment.comment || "—"}</td>
-                                <td className="py-4 text-right">
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    className="px-3 text-red-600 hover:bg-red-50"
-                                    onClick={() => requestDeletePayment(payment.id)}
-                                  >
-                                    <Trash2 size={16} />
-                                    Удалить
-                                  </Button>
-                                </td>
-                              </tr>
-                            ))}
+                            {activeProjectPayments.map((payment) => {
+                              const signedAmount = paymentSignedAmount(payment);
+                              return (
+                                <tr key={payment.id} className="border-t border-slate-100">
+                                  <td className="py-4 text-slate-500">{formatDateTime(payment.paid_at)}</td>
+                                  <td className="py-4">
+                                    <Badge>{labelFor(PAYMENT_TYPE_OPTIONS, payment.type)}</Badge>
+                                  </td>
+                                  <td className={`py-4 font-semibold ${signedAmount < 0 ? "text-red-600" : "text-emerald-600"}`}>
+                                    {signedAmount < 0 ? "−" : "+"} {formatMoney(Math.abs(signedAmount))} ₽
+                                  </td>
+                                  <td className="py-4 text-slate-500">{labelFor(PAYMENT_METHOD_OPTIONS, payment.method)}</td>
+                                  <td className="py-4 text-slate-500">{payment.comment || "—"}</td>
+                                  <td className="py-4 text-right">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      className="px-3 text-red-600 hover:bg-red-50"
+                                      onClick={() => requestDeletePayment(payment.id)}
+                                    >
+                                      <Trash2 size={16} />
+                                      Удалить
+                                    </Button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>

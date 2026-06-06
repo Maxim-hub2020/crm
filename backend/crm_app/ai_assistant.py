@@ -11,7 +11,7 @@ from urllib import request as urllib_request
 from django.db.models import Sum
 from django.utils import timezone
 
-from .models import Account, FinanceCategory, Payment, Project, ProjectComment, ProjectStatus, Task, User
+from .models import Account, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectStatus, Task, User
 from .models import CRMMemorySnapshot
 
 
@@ -1166,7 +1166,7 @@ class CRMAssistantService:
             },
             {
                 "name": "create_client",
-                "description": "Создать клиентскую карточку в CRM. Сейчас клиент хранится как проект в дефолтном статусе без суммы.",
+                "description": "Создать клиентскую карточку в CRM.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1646,22 +1646,23 @@ class CRMAssistantService:
         clients_by_key = {}
 
         for project in projects:
+            client = project.client
             latest_comment = latest_comments.get(project.id)
             status_obj = next((status for status in status_rows if status.code == project.status), None)
             age_days = self._project_age_days(project)
             stuck_after_days = self._project_stuck_after_days(project, status_obj)
             row = {
                 "project_id": project.id,
-                "client_name": project.client_name,
+                "client_name": (client.name if client else project.client_name) or "",
                 "status": status_map.get(project.status, project.status),
                 "status_code": project.status,
                 "manager": project.manager.get_full_name() or project.manager.username,
-                "phone": project.client_phone or "",
-                "address": project.object_address or "",
+                "phone": (client.phone if client else project.client_phone) or "",
+                "address": (client.address if client else project.object_address) or "",
                 "total_amount": str(project.total_amount or ""),
                 "paid_total": str(paid_by_project.get(project.id, Decimal("0"))),
                 "payments_count": payment_count_by_project.get(project.id, 0),
-                "works_with_contract": project.works_with_contract,
+                "works_with_contract": bool(client.works_with_contract) if client else bool(project.works_with_contract),
                 "latest_comment": truncate_text(latest_comment.text, 120) if latest_comment else "",
                 "updated_at": project.updated_at.isoformat() if project.updated_at else "",
                 "age_days": age_days,
@@ -1673,14 +1674,18 @@ class CRMAssistantService:
             if row["is_stuck"]:
                 stuck_project_rows.append(row)
 
-            client_key = normalize_text(project.client_phone or project.client_email or project.client_name)
+            client_key = normalize_text(
+                (client.phone if client else project.client_phone)
+                or (client.email if client else project.client_email)
+                or (client.name if client else project.client_name)
+            )
             if client_key and client_key not in clients_by_key:
                 clients_by_key[client_key] = {
-                    "client_name": project.client_name,
-                    "phone": project.client_phone or "",
-                    "email": project.client_email or "",
-                    "address": project.object_address or "",
-                    "works_with_contract": project.works_with_contract,
+                    "client_name": (client.name if client else project.client_name) or "",
+                    "phone": (client.phone if client else project.client_phone) or "",
+                    "email": (client.email if client else project.client_email) or "",
+                    "address": (client.address if client else project.object_address) or "",
+                    "works_with_contract": bool(client.works_with_contract) if client else bool(project.works_with_contract),
                     "project_count": 0,
                     "total_amount": Decimal("0"),
                     "paid_total": Decimal("0"),
@@ -1812,10 +1817,13 @@ class CRMAssistantService:
         return list(ProjectStatus.objects.all().order_by("sort_order", "id"))
 
     def _visible_projects(self):
-        queryset = Project.objects.select_related("manager").all().order_by("-created_at")
+        queryset = Project.objects.select_related("client", "manager").all().order_by("-created_at")
         if self.user.is_admin():
             return queryset
         return queryset.filter(manager=self.user)
+
+    def _visible_clients(self):
+        return Client.objects.all().order_by("name", "id")
 
     def _visible_payments(self):
         queryset = Payment.objects.select_related("project", "created_by").all().order_by("-paid_at", "-id")
@@ -1841,12 +1849,15 @@ class CRMAssistantService:
         return [self.user]
 
     def _serialize_project(self, project, include_payments=False, include_comments=False):
+        client = project.client
         payload = {
             "project_id": project.id,
-            "client_name": project.client_name,
-            "client_phone": project.client_phone,
-            "client_email": project.client_email or "",
-            "object_address": project.object_address or "",
+            "client_id": client.id if client else None,
+            "client_name": (client.name if client else project.client_name) or "",
+            "client_phone": (client.phone if client else project.client_phone) or "",
+            "client_email": (client.email if client else project.client_email) or "",
+            "object_address": (client.address if client else project.object_address) or "",
+            "works_with_contract": bool(client.works_with_contract) if client else bool(project.works_with_contract),
             "description": truncate_text(project.description, 400),
             "status_code": project.status,
             "status_name": self._status_name(project.status),
@@ -2251,55 +2262,52 @@ class CRMAssistantService:
     def _tool_list_clients(self, arguments):
         client_query = normalize_text(arguments.get("client_query"))
         limit = clamp_limit(arguments.get("limit"), default=15, maximum=25)
-        clients = {}
-
+        visible_projects = list(self._visible_projects())
         payments_by_project = {}
         for payment in self._visible_payments():
             payments_by_project[payment.project_id] = payments_by_project.get(payment.project_id, Decimal("0")) + payment.amount
 
-        for project in self._visible_projects():
-            key = normalize_text(project.client_phone or project.client_email or project.client_name)
-            if not key:
-                continue
+        projects_by_client = {}
+        for project in visible_projects:
+            if project.client_id:
+                projects_by_client.setdefault(project.client_id, []).append(project)
 
+        rows = []
+        for client in self._visible_clients():
             haystack = normalize_text(
                 " ".join(
                     [
-                        project.client_name or "",
-                        project.client_phone or "",
-                        project.client_email or "",
-                        project.object_address or "",
+                        client.name or "",
+                        client.phone or "",
+                        client.email or "",
+                        client.address or "",
                     ]
                 )
             )
             if client_query and client_query not in haystack:
                 continue
 
-            if key not in clients:
-                clients[key] = {
-                    "client_name": project.client_name,
-                    "phone": project.client_phone or "",
-                    "email": project.client_email or "",
-                    "address": project.object_address or "",
-                    "works_with_contract": project.works_with_contract,
-                    "project_count": 0,
-                    "total_amount": Decimal("0"),
-                    "paid_total": Decimal("0"),
-                }
+            client_projects = projects_by_client.get(client.id, [])
+            if not self.user.is_admin() and not client_projects:
+                continue
 
-            clients[key]["project_count"] += 1
-            clients[key]["total_amount"] += Decimal(project.total_amount or 0)
-            clients[key]["paid_total"] += payments_by_project.get(project.id, Decimal("0"))
-
-        rows = []
-        for client in list(clients.values())[:limit]:
+            total_amount = sum((Decimal(project.total_amount or 0) for project in client_projects), Decimal("0"))
+            paid_total = sum((payments_by_project.get(project.id, Decimal("0")) for project in client_projects), Decimal("0"))
             rows.append(
                 {
-                    **client,
-                    "total_amount": str(client["total_amount"]),
-                    "paid_total": str(client["paid_total"]),
+                    "client_id": client.id,
+                    "client_name": client.name,
+                    "phone": client.phone or "",
+                    "email": client.email or "",
+                    "address": client.address or "",
+                    "works_with_contract": client.works_with_contract,
+                    "project_count": len(client_projects),
+                    "total_amount": str(total_amount),
+                    "paid_total": str(paid_total),
                 }
             )
+            if len(rows) >= limit:
+                break
 
         return {
             "ok": True,
@@ -2329,6 +2337,45 @@ class CRMAssistantService:
             "comments": [self._serialize_comment(comment) for comment in comments],
         }
 
+    def _get_or_create_client_from_arguments(self, arguments, client_name):
+        phone = str(arguments.get("client_phone") or "").strip()
+        email = str(arguments.get("client_email") or "").strip() or None
+        address = str(arguments.get("object_address") or "").strip() or None
+
+        client = Client.objects.filter(phone=phone).first() if phone else None
+        if client is None and client_name:
+            client = Client.objects.filter(name__iexact=client_name, phone="").first()
+
+        if client is None:
+            client = Client.objects.create(
+                name=client_name,
+                phone=phone,
+                email=email,
+                address=address,
+                works_with_contract=is_truthy(arguments.get("works_with_contract")),
+            )
+        else:
+            changed_fields = []
+            if client_name and client.name != client_name:
+                client.name = client_name
+                changed_fields.append("name")
+            if email and client.email != email:
+                client.email = email
+                changed_fields.append("email")
+            if address and client.address != address:
+                client.address = address
+                changed_fields.append("address")
+            if "works_with_contract" in arguments:
+                next_contract = is_truthy(arguments.get("works_with_contract"))
+                if client.works_with_contract != next_contract:
+                    client.works_with_contract = next_contract
+                    changed_fields.append("works_with_contract")
+            if changed_fields:
+                changed_fields.append("updated_at")
+                client.save(update_fields=changed_fields)
+
+        return client
+
     def _tool_create_project(self, arguments):
         client_name = str(arguments.get("client_name") or "").strip()
         if not client_name:
@@ -2352,17 +2399,19 @@ class CRMAssistantService:
         if arguments.get("total_amount") not in (None, "") and total_amount is None:
             return self._clarification("Не смог разобрать сумму проекта. Укажите её числом.", [])
 
+        client = self._get_or_create_client_from_arguments(arguments, client_name)
         project = Project.objects.create(
             manager=manager,
+            client=client,
             client_name=client_name,
-            client_phone=str(arguments.get("client_phone") or "").strip(),
-            client_email=str(arguments.get("client_email") or "").strip() or None,
-            object_address=str(arguments.get("object_address") or "").strip() or None,
+            client_phone=client.phone or "",
+            client_email=client.email,
+            object_address=client.address,
             description=str(arguments.get("description") or "").strip(),
             total_amount=total_amount,
             status=status_code,
             categories=str(arguments.get("categories") or "").strip(),
-            works_with_contract=is_truthy(arguments.get("works_with_contract")),
+            works_with_contract=client.works_with_contract,
         )
 
         return {
@@ -2377,31 +2426,19 @@ class CRMAssistantService:
         if not client_name:
             return self._clarification("Чтобы создать клиента, мне нужно имя или название клиента.", [])
 
-        default_status = ProjectStatus.objects.filter(is_default=True).first() or ProjectStatus.objects.first()
-        project = Project.objects.create(
-            manager=self.user,
-            client_name=client_name,
-            client_phone=str(arguments.get("client_phone") or "").strip(),
-            client_email=str(arguments.get("client_email") or "").strip() or None,
-            object_address=str(arguments.get("object_address") or "").strip() or None,
-            works_with_contract=is_truthy(arguments.get("works_with_contract")),
-            description=str(arguments.get("comment") or "Клиентская карточка создана AI-помощником.").strip(),
-            total_amount=None,
-            status=default_status.code if default_status else "active",
-            categories="",
-        )
+        client = self._get_or_create_client_from_arguments(arguments, client_name)
 
         return {
             "ok": True,
             "needs_clarification": False,
-            "summary": f"Клиент «{project.client_name}» создан.",
+            "summary": f"Клиент «{client.name}» создан.",
             "client": {
-                "client_name": project.client_name,
-                "phone": project.client_phone or "",
-                "email": project.client_email or "",
-                "address": project.object_address or "",
-                "works_with_contract": project.works_with_contract,
-                "project_id": project.id,
+                "client_id": client.id,
+                "client_name": client.name,
+                "phone": client.phone or "",
+                "email": client.email or "",
+                "address": client.address or "",
+                "works_with_contract": client.works_with_contract,
             },
         }
 
@@ -2436,9 +2473,6 @@ class CRMAssistantService:
                 return self._clarification("Не смог разобрать сумму проекта. Укажите её числом.", [])
             updates["total_amount"] = total_amount
 
-        if "works_with_contract" in arguments:
-            updates["works_with_contract"] = is_truthy(arguments.get("works_with_contract"))
-
         if "status_name" in arguments:
             matched_status = self._match_status(arguments.get("status_name"))
             if not matched_status:
@@ -2452,10 +2486,39 @@ class CRMAssistantService:
             updates["manager"] = matched_user
 
         if not updates:
-            return self._clarification("Не увидел, что именно нужно изменить в проекте.", [])
+            if "works_with_contract" not in arguments:
+                return self._clarification("Не увидел, что именно нужно изменить в проекте.", [])
 
         for field, value in updates.items():
             setattr(project, field, value)
+
+        if project.client:
+            client_updates = []
+            if "client_name" in updates and project.client.name != updates["client_name"]:
+                project.client.name = updates["client_name"]
+                client_updates.append("name")
+            if "client_phone" in updates and updates["client_phone"] and project.client.phone != updates["client_phone"]:
+                if not Client.objects.exclude(pk=project.client_id).filter(phone=updates["client_phone"]).exists():
+                    project.client.phone = updates["client_phone"]
+                    client_updates.append("phone")
+            if "client_email" in updates and project.client.email != updates["client_email"]:
+                project.client.email = updates["client_email"]
+                client_updates.append("email")
+            if "object_address" in updates and project.client.address != updates["object_address"]:
+                project.client.address = updates["object_address"]
+                client_updates.append("address")
+            if "works_with_contract" in arguments:
+                next_contract = is_truthy(arguments.get("works_with_contract"))
+                if project.client.works_with_contract != next_contract:
+                    project.client.works_with_contract = next_contract
+                    client_updates.append("works_with_contract")
+            if client_updates:
+                client_updates.append("updated_at")
+                project.client.save(update_fields=client_updates)
+                project.works_with_contract = project.client.works_with_contract
+        elif "works_with_contract" in arguments:
+            project.works_with_contract = is_truthy(arguments.get("works_with_contract"))
+
         project.save()
 
         return {

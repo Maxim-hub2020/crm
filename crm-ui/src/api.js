@@ -223,6 +223,29 @@ export async function fetchProjects() {
   return data;
 }
 
+export async function fetchClients(params = {}) {
+  initApiAuth();
+  const { data } = await api.get("/api/clients/", { params });
+  return data;
+}
+
+export async function createClient(payload) {
+  initApiAuth();
+  const { data } = await api.post("/api/clients/", payload);
+  return data;
+}
+
+export async function updateClient(clientId, payload) {
+  initApiAuth();
+  const { data } = await api.patch(`/api/clients/${clientId}/`, payload);
+  return data;
+}
+
+export async function deleteClient(clientId) {
+  initApiAuth();
+  await api.delete(`/api/clients/${clientId}/`);
+}
+
 export async function fetchProjectStatuses() {
   initApiAuth();
   const { data } = await api.get("/api/project-statuses/");

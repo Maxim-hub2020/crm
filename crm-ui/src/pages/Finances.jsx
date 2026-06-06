@@ -34,6 +34,11 @@ function formatDate(value) {
   return date.toLocaleDateString("ru-RU");
 }
 
+function paymentSignedAmount(payment) {
+  const amount = Number(payment?.amount || 0);
+  return payment?.type === "refund" || payment?.type === "correction" ? -amount : amount;
+}
+
 function StatTile({ label, value, tone = "light" }) {
   return (
     <div className={`rounded-3xl p-4 shadow-lg sm:p-6 ${tone === "dark" ? "bg-gray-900 text-white" : "bg-white"}`}>
@@ -83,7 +88,15 @@ export default function Finances() {
   }, [method, payments, projectMap, search]);
 
   const stats = useMemo(() => {
-    const total = filteredPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    const income = filteredPayments.reduce((sum, payment) => {
+      const signedAmount = paymentSignedAmount(payment);
+      return signedAmount > 0 ? sum + signedAmount : sum;
+    }, 0);
+    const expense = filteredPayments.reduce((sum, payment) => {
+      const signedAmount = paymentSignedAmount(payment);
+      return signedAmount < 0 ? sum + Math.abs(signedAmount) : sum;
+    }, 0);
+    const total = income - expense;
     const average = filteredPayments.length ? total / filteredPayments.length : 0;
     const thisMonth = filteredPayments
       .filter((payment) => {
@@ -92,17 +105,17 @@ export default function Finances() {
         const now = new Date();
         return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
       })
-      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+      .reduce((sum, payment) => sum + paymentSignedAmount(payment), 0);
 
-    return { total, average, thisMonth, count: filteredPayments.length };
+    return { total, income, expense, average, thisMonth, count: filteredPayments.length };
   }, [filteredPayments]);
 
   return (
     <div>
       <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="Доходы" value={`${formatMoney(stats.total)} ₽`} tone="dark" />
+        <StatTile label="Маржа" value={`${formatMoney(stats.total)} ₽`} tone="dark" />
         <StatTile label="Операции" value={stats.count} />
-        <StatTile label="Средний чек" value={`${formatMoney(stats.average)} ₽`} />
+        <StatTile label="Доходы / расходы" value={`${formatMoney(stats.income)} / ${formatMoney(stats.expense)} ₽`} />
         <StatTile label="За месяц" value={`${formatMoney(stats.thisMonth)} ₽`} />
       </div>
 
@@ -139,25 +152,28 @@ export default function Finances() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {filteredPayments.map((payment) => (
-              <tr key={payment.id} className="transition hover:bg-gray-50/50">
-                <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{formatDate(payment.paid_at)}</td>
-                <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-gray-800">
-                  {projectMap.get(payment.project)?.client_name || `Проект #${payment.project}`}
-                </td>
-                <td className="whitespace-nowrap px-6 py-4 text-sm">
-                  <Badge>{TYPE_LABELS[payment.type] || payment.type}</Badge>
-                </td>
-                <td className="whitespace-nowrap px-6 py-4 text-sm font-bold text-green-600">
-                  <span className="inline-flex items-center gap-2">
-                    <ArrowUpCircle size={16} />
-                    {formatMoney(payment.amount)} ₽
-                  </span>
-                </td>
-                <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{METHOD_LABELS[payment.method] || payment.method}</td>
-                <td className="max-w-xs truncate px-6 py-4 text-sm text-gray-500">{payment.comment || "—"}</td>
-              </tr>
-            ))}
+            {filteredPayments.map((payment) => {
+              const signedAmount = paymentSignedAmount(payment);
+              return (
+                <tr key={payment.id} className="transition hover:bg-gray-50/50">
+                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{formatDate(payment.paid_at)}</td>
+                  <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-gray-800">
+                    {projectMap.get(payment.project)?.client_name || `Проект #${payment.project}`}
+                  </td>
+                  <td className="whitespace-nowrap px-6 py-4 text-sm">
+                    <Badge>{TYPE_LABELS[payment.type] || payment.type}</Badge>
+                  </td>
+                  <td className={`whitespace-nowrap px-6 py-4 text-sm font-bold ${signedAmount < 0 ? "text-red-600" : "text-green-600"}`}>
+                    <span className="inline-flex items-center gap-2">
+                      <ArrowUpCircle size={16} />
+                      {signedAmount < 0 ? "−" : "+"} {formatMoney(Math.abs(signedAmount))} ₽
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{METHOD_LABELS[payment.method] || payment.method}</td>
+                  <td className="max-w-xs truncate px-6 py-4 text-sm text-gray-500">{payment.comment || "—"}</td>
+                </tr>
+              );
+            })}
             {filteredPayments.length === 0 && (
               <tr>
                 <td className="py-10 text-center text-gray-400" colSpan={6}>
@@ -170,19 +186,24 @@ export default function Finances() {
       </div>
 
       <div className="space-y-4 md:hidden">
-        {filteredPayments.map((payment) => (
-          <div key={payment.id} className="space-y-2 rounded-2xl bg-white p-4 shadow-lg">
-            <div className="flex items-start justify-between">
-              <div className="text-xl font-bold text-green-600">+ {formatMoney(payment.amount)} ₽</div>
-              <div className="text-xs text-gray-500">{formatDate(payment.paid_at)}</div>
+        {filteredPayments.map((payment) => {
+          const signedAmount = paymentSignedAmount(payment);
+          return (
+            <div key={payment.id} className="space-y-2 rounded-2xl bg-white p-4 shadow-lg">
+              <div className="flex items-start justify-between">
+                <div className={`text-xl font-bold ${signedAmount < 0 ? "text-red-600" : "text-green-600"}`}>
+                  {signedAmount < 0 ? "−" : "+"} {formatMoney(Math.abs(signedAmount))} ₽
+                </div>
+                <div className="text-xs text-gray-500">{formatDate(payment.paid_at)}</div>
+              </div>
+              <div className="border-t pt-2 text-sm text-gray-600">
+                <p className="font-semibold text-gray-800">{projectMap.get(payment.project)?.client_name || `Проект #${payment.project}`}</p>
+                <p>{TYPE_LABELS[payment.type] || payment.type} • {METHOD_LABELS[payment.method] || payment.method}</p>
+                <p className="truncate">{payment.comment || "Без комментария"}</p>
+              </div>
             </div>
-            <div className="border-t pt-2 text-sm text-gray-600">
-              <p className="font-semibold text-gray-800">{projectMap.get(payment.project)?.client_name || `Проект #${payment.project}`}</p>
-              <p>{TYPE_LABELS[payment.type] || payment.type} • {METHOD_LABELS[payment.method] || payment.method}</p>
-              <p className="truncate">{payment.comment || "Без комментария"}</p>
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {filteredPayments.length === 0 && (
           <div className="rounded-2xl bg-white p-8 text-center text-sm text-gray-400 shadow-lg">Платежи не найдены</div>
         )}

@@ -41,8 +41,32 @@ class ProjectStatus(models.Model):
             ProjectStatus.objects.exclude(pk=self.pk).filter(is_default=True).update(is_default=False)
 
 
+class Client(models.Model):
+    name = models.CharField(max_length=200)
+    phone = models.CharField(max_length=50, blank=True, default="", db_index=True)
+    email = models.EmailField(blank=True, null=True)
+    address = models.CharField(max_length=300, blank=True, null=True)
+    works_with_contract = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["phone"],
+                condition=~models.Q(phone=""),
+                name="unique_client_phone_non_empty",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class Project(models.Model):
     manager = models.ForeignKey(User, on_delete=models.PROTECT, related_name="projects")
+    client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="projects", blank=True, null=True)
     client_name = models.CharField(max_length=200)
     client_phone = models.CharField(max_length=50, db_index=True)
     client_email = models.EmailField(blank=True, null=True)

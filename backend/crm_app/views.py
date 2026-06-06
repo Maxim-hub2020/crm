@@ -1,6 +1,7 @@
 import json
 from io import BytesIO
 
+from django.db.models import Q
 from django.http import FileResponse
 from django.utils import timezone
 from rest_framework import viewsets
@@ -13,6 +14,7 @@ from rest_framework import status as drf_status
 from .ai_assistant import CRMAssistantService, GeminiConfigurationError, GeminiRequestError
 from .models import (
     Account,
+    Client,
     DocumentTemplate,
     FinanceCategory,
     Payment,
@@ -28,6 +30,7 @@ from .permissions import HasActiveSubscription, IsAdmin, IsAuthenticatedAny
 from .serializers import (
     AdminUserSerializer,
     AccountSerializer,
+    ClientSerializer,
     DocumentTemplateSerializer,
     FinanceCategorySerializer,
     MeSerializer,
@@ -156,7 +159,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
 
     def get_queryset(self):
-        qs = Project.objects.all().order_by("-created_at")
+        qs = Project.objects.select_related("client").all().order_by("-created_at")
         if self.request.user.is_admin():
             return qs
         return qs.filter(manager=self.request.user)
@@ -168,7 +171,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def document(self, request, pk=None, document_type=None):
         project = self.get_object()
 
-        if document_type == DocumentTemplate.Type.CONTRACT and not project.works_with_contract:
+        works_with_contract = bool(project.client.works_with_contract) if project.client else bool(project.works_with_contract)
+
+        if document_type == DocumentTemplate.Type.CONTRACT and not works_with_contract:
             return Response(
                 {"detail": "Для этого клиента не включена работа по договору."},
                 status=drf_status.HTTP_400_BAD_REQUEST,
@@ -197,11 +202,12 @@ class ProjectViewSet(viewsets.ModelViewSet):
 def render_pdf_template(template, project):
     from pypdf import PdfReader, PdfWriter
 
+    client = project.client
     values = {
-        "CLIENT_NAME": project.client_name or "",
-        "CLIENT_PHONE": project.client_phone or "",
-        "CLIENT_EMAIL": project.client_email or "",
-        "CLIENT_ADDRESS": project.object_address or "",
+        "CLIENT_NAME": (client.name if client else project.client_name) or "",
+        "CLIENT_PHONE": (client.phone if client else project.client_phone) or "",
+        "CLIENT_EMAIL": (client.email if client else project.client_email) or "",
+        "CLIENT_ADDRESS": (client.address if client else project.object_address) or "",
         "DEAL_VALUE": str(project.total_amount or ""),
         "PROJECT_TITLE": project.client_name or "",
         "DOCUMENT_DATE": timezone.localdate().strftime("%d.%m.%Y"),
@@ -222,6 +228,24 @@ def render_pdf_template(template, project):
         output = BytesIO()
         writer.write(output)
         return output.getvalue()
+
+
+class ClientViewSet(viewsets.ModelViewSet):
+    serializer_class = ClientSerializer
+    permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
+    http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
+
+    def get_queryset(self):
+        qs = Client.objects.all().order_by("name", "id")
+        query = (self.request.query_params.get("q") or "").strip()
+        if query:
+            qs = qs.filter(
+                Q(name__icontains=query)
+                | Q(phone__icontains=query)
+                | Q(email__icontains=query)
+                | Q(address__icontains=query)
+            )
+        return qs.distinct()
 
 
 class PaymentViewSet(viewsets.ModelViewSet):

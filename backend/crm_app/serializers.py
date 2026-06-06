@@ -3,6 +3,7 @@ from django.utils.text import slugify
 
 from .models import (
     Account,
+    Client,
     DocumentTemplate,
     FinanceCategory,
     Payment,
@@ -47,24 +48,125 @@ class MeSerializer(serializers.ModelSerializer):
         return is_subscription_active()
 
 
+class ClientSerializer(serializers.ModelSerializer):
+    project_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Client
+        fields = [
+            "id",
+            "name",
+            "phone",
+            "email",
+            "address",
+            "works_with_contract",
+            "project_count",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["project_count", "created_at", "updated_at"]
+        extra_kwargs = {
+            "phone": {"required": False, "allow_blank": True},
+            "email": {"required": False, "allow_blank": True, "allow_null": True},
+            "address": {"required": False, "allow_blank": True, "allow_null": True},
+            "works_with_contract": {"required": False},
+        }
+
+    def get_project_count(self, obj):
+        return obj.projects.count()
+
+
 class ProjectSerializer(serializers.ModelSerializer):
+    client_info = ClientSerializer(source="client", read_only=True)
+
+    def _resolve_client(self, attrs):
+        instance = self.instance
+        current_client = attrs.get("client") or getattr(instance, "client", None)
+
+        name = str(attrs.get("client_name", getattr(instance, "client_name", "")) or "").strip()
+        phone = str(attrs.get("client_phone", getattr(instance, "client_phone", "")) or "").strip()
+        email = attrs.get("client_email", getattr(instance, "client_email", None))
+        address = attrs.get("object_address", getattr(instance, "object_address", None))
+
+        client = current_client
+        if phone:
+            phone_match = Client.objects.filter(phone=phone).first()
+            if phone_match:
+                client = phone_match
+
+        if client is None and name:
+            client = Client.objects.filter(name__iexact=name, phone="").first()
+
+        if client is None:
+            if not name:
+                raise serializers.ValidationError({"client_name": "Укажите клиента."})
+            client = Client.objects.create(
+                name=name,
+                phone=phone,
+                email=email or None,
+                address=address or None,
+            )
+        else:
+            if not name:
+                name = client.name
+            if not phone:
+                phone = client.phone or ""
+
+            changed_fields = []
+            if name and client.name != name:
+                client.name = name
+                changed_fields.append("name")
+            if phone and client.phone != phone and not Client.objects.exclude(pk=client.pk).filter(phone=phone).exists():
+                client.phone = phone
+                changed_fields.append("phone")
+            if "client_email" in attrs and client.email != (email or None):
+                client.email = email or None
+                changed_fields.append("email")
+            if "object_address" in attrs and client.address != (address or None):
+                client.address = address or None
+                changed_fields.append("address")
+            if changed_fields:
+                changed_fields.append("updated_at")
+                client.save(update_fields=changed_fields)
+
+        attrs["client"] = client
+        attrs["client_name"] = name or client.name
+        attrs["client_phone"] = phone or client.phone or ""
+        attrs["client_email"] = email if "client_email" in attrs else client.email
+        attrs["object_address"] = address if "object_address" in attrs else client.address
+
+        return attrs
+
     def validate_status(self, value):
         if value and not ProjectStatus.objects.filter(code=value).exists():
             raise serializers.ValidationError("Укажите существующий статус канбана.")
         return value
 
     def validate(self, attrs):
+        has_client = attrs.get("client") or getattr(self.instance, "client", None)
+        has_name = str(attrs.get("client_name", getattr(self.instance, "client_name", "")) or "").strip()
+        has_phone = str(attrs.get("client_phone", getattr(self.instance, "client_phone", "")) or "").strip()
+        if not has_client and not has_name and not has_phone:
+            raise serializers.ValidationError({"client_name": "Укажите клиента."})
         if self.instance is None and not attrs.get("status"):
             default_status = ProjectStatus.objects.filter(is_default=True).first() or ProjectStatus.objects.first()
             if default_status:
                 attrs["status"] = default_status.code
         return attrs
 
+    def create(self, validated_data):
+        return super().create(self._resolve_client(validated_data))
+
+    def update(self, instance, validated_data):
+        return super().update(instance, self._resolve_client(validated_data))
+
     class Meta:
         model = Project
         fields = "__all__"
-        read_only_fields = ["manager", "created_at", "updated_at"]
+        read_only_fields = ["manager", "created_at", "updated_at", "client_info"]
         extra_kwargs = {
+            "client": {"required": False, "allow_null": True},
+            "client_name": {"required": False, "allow_blank": True},
             "client_phone": {"required": False, "allow_blank": True},
             "client_email": {"required": False, "allow_blank": True, "allow_null": True},
             "object_address": {"required": False, "allow_blank": True, "allow_null": True},

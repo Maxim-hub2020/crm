@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     Account,
     AuditLog,
+    Client,
     CRMMemorySnapshot,
     DocumentTemplate,
     FinanceCategory,
@@ -15,6 +16,7 @@ from .models import (
 )
 
 admin.site.register(User)
+admin.site.register(Client)
 admin.site.register(ProjectStatus)
 admin.site.register(Project)
 admin.site.register(Payment)

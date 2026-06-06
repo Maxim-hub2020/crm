@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ChevronRight, Mail, MapPin, Phone, Search, Wallet } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-import { extractApiErrorMessage, fetchPayments, fetchProjects, updateProject } from "../api";
+import { extractApiErrorMessage, fetchClients, fetchPayments, fetchProjects, updateClient } from "../api";
 import { Badge, Input } from "../components/ui.jsx";
 
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
@@ -14,8 +14,14 @@ function formatMoney(value) {
   return moneyFormatter.format(Number(value || 0));
 }
 
+function paymentSignedAmount(payment) {
+  const amount = Number(payment?.amount || 0);
+  return payment?.type === "refund" || payment?.type === "correction" ? -amount : amount;
+}
+
 export default function Clients() {
   const navigate = useNavigate();
+  const [clientRows, setClientRows] = useState([]);
   const [projects, setProjects] = useState([]);
   const [payments, setPayments] = useState([]);
   const [search, setSearch] = useState("");
@@ -24,10 +30,12 @@ export default function Clients() {
   useEffect(() => {
     (async () => {
       try {
-        const [projectRows, paymentRows] = await Promise.all([fetchProjects(), fetchPayments()]);
+        const [clientsData, projectRows, paymentRows] = await Promise.all([fetchClients(), fetchProjects(), fetchPayments()]);
+        setClientRows(clientsData);
         setProjects(projectRows);
         setPayments(paymentRows);
       } catch {
+        setClientRows([]);
         setProjects([]);
         setPayments([]);
       }
@@ -35,24 +43,36 @@ export default function Clients() {
   }, []);
 
   const clients = useMemo(() => {
-    return projects
-      .map((project) => {
-        const projectPayments = payments.filter((payment) => payment.project === project.id);
-        const total = projectPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    const projectsByClient = new Map();
+    for (const project of projects) {
+      const clientId = project.client || project.client_info?.id;
+      if (!clientId) continue;
+      if (!projectsByClient.has(clientId)) {
+        projectsByClient.set(clientId, []);
+      }
+      projectsByClient.get(clientId).push(project);
+    }
+
+    return clientRows
+      .map((client) => {
+        const clientProjects = projectsByClient.get(client.id) || [];
+        const projectIds = new Set(clientProjects.map((project) => project.id));
+        const projectPayments = payments.filter((payment) => projectIds.has(payment.project));
+        const total = projectPayments.reduce((sum, payment) => sum + paymentSignedAmount(payment), 0);
         return {
-          id: project.id,
-          name: project.client_name,
-          phone: project.client_phone,
-          email: project.client_email,
-          address: project.object_address,
-          status: project.status,
-          worksWithContract: Boolean(project.works_with_contract),
+          id: client.id,
+          name: client.name,
+          phone: client.phone,
+          email: client.email,
+          address: client.address,
+          projectCount: clientProjects.length || client.project_count || 0,
+          worksWithContract: Boolean(client.works_with_contract),
           paymentsCount: projectPayments.length,
           total,
         };
       })
       .sort((left, right) => (left.name || "").localeCompare(right.name || "", "ru"));
-  }, [payments, projects]);
+  }, [clientRows, payments, projects]);
 
   const filteredClients = useMemo(() => {
     const value = search.trim().toLowerCase();
@@ -66,10 +86,10 @@ export default function Clients() {
   async function toggleContract(client) {
     setError("");
     try {
-      const updated = await updateProject(client.id, {
+      const updated = await updateClient(client.id, {
         works_with_contract: !client.worksWithContract,
       });
-      setProjects((current) => current.map((project) => (project.id === updated.id ? updated : project)));
+      setClientRows((current) => current.map((row) => (row.id === updated.id ? updated : row)));
     } catch (requestError) {
       setError(extractApiErrorMessage(requestError, "Не удалось сохранить признак договора."));
     }
@@ -101,7 +121,7 @@ export default function Clients() {
               <div>
                 <div className="font-bold text-gray-800">{client.name || "Без имени"}</div>
                 <div className="mt-1 flex flex-wrap gap-2">
-                  <Badge>{client.status || "Без статуса"}</Badge>
+                  <Badge>{client.projectCount} проектов</Badge>
                   <Badge>{client.paymentsCount} платежей</Badge>
                   {client.worksWithContract && <Badge className="bg-blue-100 text-blue-700">Договор</Badge>}
                 </div>

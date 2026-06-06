@@ -11,7 +11,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from .ai_assistant import GeminiClient, GeminiRequestError, humanize_gemini_error
 from .live_assistant import _has_live_assistant_access
-from .models import Payment, Project, ProjectComment, ProjectStatus, SubscriptionInvoice, Task, User
+from .models import Client, Payment, Project, ProjectComment, ProjectStatus, SubscriptionInvoice, Task, User
 from .subscription import activate_subscription_invoice, ensure_subscription_defaults, issue_subscription_invoice
 
 
@@ -157,6 +157,27 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         created_project = Project.objects.get(id=response.data["id"])
         self.assertEqual(created_project.manager_id, self.manager.id)
 
+    def test_project_create_creates_or_reuses_client_card(self):
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/projects/",
+            {
+                "client_name": "Contract Client",
+                "client_phone": "+70000000077",
+                "client_email": "client@example.com",
+                "object_address": "Moscow",
+                "categories": "mirrors",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data["client"])
+        created_client = Client.objects.get(id=response.data["client"])
+        self.assertEqual(created_client.name, "Contract Client")
+        self.assertEqual(created_client.phone, "+70000000077")
+
     def test_project_can_be_created_without_phone(self):
         client = self.auth_client_for(self.manager)
 
@@ -186,6 +207,41 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("status", response.data)
+
+
+class TestClientApi(AuthenticatedApiMixin, APITestCase):
+    def setUp(self):
+        self.activate_subscription()
+        self.manager = self.create_user("manager.one")
+        self.admin = self.create_user("admin.user", role=User.Role.ADMIN)
+        self.client_card = Client.objects.create(
+            name="Client One",
+            phone="+70000000001",
+            email="one@example.com",
+            address="Moscow",
+        )
+
+    def test_authenticated_user_can_search_clients(self):
+        api_client = self.auth_client_for(self.manager)
+
+        response = api_client.get("/api/clients/?q=000001")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["id"], self.client_card.id)
+
+    def test_client_contract_flag_is_stored_on_client_card(self):
+        api_client = self.auth_client_for(self.manager)
+
+        response = api_client.patch(
+            f"/api/clients/{self.client_card.id}/",
+            {"works_with_contract": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.client_card.refresh_from_db()
+        self.assertTrue(self.client_card.works_with_contract)
 
 
 class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
