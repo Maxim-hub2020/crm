@@ -34,13 +34,13 @@ function NavItem({ to, icon: Icon, label, onClick }) {
       title={label}
       onClick={onClick}
       className={({ isActive }) =>
-        `mb-2 flex h-9 w-9 items-center justify-center rounded-2xl transition ${
+        `mb-2 flex h-11 w-full items-center gap-3 rounded-2xl px-3 text-sm font-bold transition md:h-9 md:w-9 md:justify-center md:px-0 ${
           isActive ? "bg-blue-50 text-blue-600" : "text-slate-400 hover:bg-slate-50 hover:text-slate-700"
         }`
       }
     >
-      <Icon size={18} />
-      <span className="sr-only">{label}</span>
+      <Icon size={18} className="shrink-0" />
+      <span className="truncate md:sr-only">{label}</span>
     </NavLink>
   );
 }
@@ -86,7 +86,7 @@ export default function Layout({ children }) {
       {sidebarOpen && <div className="fixed inset-0 z-40 bg-black/30 md:hidden" onClick={closeSidebar} />}
 
       <aside
-        className={`fixed z-50 flex h-full w-12 shrink-0 flex-col border-r border-slate-200/70 bg-white transition-transform md:relative md:translate-x-0 ${
+        className={`fixed z-50 flex h-full w-64 shrink-0 flex-col border-r border-slate-200/70 bg-white transition-transform md:relative md:w-12 md:translate-x-0 ${
           isAssistantMode ? "pointer-events-none opacity-20 blur-[2px] saturate-50" : ""
         } ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
       >
@@ -96,7 +96,7 @@ export default function Layout({ children }) {
           </div>
         </div>
 
-        <nav className="mt-6 flex flex-1 flex-col items-center px-1.5">
+        <nav className="mt-6 flex flex-1 flex-col px-3 md:items-center md:px-1.5">
           <NavItem to="/" icon={Home} label="Дашборд" onClick={closeSidebar} />
           <NavItem to="/projects" icon={FolderKanban} label="Проекты" onClick={closeSidebar} />
           {isAdmin && <NavItem to="/finances" icon={Wallet} label="Финансы" onClick={closeSidebar} />}
@@ -107,14 +107,15 @@ export default function Layout({ children }) {
           <NavItem to="/assistant" icon={Mic} label="AI-помощник" onClick={closeSidebar} />
         </nav>
 
-        <div className="flex shrink-0 justify-center border-t border-slate-100 py-3">
+        <div className="flex shrink-0 justify-center border-t border-slate-100 px-3 py-3 md:px-1.5">
           <button
             onClick={logout}
-            className="flex h-9 w-9 items-center justify-center rounded-2xl text-slate-400 transition hover:bg-red-50 hover:text-red-500"
+            className="flex h-11 w-full items-center gap-3 rounded-2xl px-3 text-sm font-bold text-slate-400 transition hover:bg-red-50 hover:text-red-500 md:h-9 md:w-9 md:justify-center md:px-0"
             type="button"
             title="Выход"
           >
-            <LogOut size={17} />
+            <LogOut size={17} className="shrink-0" />
+            <span className="truncate md:sr-only">Выход</span>
           </button>
         </div>
       </aside>
