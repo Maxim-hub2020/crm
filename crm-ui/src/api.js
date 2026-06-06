@@ -413,11 +413,12 @@ export async function sendAssistantMessage(payload) {
   return data;
 }
 
-export async function sendAssistantVoiceMessage({ audioBlob, history }) {
+export async function sendAssistantVoiceMessage({ audioBlob, history, includeAudio = true }) {
   initApiAuth();
   const formData = new FormData();
   formData.append("audio", audioBlob, "voice-command.wav");
   formData.append("history", JSON.stringify(history || []));
+  formData.append("include_audio", includeAudio ? "1" : "0");
   const { data } = await api.post("/api/assistant/voice/", formData, { timeout: 60000 });
   return data;
 }

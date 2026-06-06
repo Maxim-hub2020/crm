@@ -523,13 +523,20 @@ class CRMAssistantService:
             "needs_clarification": needs_clarification,
         }
 
-    def handle_audio(self, audio_bytes, mime_type, history=None):
+    def handle_audio(self, audio_bytes, mime_type, history=None, include_audio=True):
         transcript = self.client.transcribe_audio(audio_bytes, mime_type).strip()
         if not transcript:
             raise ValueError("Не удалось распознать речь. Попробуйте сказать команду ещё раз.")
 
         result = self.handle_message(transcript, history=history)
         result["transcript"] = transcript
+        if not include_audio:
+            result["audio_base64"] = ""
+            result["audio_mime_type"] = ""
+            result["voice_name"] = ""
+            result["speech_error"] = ""
+            return result
+
         try:
             speech = self.client.generate_speech(result["reply"])
             result["audio_base64"] = base64.b64encode(speech["audio_bytes"]).decode("ascii")

@@ -122,6 +122,7 @@ def assistant_chat_view(request):
 def assistant_voice_view(request):
     audio_file = request.FILES.get("audio")
     raw_history = request.data.get("history") or "[]"
+    include_audio = str(request.data.get("include_audio", "1")).strip().lower() not in {"0", "false", "no", "off"}
 
     if isinstance(raw_history, str):
         try:
@@ -139,6 +140,7 @@ def assistant_voice_view(request):
             audio_bytes=audio_file.read(),
             mime_type=audio_file.content_type or "audio/wav",
             history=history,
+            include_audio=include_audio,
         )
         return Response(result)
     except GeminiConfigurationError as exc:

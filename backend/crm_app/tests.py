@@ -923,6 +923,36 @@ class TestAssistantApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["audio_base64"], "")
         self.assertIn("Gemini TTS test error", response.data["speech_error"])
 
+    @patch("crm_app.ai_assistant.GeminiClient.generate_speech")
+    @patch("crm_app.ai_assistant.GeminiClient.transcribe_audio")
+    @patch("crm_app.ai_assistant.GeminiClient.generate_content")
+    def test_voice_endpoint_can_skip_audio_generation(
+        self,
+        mocked_generate_content,
+        mocked_transcribe_audio,
+        mocked_generate_speech,
+    ):
+        os.environ["GEMINI_BACKEND"] = "google_ai"
+        os.environ["GEMINI_API_KEY"] = "test-key"
+        mocked_transcribe_audio.return_value = "Привет"
+        mocked_generate_content.return_value = self.make_text_response("Здравствуйте. Слушаю вас.")
+
+        client = self.auth_client_for(self.admin)
+        response = client.post(
+            "/api/assistant/voice/",
+            {
+                "audio": SimpleUploadedFile("voice-command.wav", b"fake-wav-data", content_type="audio/wav"),
+                "history": "[]",
+                "include_audio": "0",
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["reply"], "Здравствуйте. Слушаю вас.")
+        self.assertEqual(response.data["audio_base64"], "")
+        self.assertEqual(response.data["speech_error"], "")
+        mocked_generate_speech.assert_not_called()
+
 class TestGeminiErrors(APITestCase):
     @patch.object(GeminiClient, "_post")
     def test_vertex_tts_uses_gemini_audio_generation(self, mocked_post):

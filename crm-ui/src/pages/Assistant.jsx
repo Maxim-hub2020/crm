@@ -33,6 +33,7 @@ const BROWSER_TTS_MAX_MS = Number(import.meta.env.VITE_ASSISTANT_TTS_MAX_MS || 1
 const ASSISTANT_TEXT_REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_ASSISTANT_TEXT_TIMEOUT_MS || 22000);
 const RAW_ASSISTANT_PENDING_WATCHDOG_MS = Number(import.meta.env.VITE_ASSISTANT_PENDING_WATCHDOG_MS || 26000);
 const ASSISTANT_PENDING_WATCHDOG_MS = IOS_DEVICE ? Math.max(RAW_ASSISTANT_PENDING_WATCHDOG_MS, 60000) : RAW_ASSISTANT_PENDING_WATCHDOG_MS;
+const USE_BROWSER_VOICE_OUTPUT = IOS_DEVICE;
 
 function readEnvNumber(value, fallback) {
   const parsed = Number(value);
@@ -41,6 +42,10 @@ function readEnvNumber(value, fallback) {
 
 function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function normalizeText(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 function isIOSDevice() {
@@ -229,6 +234,7 @@ export default function Assistant() {
   const audioUrlRef = useRef("");
   const outputAudioContextRef = useRef(null);
   const outputAudioSourceRef = useRef(null);
+  const speechResumeTimerRef = useRef(null);
   const latestAudioRef = useRef(null);
   const historyRef = useRef(history);
   const activeConversationRef = useRef(readStoredArray(window.sessionStorage, SESSION_STORAGE_KEY));
@@ -851,6 +857,7 @@ export default function Assistant() {
     setSpeaking(false);
     clearResumeTimer();
     clearPendingWatchdogTimer();
+    clearSpeechResumeTimer();
     stopStableVoiceSession();
     try {
       window.speechSynthesis?.cancel();
@@ -868,6 +875,49 @@ export default function Assistant() {
       if (!sessionActiveRef.current || recordingRef.current || pendingRef.current || speakingRef.current) return;
       void startRecording();
     }, delay);
+  }
+
+  function clearSpeechResumeTimer() {
+    if (speechResumeTimerRef.current) {
+      window.clearInterval(speechResumeTimerRef.current);
+      speechResumeTimerRef.current = null;
+    }
+  }
+
+  function getRussianSpeechVoice() {
+    try {
+      const voices = window.speechSynthesis?.getVoices?.() || [];
+      return (
+        voices.find((voice) => normalizeText(voice.lang).startsWith("ru")) ||
+        voices.find((voice) => normalizeText(voice.name).includes("russian")) ||
+        voices.find((voice) => normalizeText(voice.name).includes("milena")) ||
+        null
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  function unlockSpeechSynthesis() {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance("а");
+      utterance.lang = "ru-RU";
+      utterance.volume = 0;
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      const voice = getRussianSpeechVoice();
+      if (voice) {
+        utterance.voice = voice;
+      }
+      window.speechSynthesis.speak(utterance);
+      window.setTimeout(() => {
+        try {
+          window.speechSynthesis.resume();
+        } catch {}
+      }, 80);
+    } catch {}
   }
 
   function stopOutputAudioSource() {
@@ -1017,7 +1067,7 @@ export default function Assistant() {
 
   function speakBrowserReply(text) {
     const cleanText = String(text || "").trim();
-    if (!cleanText || !window.speechSynthesis) {
+    if (!cleanText || !window.speechSynthesis || !window.SpeechSynthesisUtterance) {
       return Promise.resolve();
     }
 
@@ -1033,12 +1083,17 @@ export default function Assistant() {
       utterance.lang = "ru-RU";
       utterance.rate = 1;
       utterance.pitch = 1;
+      const voice = getRussianSpeechVoice();
+      if (voice) {
+        utterance.voice = voice;
+      }
       let resolved = false;
       let watchdogTimer = null;
 
       const finishSpeaking = () => {
         if (resolved) return;
         resolved = true;
+        clearSpeechResumeTimer();
         if (watchdogTimer) {
           window.clearTimeout(watchdogTimer);
         }
@@ -1048,6 +1103,12 @@ export default function Assistant() {
       };
       utterance.onend = finishSpeaking;
       utterance.onerror = finishSpeaking;
+      clearSpeechResumeTimer();
+      speechResumeTimerRef.current = window.setInterval(() => {
+        try {
+          window.speechSynthesis.resume();
+        } catch {}
+      }, 900);
       watchdogTimer = window.setTimeout(() => {
         try {
           window.speechSynthesis.cancel();
@@ -1056,6 +1117,9 @@ export default function Assistant() {
       }, BROWSER_TTS_MAX_MS);
 
       window.speechSynthesis.speak(utterance);
+      try {
+        window.speechSynthesis.resume();
+      } catch {}
     });
   }
 
@@ -1451,6 +1515,7 @@ export default function Assistant() {
       const response = await sendAssistantVoiceMessage({
         audioBlob,
         history: conversationHistory,
+        includeAudio: !USE_BROWSER_VOICE_OUTPUT,
       });
 
       if (epoch !== requestEpochRef.current) {
@@ -1645,6 +1710,7 @@ export default function Assistant() {
   async function handleOrbClick() {
     if (!sessionActive) {
       unlockAudioOutput();
+      unlockSpeechSynthesis();
       requestEpochRef.current += 1;
       activeConversationRef.current = [];
       window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
@@ -1696,6 +1762,9 @@ export default function Assistant() {
       return;
     }
 
+    if (replyText) {
+      await speakBrowserReply(replyText);
+    }
   }
 
   return (
@@ -1768,7 +1837,7 @@ export default function Assistant() {
               type="button"
               variant="secondary"
               onClick={replayLatestReply}
-              disabled={!latestAudioRef.current?.audioBase64 || pending}
+              disabled={!(latestAudioRef.current?.audioBase64 || replyText) || pending}
             >
               <Volume2 size={16} />
               Повторить ответ
@@ -1813,7 +1882,7 @@ export default function Assistant() {
           <div className="voice-mode-last-answer">
             {replyText || "Жду ответ AI-помощника..."}
           </div>
-          {latestAudioRef.current?.audioBase64 ? (
+          {latestAudioRef.current?.audioBase64 || replyText ? (
             <button type="button" className="voice-mode-last-repeat" onClick={replayLatestReply} disabled={pending}>
               Повторить
             </button>
