@@ -113,10 +113,10 @@ function createEmptyProjectForm(status = "active") {
 
 function createEmptyPaymentForm() {
   return {
-    category_kind: "income",
+    category_kind: "",
     category: "",
     account: "",
-    type: "advance",
+    type: "",
     amount: "",
     method: "transfer",
     comment: "",
@@ -480,7 +480,7 @@ function ColumnHeader({ status, count, totalAmount }) {
   );
 }
 
-function ProjectKanbanCard({ project, amount, ageDays, isDragging = false, onClick }) {
+function ProjectKanbanCard({ project, amount, ageDays, showAgeDays = true, isDragging = false, onClick }) {
   return (
     <button
       type="button"
@@ -495,9 +495,11 @@ function ProjectKanbanCard({ project, amount, ageDays, isDragging = false, onCli
       <div className="mt-1.5 text-sm text-slate-500">{project.client_name || "Клиент не назначен"}</div>
       <div className="mt-4 flex items-end justify-between gap-3">
         <div className="text-[1.05rem] font-black tracking-tight text-blue-600">{formatMoney(amount)} ₽</div>
-        <span className={`rounded-full px-3 py-1 text-sm font-semibold ${ageBadgeClass(ageDays)}`}>
-          {ageDays || 0} дн.
-        </span>
+        {showAgeDays ? (
+          <span className={`rounded-full px-3 py-1 text-sm font-semibold ${ageBadgeClass(ageDays)}`}>
+            {ageDays || 0} дн.
+          </span>
+        ) : null}
       </div>
     </button>
   );
@@ -601,6 +603,7 @@ export default function Projects() {
   const statusMap = useMemo(() => {
     return new Map(statusOptions.map((status) => [status.value, status]));
   }, [statusOptions]);
+  const terminalStatusValue = statusOptions[statusOptions.length - 1]?.value || "";
 
   const financeCategoryOptions = useMemo(
     () =>
@@ -619,6 +622,15 @@ export default function Projects() {
     () => financeCategoryOptions.filter((category) => category.type === paymentForm.category_kind),
     [financeCategoryOptions, paymentForm.category_kind]
   );
+  const paymentTypeOptions = useMemo(() => {
+    if (paymentForm.category_kind === "expense") {
+      return PAYMENT_TYPE_OPTIONS.filter((option) => option.value === "refund" || option.value === "correction");
+    }
+    if (paymentForm.category_kind === "income") {
+      return PAYMENT_TYPE_OPTIONS.filter((option) => option.value === "advance" || option.value === "additional");
+    }
+    return [];
+  }, [paymentForm.category_kind]);
 
   async function reloadData({ silent = false } = {}) {
     if (!silent) {
@@ -1050,7 +1062,7 @@ export default function Projects() {
       ...prev,
       category_kind: categoryKind,
       category: "",
-      type: categoryKind === "expense" ? "correction" : "advance",
+      type: categoryKind ? (categoryKind === "expense" ? "correction" : "advance") : "",
     }));
   }
 
@@ -1152,6 +1164,10 @@ export default function Projects() {
     try {
       if (!paymentForm.amount.trim()) {
         setPaymentError("Укажите сумму операции.");
+        return;
+      }
+      if (!paymentForm.category_kind || !paymentForm.type) {
+        setPaymentError("Выберите тип операции: доход или расход.");
         return;
       }
 
@@ -1683,6 +1699,7 @@ export default function Projects() {
                             project={project}
                             amount={amount}
                             ageDays={ageDays}
+                            showAgeDays={status.value !== terminalStatusValue}
                             isDragging={touchDragProjectId === project.id}
                             onClick={() => {
                               if (!suppressProjectClickRef.current) {
@@ -2292,30 +2309,35 @@ export default function Projects() {
                     <form className="space-y-4" onSubmit={submitPayment}>
                       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                         <div className="space-y-2">
-                          <Label>Доход / расход</Label>
+                          <Label>Тип операции</Label>
                           <Select value={paymentForm.category_kind} onChange={(event) => handlePaymentCategoryKindChange(event.target.value)}>
+                            <option value="">Выберите тип</option>
                             <option value="income">Доход</option>
                             <option value="expense">Расход</option>
                           </Select>
                         </div>
+                        {paymentForm.category_kind ? (
+                          <div className="space-y-2">
+                            <Label>{paymentForm.category_kind === "expense" ? "Категория расхода" : "Категория дохода"}</Label>
+                            <Select value={paymentForm.category} onChange={(event) => handlePaymentCategoryChange(event.target.value)}>
+                              <option value="">Без категории</option>
+                              {paymentCategoryOptions.map((category) => (
+                                <option key={category.value} value={category.value}>
+                                  {category.label}
+                                </option>
+                              ))}
+                            </Select>
+                          </div>
+                        ) : null}
                         <div className="space-y-2">
-                          <Label>Категория</Label>
-                          <Select value={paymentForm.category} onChange={(event) => handlePaymentCategoryChange(event.target.value)}>
-                            <option value="">Без категории</option>
-                            {paymentCategoryOptions.map((category) => (
-                              <option key={category.value} value={category.value}>
-                                {category.label}
-                              </option>
-                            ))}
-                          </Select>
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Вид операции</Label>
+                          <Label>Подтип операции</Label>
                           <Select
                             value={paymentForm.type}
                             onChange={(event) => setPaymentForm((prev) => ({ ...prev, type: event.target.value }))}
+                            disabled={!paymentForm.category_kind}
                           >
-                            {PAYMENT_TYPE_OPTIONS.map((option) => (
+                            {!paymentForm.category_kind ? <option value="">Сначала выберите тип</option> : null}
+                            {paymentTypeOptions.map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}
                               </option>

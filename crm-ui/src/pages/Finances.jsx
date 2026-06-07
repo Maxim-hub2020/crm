@@ -52,10 +52,10 @@ function toDateTimeLocalValue(value) {
 
 function createPaymentEditForm(payment = {}) {
   return {
-    category_kind: payment.category_type || (payment.type === "refund" || payment.type === "correction" ? "expense" : "income"),
+    category_kind: payment.id ? payment.category_type || (payment.type === "refund" || payment.type === "correction" ? "expense" : "income") : "",
     category: payment.category ? String(payment.category) : "",
     account: payment.account ? String(payment.account) : "",
-    type: payment.type || "advance",
+    type: payment.id ? payment.type || "advance" : "",
     amount: payment.amount ? String(payment.amount) : "",
     method: payment.method || "transfer",
     comment: payment.comment || "",
@@ -126,6 +126,15 @@ export default function Finances() {
     () => categories.filter((item) => item.type === editForm.category_kind),
     [categories, editForm.category_kind]
   );
+  const editPaymentTypeOptions = useMemo(() => {
+    if (editForm.category_kind === "expense") {
+      return Object.entries(TYPE_LABELS).filter(([value]) => value === "refund" || value === "correction");
+    }
+    if (editForm.category_kind === "income") {
+      return Object.entries(TYPE_LABELS).filter(([value]) => value === "advance" || value === "additional");
+    }
+    return [];
+  }, [editForm.category_kind]);
 
   const filteredPayments = useMemo(() => {
     const value = search.trim().toLowerCase();
@@ -158,6 +167,10 @@ export default function Finances() {
     setActionError("");
     setEditSaving(true);
     try {
+      if (!editForm.category_kind || !editForm.type) {
+        setActionError("Выберите тип операции: доход или расход.");
+        return;
+      }
       const updated = await updatePayment(editingPayment.id, {
         category: editForm.category || null,
         account: editForm.account || null,
@@ -340,7 +353,7 @@ export default function Finances() {
         <form className="space-y-4" onSubmit={submitPaymentEdit}>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <Label>Доход / расход</Label>
+              <Label>Тип операции</Label>
               <Select
                 value={editForm.category_kind}
                 onChange={(event) =>
@@ -348,25 +361,28 @@ export default function Finances() {
                     ...prev,
                     category_kind: event.target.value,
                     category: "",
-                    type: event.target.value === "expense" ? "correction" : "advance",
+                    type: event.target.value ? (event.target.value === "expense" ? "correction" : "advance") : "",
                   }))
                 }
               >
+                <option value="">Выберите тип</option>
                 <option value="income">Доход</option>
                 <option value="expense">Расход</option>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Категория</Label>
-              <Select value={editForm.category} onChange={(event) => setEditForm((prev) => ({ ...prev, category: event.target.value }))}>
-                <option value="">Без категории</option>
-                {editCategoryOptions.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
+            {editForm.category_kind ? (
+              <div className="space-y-2">
+                <Label>{editForm.category_kind === "expense" ? "Категория расхода" : "Категория дохода"}</Label>
+                <Select value={editForm.category} onChange={(event) => setEditForm((prev) => ({ ...prev, category: event.target.value }))}>
+                  <option value="">Без категории</option>
+                  {editCategoryOptions.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label>Счет</Label>
               <Select value={editForm.account} onChange={(event) => setEditForm((prev) => ({ ...prev, account: event.target.value }))}>
@@ -379,9 +395,14 @@ export default function Finances() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Вид операции</Label>
-              <Select value={editForm.type} onChange={(event) => setEditForm((prev) => ({ ...prev, type: event.target.value }))}>
-                {Object.entries(TYPE_LABELS).map(([value, label]) => (
+              <Label>Подтип операции</Label>
+              <Select
+                value={editForm.type}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, type: event.target.value }))}
+                disabled={!editForm.category_kind}
+              >
+                {!editForm.category_kind ? <option value="">Сначала выберите тип</option> : null}
+                {editPaymentTypeOptions.map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
                   </option>

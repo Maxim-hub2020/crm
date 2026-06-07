@@ -175,6 +175,7 @@ export default function Settings() {
     }),
     [categories]
   );
+  const terminalStatusId = statuses[statuses.length - 1]?.id || null;
 
   async function handleAddManager(event) {
     event.preventDefault();
@@ -342,32 +343,33 @@ export default function Settings() {
         <SettingsCard title="Этапы проектов" icon={<Layers size={16} />}>
           <div className="mb-4 space-y-2">
             {statuses.map((status) => (
-              <div key={status.id} className="grid gap-2 rounded-lg bg-gray-50 p-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
-                <div className="flex min-w-0 items-center gap-2">
-                  <GripVertical size={16} className="shrink-0 text-gray-300" />
-                  <span className="min-w-0 flex-1 truncate text-sm font-semibold">{status.name}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Input
-                    className="h-10 w-24 py-2 text-center"
-                    value={status.stuck_after_days ?? 3}
-                    onChange={(event) =>
-                      setStatuses((prev) =>
-                        prev.map((item) => (item.id === status.id ? { ...item, stuck_after_days: event.target.value } : item))
-                      )
-                    }
-                    onBlur={() => handleStageDaysBlur(status)}
-                  />
-                  <span className="shrink-0 text-xs text-gray-400">дней</span>
-                </div>
+              <div key={status.id} className="flex min-w-0 items-center gap-2 rounded-lg bg-gray-50 p-2">
+                <GripVertical size={16} className="shrink-0 text-gray-300" />
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold">{status.name}</span>
+                {status.id !== terminalStatusId ? (
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Input
+                      className="h-9 w-12 px-1 py-1 text-center"
+                      inputMode="numeric"
+                      value={status.stuck_after_days ?? 3}
+                      onChange={(event) =>
+                        setStatuses((prev) =>
+                          prev.map((item) => (item.id === status.id ? { ...item, stuck_after_days: event.target.value } : item))
+                        )
+                      }
+                      onBlur={() => handleStageDaysBlur(status)}
+                    />
+                    <span className="shrink-0 text-xs text-gray-400">дн.</span>
+                  </div>
+                ) : null}
                 <DeleteButton className="justify-self-end" onClick={() => removeAndReload(deleteProjectStatus, status.id, "Не удалось удалить этап.")} />
               </div>
             ))}
           </div>
-          <div className="grid gap-2 border-t pt-4 sm:grid-cols-[minmax(0,1fr)_96px_auto] sm:items-center">
+          <div className="flex items-center gap-2 border-t pt-4">
             <Input value={stageName} onChange={(event) => setStageName(event.target.value)} placeholder="Новый этап" />
-            <Input className="w-full sm:w-24" value={stageDays} onChange={(event) => setStageDays(event.target.value)} />
-            <IconButton className="justify-self-end" onClick={handleAddStage}>
+            <Input className="h-10 w-12 shrink-0 px-1 text-center" inputMode="numeric" value={stageDays} onChange={(event) => setStageDays(event.target.value)} />
+            <IconButton className="shrink-0" onClick={handleAddStage}>
               <Plus size={16} />
             </IconButton>
           </div>

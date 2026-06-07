@@ -1947,7 +1947,14 @@ class CRMAssistantService:
     def _project_stuck_after_days(self, _project, status=None):
         return int(getattr(status, "stuck_after_days", None) or 5)
 
+    def _terminal_status_code(self):
+        status = ProjectStatus.objects.all().order_by("sort_order", "id").last()
+        return status.code if status else ""
+
     def _is_terminal_status(self, status_code, status=None):
+        if status_code and status_code == self._terminal_status_code():
+            return True
+
         text = normalize_text(" ".join([
             status_code or "",
             getattr(status, "name", "") or "",

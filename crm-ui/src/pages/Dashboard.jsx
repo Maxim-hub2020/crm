@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Calendar, FolderKanban, ListTodo, Layers } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-import { fetchProjects, fetchTasks } from "../api";
+import { fetchProjectStatuses, fetchProjects, fetchTasks } from "../api";
 
 function formatDate(value) {
   if (!value) return "—";
@@ -39,26 +39,38 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [statuses, setStatuses] = useState([]);
 
   useEffect(() => {
     (async () => {
       try {
-        const [projectRows, taskRows] = await Promise.all([fetchProjects(), fetchTasks()]);
+        const [projectRows, taskRows, statusRows] = await Promise.all([fetchProjects(), fetchTasks(), fetchProjectStatuses()]);
         setProjects(projectRows);
         setTasks(taskRows);
+        setStatuses(statusRows);
       } catch {
         setProjects([]);
         setTasks([]);
+        setStatuses([]);
       }
     })();
   }, []);
 
+  const terminalStatusCode = statuses[statuses.length - 1]?.code || "";
+  const statusMap = useMemo(() => new Map(statuses.map((status) => [status.code, status])), [statuses]);
+
   const stuckProjects = useMemo(() => {
     return projects
-      .filter((project) => project.status !== "closed" && project.status !== "canceled" && projectAge(project) >= 5)
+      .filter((project) => {
+        if (project.status === terminalStatusCode || project.status === "closed" || project.status === "canceled") {
+          return false;
+        }
+        const stuckAfterDays = Number(statusMap.get(project.status)?.stuck_after_days || 5);
+        return projectAge(project) >= stuckAfterDays;
+      })
       .sort((left, right) => projectAge(right) - projectAge(left))
       .slice(0, 8);
-  }, [projects]);
+  }, [projects, statusMap, terminalStatusCode]);
 
   const upcomingTasks = useMemo(() => {
     const today = new Date();
