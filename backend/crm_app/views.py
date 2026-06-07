@@ -253,7 +253,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
 
     def get_queryset(self):
-        qs = Payment.objects.select_related("project", "created_by").all().order_by("-paid_at")
+        qs = Payment.objects.select_related("project", "created_by", "category", "account").all().order_by("-paid_at")
         if self.request.user.is_admin():
             return qs
         return qs.filter(project__manager=self.request.user)
@@ -307,16 +307,24 @@ class ProjectStatusViewSet(viewsets.ModelViewSet):
 
 class FinanceCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = FinanceCategorySerializer
-    permission_classes = [IsAdmin, HasActiveSubscription]
     queryset = FinanceCategory.objects.all()
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
+
+    def get_permissions(self):
+        if self.action in {"list", "retrieve"}:
+            return [IsAuthenticatedAny(), HasActiveSubscription()]
+        return [IsAdmin(), HasActiveSubscription()]
 
 
 class AccountViewSet(viewsets.ModelViewSet):
     serializer_class = AccountSerializer
-    permission_classes = [IsAdmin, HasActiveSubscription]
     queryset = Account.objects.all()
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
+
+    def get_permissions(self):
+        if self.action in {"list", "retrieve"}:
+            return [IsAuthenticatedAny(), HasActiveSubscription()]
+        return [IsAdmin(), HasActiveSubscription()]
 
 
 class ProjectCustomFieldViewSet(viewsets.ModelViewSet):

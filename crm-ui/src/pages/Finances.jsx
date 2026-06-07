@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowUpCircle, Search } from "lucide-react";
 
-import { fetchPayments, fetchProjects } from "../api";
+import { fetchAccounts, fetchFinanceCategories, fetchPayments, fetchProjects } from "../api";
 import { Badge, Input, Select } from "../components/ui.jsx";
 
 const METHOD_LABELS = {
@@ -36,11 +36,23 @@ function formatDate(value) {
 
 function paymentSignedAmount(payment) {
   const amount = Number(payment?.amount || 0);
+  if (payment?.category_type === "expense") return -amount;
+  if (payment?.category_type === "income") return amount;
   return payment?.type === "refund" || payment?.type === "correction" ? -amount : amount;
 }
 
 function projectDisplayName(project) {
   return project?.title || project?.client_name || `Проект #${project?.id || ""}`;
+}
+
+function paymentCategoryLabel(payment) {
+  return payment?.category_name || TYPE_LABELS[payment?.type] || payment?.type || "Без категории";
+}
+
+function paymentCategoryBadgeClass(payment) {
+  if (payment?.category_type === "expense") return "bg-red-50 text-red-600";
+  if (payment?.category_type === "income") return "bg-emerald-50 text-emerald-600";
+  return "";
 }
 
 function StatTile({ label, value, tone = "light" }) {
@@ -57,18 +69,31 @@ function StatTile({ label, value, tone = "light" }) {
 export default function Finances() {
   const [projects, setProjects] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const [search, setSearch] = useState("");
   const [method, setMethod] = useState("all");
+  const [category, setCategory] = useState("all");
+  const [account, setAccount] = useState("all");
 
   useEffect(() => {
     (async () => {
       try {
-        const [projectRows, paymentRows] = await Promise.all([fetchProjects(), fetchPayments()]);
+        const [projectRows, paymentRows, categoryRows, accountRows] = await Promise.all([
+          fetchProjects(),
+          fetchPayments(),
+          fetchFinanceCategories(),
+          fetchAccounts(),
+        ]);
         setProjects(projectRows);
         setPayments(paymentRows);
+        setCategories(categoryRows);
+        setAccounts(accountRows);
       } catch {
         setProjects([]);
         setPayments([]);
+        setCategories([]);
+        setAccounts([]);
       }
     })();
   }, []);
@@ -82,14 +107,16 @@ export default function Finances() {
       const project = projectMap.get(payment.project);
       const matchesSearch =
         !value ||
-        [project?.title, project?.client_name, project?.client_phone, payment.comment, payment.type]
+        [project?.title, project?.client_name, project?.client_phone, payment.comment, payment.type, payment.category_name, payment.account_name]
           .filter(Boolean)
           .some((field) => field.toLowerCase().includes(value));
 
       const matchesMethod = method === "all" || payment.method === method;
-      return matchesSearch && matchesMethod;
+      const matchesCategory = category === "all" || String(payment.category || "") === category;
+      const matchesAccount = account === "all" || String(payment.account || "") === account;
+      return matchesSearch && matchesMethod && matchesCategory && matchesAccount;
     });
-  }, [method, payments, projectMap, search]);
+  }, [account, category, method, payments, projectMap, search]);
 
   const stats = useMemo(() => {
     const income = filteredPayments.reduce((sum, payment) => {
@@ -141,6 +168,22 @@ export default function Finances() {
             </option>
           ))}
         </Select>
+        <Select value={category} onChange={(event) => setCategory(event.target.value)} className="sm:w-64">
+          <option value="all">Все категории</option>
+          {categories.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name} · {item.type === "expense" ? "расход" : "доход"}
+            </option>
+          ))}
+        </Select>
+        <Select value={account} onChange={(event) => setAccount(event.target.value)} className="sm:w-64">
+          <option value="all">Все счета</option>
+          {accounts.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+            </option>
+          ))}
+        </Select>
       </div>
 
       <div className="hidden overflow-x-auto rounded-[32px] bg-white shadow-lg md:block">
@@ -165,7 +208,7 @@ export default function Finances() {
                     {projectDisplayName(projectMap.get(payment.project))}
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-sm">
-                    <Badge>{TYPE_LABELS[payment.type] || payment.type}</Badge>
+                    <Badge className={paymentCategoryBadgeClass(payment)}>{paymentCategoryLabel(payment)}</Badge>
                   </td>
                   <td className={`whitespace-nowrap px-6 py-4 text-sm font-bold ${signedAmount < 0 ? "text-red-600" : "text-green-600"}`}>
                     <span className="inline-flex items-center gap-2">
@@ -173,7 +216,10 @@ export default function Finances() {
                       {signedAmount < 0 ? "−" : "+"} {formatMoney(Math.abs(signedAmount))} ₽
                     </span>
                   </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{METHOD_LABELS[payment.method] || payment.method}</td>
+                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                    {METHOD_LABELS[payment.method] || payment.method}
+                    {payment.account_name ? ` · ${payment.account_name}` : ""}
+                  </td>
                   <td className="max-w-xs truncate px-6 py-4 text-sm text-gray-500">{payment.comment || "—"}</td>
                 </tr>
               );
@@ -200,8 +246,12 @@ export default function Finances() {
                 </div>
                 <div className="text-xs text-gray-500">{formatDate(payment.paid_at)}</div>
               </div>
-              <div className="border-t pt-2 text-sm text-gray-600">
+              <div className="border-t pt-2 text-sm text-gray-600 [&>p:nth-child(3)]:hidden">
                 <p className="font-semibold text-gray-800">{projectDisplayName(projectMap.get(payment.project))}</p>
+                <p>
+                  {paymentCategoryLabel(payment)} · {METHOD_LABELS[payment.method] || payment.method}
+                  {payment.account_name ? ` · ${payment.account_name}` : ""}
+                </p>
                 <p>{TYPE_LABELS[payment.type] || payment.type} • {METHOD_LABELS[payment.method] || payment.method}</p>
                 <p className="truncate">{payment.comment || "Без комментария"}</p>
               </div>

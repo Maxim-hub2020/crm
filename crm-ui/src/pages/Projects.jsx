@@ -29,7 +29,9 @@ import {
   downloadProjectDocument,
   extractApiErrorMessage,
   fetchAddressSuggestions,
+  fetchAccounts,
   fetchClients,
+  fetchFinanceCategories,
   fetchPayments,
   fetchProjectComments,
   fetchProjects,
@@ -111,6 +113,8 @@ function createEmptyProjectForm(status = "active") {
 
 function createEmptyPaymentForm() {
   return {
+    category: "",
+    account: "",
     type: "advance",
     amount: "",
     method: "transfer",
@@ -302,12 +306,24 @@ function projectAmount(project, paymentsByProject) {
   if (plannedAmount > 0) return plannedAmount;
 
   const rows = paymentsByProject.get(project.id) || [];
-  return rows.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  return rows.reduce((sum, payment) => sum + paymentSignedAmount(payment), 0);
 }
 
 function paymentSignedAmount(payment) {
   const amount = Number(payment?.amount || 0);
+  if (payment?.category_type === "expense") return -amount;
+  if (payment?.category_type === "income") return amount;
   return payment?.type === "refund" || payment?.type === "correction" ? -amount : amount;
+}
+
+function paymentCategoryLabel(payment) {
+  return payment?.category_name || labelFor(PAYMENT_TYPE_OPTIONS, payment?.type);
+}
+
+function paymentCategoryBadgeClass(payment) {
+  if (payment?.category_type === "expense") return "bg-red-50 text-red-600";
+  if (payment?.category_type === "income") return "bg-emerald-50 text-emerald-600";
+  return "bg-slate-100 text-slate-600";
 }
 
 function projectFinanceStats(rows) {
@@ -506,6 +522,8 @@ export default function Projects() {
   const [payments, setPayments] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [statusRows, setStatusRows] = useState(DEFAULT_STATUS_OPTIONS);
+  const [financeCategories, setFinanceCategories] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState(location.state?.q || "");
   const deferredQuery = useDeferredValue(query);
@@ -516,6 +534,9 @@ export default function Projects() {
   const pointerDragRef = useRef(null);
   const suppressProjectClickRef = useRef(false);
   const bodyDragStyleRef = useRef(null);
+  const kanbanScrollRef = useRef(null);
+  const dragAutoScrollRef = useRef(null);
+  const dragAutoScrollFrameRef = useRef(null);
 
   const [openCreate, setOpenCreate] = useState(false);
   const [createForm, setCreateForm] = useState(createEmptyProjectForm());
@@ -533,6 +554,7 @@ export default function Projects() {
   const [addressSuggestions, setAddressSuggestions] = useState([]);
   const [addressSuggestLoading, setAddressSuggestLoading] = useState(false);
   const [addressSuggestError, setAddressSuggestError] = useState("");
+  const selectedAddressValueRef = useRef("");
   const [documentLoading, setDocumentLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
 
@@ -566,18 +588,33 @@ export default function Projects() {
     return new Map(statusOptions.map((status) => [status.value, status]));
   }, [statusOptions]);
 
+  const financeCategoryOptions = useMemo(
+    () =>
+      financeCategories
+        .map((category) => ({
+          id: category.id,
+          value: String(category.id),
+          label: category.name,
+          type: category.type,
+        }))
+        .sort((left, right) => `${left.type}-${left.label}`.localeCompare(`${right.type}-${right.label}`)),
+    [financeCategories]
+  );
+
   async function reloadData({ silent = false } = {}) {
     if (!silent) {
       setLoading(true);
     }
 
     try {
-      const [projectRows, clientRows, paymentRows, taskRows, statusItems] = await Promise.all([
+      const [projectRows, clientRows, paymentRows, taskRows, statusItems, financeCategoryRows, accountRows] = await Promise.all([
         fetchProjects(),
         fetchClients(),
         fetchPayments(),
         fetchTasks(),
         fetchProjectStatuses(),
+        fetchFinanceCategories(),
+        fetchAccounts(),
       ]);
 
       setProjects(projectRows);
@@ -585,6 +622,8 @@ export default function Projects() {
       setPayments(paymentRows);
       setTasks(taskRows);
       setStatusRows(statusItems.length > 0 ? statusItems : DEFAULT_STATUS_OPTIONS);
+      setFinanceCategories(financeCategoryRows);
+      setAccounts(accountRows);
     } finally {
       if (!silent) {
         setLoading(false);
@@ -616,6 +655,8 @@ export default function Projects() {
       setPayments([]);
       setTasks([]);
       setStatusRows(DEFAULT_STATUS_OPTIONS);
+      setFinanceCategories([]);
+      setAccounts([]);
       setLoading(false);
     });
   }, []);
@@ -791,6 +832,7 @@ export default function Projects() {
 
     const nextForm = normalizeProjectForm(activeProject, defaultStatusValue);
     setDetailForm(nextForm);
+    selectedAddressValueRef.current = nextForm.object_address.trim();
     detailSnapshotRef.current = JSON.stringify(buildProjectUpdatePayload(nextForm));
     setDetailAutosaveState("idle");
     setDetailError("");
@@ -870,6 +912,12 @@ export default function Projects() {
 
     const query = detailForm.object_address.trim();
     if (query.length < 3) {
+      setAddressSuggestions([]);
+      setAddressSuggestLoading(false);
+      setAddressSuggestError("");
+      return;
+    }
+    if (query === selectedAddressValueRef.current) {
       setAddressSuggestions([]);
       setAddressSuggestLoading(false);
       setAddressSuggestError("");
@@ -956,18 +1004,32 @@ export default function Projects() {
     setAddressDetailsOpen(false);
     setAddressSuggestions([]);
     setAddressSuggestError("");
+    selectedAddressValueRef.current = "";
     detailSnapshotRef.current = "";
     window.clearTimeout(detailAutosaveTimerRef.current);
   }
 
   function applyAddressSuggestion(suggestion) {
+    const selectedAddress = suggestion.value || suggestion.unrestrictedValue || detailForm.object_address;
+    selectedAddressValueRef.current = selectedAddress.trim();
     setDetailForm((prev) => ({
       ...prev,
-      object_address: suggestion.value || suggestion.unrestrictedValue || prev.object_address,
+      object_address: selectedAddress || prev.object_address,
       object_lat: suggestion.lat || "",
       object_lon: suggestion.lon || "",
     }));
     setAddressSuggestions([]);
+    setAddressSuggestLoading(false);
+    setAddressSuggestError("");
+  }
+
+  function handlePaymentCategoryChange(categoryId) {
+    const category = financeCategoryOptions.find((item) => item.value === categoryId);
+    setPaymentForm((prev) => ({
+      ...prev,
+      category: categoryId,
+      type: category?.type === "expense" ? "correction" : category?.type === "income" ? "advance" : prev.type,
+    }));
   }
 
   async function submitCreate(event) {
@@ -1073,6 +1135,8 @@ export default function Projects() {
 
       const created = await createPayment({
         project: activeProject.id,
+        category: paymentForm.category || null,
+        account: paymentForm.account || null,
         type: paymentForm.type,
         amount: paymentForm.amount.trim(),
         method: paymentForm.method,
@@ -1282,6 +1346,74 @@ export default function Projects() {
     }
   }
 
+  function setProjectDragTargetFromPoint(clientX, clientY) {
+    const targetColumn = document.elementFromPoint(clientX, clientY)?.closest("[data-status-column]");
+    const nextStatus = targetColumn?.getAttribute("data-status-column") || "";
+    setDragTargetStatus((prev) => (prev === nextStatus ? prev : nextStatus));
+  }
+
+  function stopProjectDragAutoScroll() {
+    dragAutoScrollRef.current = null;
+    if (dragAutoScrollFrameRef.current) {
+      window.cancelAnimationFrame(dragAutoScrollFrameRef.current);
+      dragAutoScrollFrameRef.current = null;
+    }
+  }
+
+  function runProjectDragAutoScroll() {
+    dragAutoScrollFrameRef.current = null;
+    const scrollState = dragAutoScrollRef.current;
+    const scrollContainer = kanbanScrollRef.current;
+    const drag = pointerDragRef.current;
+
+    if (!scrollState || !scrollContainer || !drag?.dragging) {
+      stopProjectDragAutoScroll();
+      return;
+    }
+
+    const previousScrollLeft = scrollContainer.scrollLeft;
+    scrollContainer.scrollLeft += scrollState.speed;
+    if (scrollContainer.scrollLeft === previousScrollLeft) {
+      stopProjectDragAutoScroll();
+      return;
+    }
+    setProjectDragTargetFromPoint(drag.currentX, drag.currentY);
+    dragAutoScrollFrameRef.current = window.requestAnimationFrame(runProjectDragAutoScroll);
+  }
+
+  function updateProjectDragAutoScroll(clientX) {
+    const scrollContainer = kanbanScrollRef.current;
+    if (!scrollContainer) {
+      stopProjectDragAutoScroll();
+      return;
+    }
+
+    const rect = scrollContainer.getBoundingClientRect();
+    const edgeSize = Math.min(120, rect.width / 3);
+    const maxSpeed = 26;
+    let speed = 0;
+
+    if (clientX < rect.left + edgeSize) {
+      const distance = Math.max(0, clientX - rect.left);
+      speed = -Math.ceil(((edgeSize - distance) / edgeSize) * maxSpeed);
+    } else if (clientX > rect.right - edgeSize) {
+      const distance = Math.max(0, rect.right - clientX);
+      speed = Math.ceil(((edgeSize - distance) / edgeSize) * maxSpeed);
+    }
+
+    const canScrollLeft = scrollContainer.scrollLeft > 0;
+    const canScrollRight = scrollContainer.scrollLeft + scrollContainer.clientWidth < scrollContainer.scrollWidth - 1;
+    if ((speed < 0 && !canScrollLeft) || (speed > 0 && !canScrollRight) || speed === 0) {
+      stopProjectDragAutoScroll();
+      return;
+    }
+
+    dragAutoScrollRef.current = { speed };
+    if (!dragAutoScrollFrameRef.current) {
+      dragAutoScrollFrameRef.current = window.requestAnimationFrame(runProjectDragAutoScroll);
+    }
+  }
+
   function handleProjectPointerDown(event, projectId) {
     if (event.pointerType === "mouse" && event.button !== 0) return;
 
@@ -1330,10 +1462,8 @@ export default function Projects() {
         top: event.clientY - drag.offsetY,
         width: drag.width,
       });
-      const targetColumn = document
-        .elementFromPoint(event.clientX, event.clientY)
-        ?.closest("[data-status-column]");
-      setDragTargetStatus(targetColumn?.getAttribute("data-status-column") || "");
+      setProjectDragTargetFromPoint(event.clientX, event.clientY);
+      updateProjectDragAutoScroll(event.clientX);
     }
   }
 
@@ -1346,6 +1476,7 @@ export default function Projects() {
     }
     bodyDragStyleRef.current = null;
     pointerDragRef.current = null;
+    stopProjectDragAutoScroll();
     setTouchDragProjectId(null);
     setDragTargetStatus("");
     setDragPreview(null);
@@ -1438,7 +1569,7 @@ export default function Projects() {
           <CardBody className="p-12 text-center text-sm text-slate-500">Загружаем проекты и операции...</CardBody>
         </Card>
       ) : viewMode === "kanban" ? (
-        <div className="-mx-4 select-none overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0">
+        <div ref={kanbanScrollRef} className="-mx-4 select-none overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0">
           <div className="grid snap-x snap-mandatory grid-flow-col auto-cols-[calc(100vw-2rem)] gap-5 sm:auto-cols-[minmax(360px,420px)]">
           {statusOptions.map((status) => {
             const columnProjects = groupedProjects[status.value] || [];
@@ -1565,7 +1696,7 @@ export default function Projects() {
                     <div className="mt-6 rounded-[28px] bg-slate-900 px-5 py-4 text-sm text-white">
                       <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Последняя операция</div>
                       <div className="mt-3 font-semibold">
-                        {labelFor(PAYMENT_TYPE_OPTIONS, latestPayment.type)} • {formatMoney(latestPayment.amount)} ₽ • {formatDate(latestPayment.paid_at)}
+                        {paymentCategoryLabel(latestPayment)} • {formatMoney(latestPayment.amount)} ₽ • {formatDate(latestPayment.paid_at)}
                       </div>
                     </div>
                   )}
@@ -1764,14 +1895,15 @@ export default function Projects() {
                       value={detailForm.object_address}
                       onClick={() => setAddressDetailsOpen(true)}
                       onFocus={() => setAddressDetailsOpen(true)}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        selectedAddressValueRef.current = "";
                         setDetailForm((prev) => ({
                           ...prev,
                           object_address: event.target.value,
                           object_lat: "",
                           object_lon: "",
-                        }))
-                      }
+                        }));
+                      }}
                       placeholder={hasDadataAddressSuggestions() ? "Начните вводить адрес" : "Адрес объекта"}
                     />
                   </div>
@@ -1940,10 +2072,6 @@ export default function Projects() {
                       {documentLoading ? "Формируем..." : "Сформировать договор"}
                     </Button>
                   ) : null}
-                  <Button type="button" variant="danger" className="justify-center" onClick={requestDeleteProject}>
-                    <Trash2 size={16} />
-                    Удалить проект
-                  </Button>
                 </div>
               </div>
             </div>
@@ -2141,7 +2269,18 @@ export default function Projects() {
                   </CardHeader>
                   <CardBody>
                     <form className="space-y-4" onSubmit={submitPayment}>
-                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                        <div className="space-y-2">
+                          <Label>Категория</Label>
+                          <Select value={paymentForm.category} onChange={(event) => handlePaymentCategoryChange(event.target.value)}>
+                            <option value="">Без категории</option>
+                            {financeCategoryOptions.map((category) => (
+                              <option key={category.value} value={category.value}>
+                                {category.label} · {category.type === "expense" ? "расход" : "доход"}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
                         <div className="space-y-2">
                           <Label>Тип</Label>
                           <Select
@@ -2172,6 +2311,20 @@ export default function Projects() {
                             {PAYMENT_METHOD_OPTIONS.map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Счет</Label>
+                          <Select
+                            value={paymentForm.account}
+                            onChange={(event) => setPaymentForm((prev) => ({ ...prev, account: event.target.value }))}
+                          >
+                            <option value="">Без счета</option>
+                            {accounts.map((account) => (
+                              <option key={account.id} value={account.id}>
+                                {account.name}
                               </option>
                             ))}
                           </Select>
@@ -2233,12 +2386,15 @@ export default function Projects() {
                                 <tr key={payment.id} className="border-t border-slate-100">
                                   <td className="py-4 text-slate-500">{formatDateTime(payment.paid_at)}</td>
                                   <td className="py-4">
-                                    <Badge>{labelFor(PAYMENT_TYPE_OPTIONS, payment.type)}</Badge>
+                                    <Badge className={paymentCategoryBadgeClass(payment)}>{paymentCategoryLabel(payment)}</Badge>
                                   </td>
                                   <td className={`py-4 font-semibold ${signedAmount < 0 ? "text-red-600" : "text-emerald-600"}`}>
                                     {signedAmount < 0 ? "−" : "+"} {formatMoney(Math.abs(signedAmount))} ₽
                                   </td>
-                                  <td className="py-4 text-slate-500">{labelFor(PAYMENT_METHOD_OPTIONS, payment.method)}</td>
+                                  <td className="py-4 text-slate-500">
+                                    {labelFor(PAYMENT_METHOD_OPTIONS, payment.method)}
+                                    {payment.account_name ? ` · ${payment.account_name}` : ""}
+                                  </td>
                                   <td className="py-4 text-slate-500">{payment.comment || "—"}</td>
                                   <td className="py-4 text-right">
                                     <Button
@@ -2262,6 +2418,21 @@ export default function Projects() {
                 </Card>
               </div>
             )}
+
+            <div className="rounded-[24px] border border-red-100 bg-red-50/80 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-sm font-black text-red-700">Удаление проекта</div>
+                  <div className="mt-1 text-xs font-semibold text-red-500">
+                    Проект будет удален вместе с операциями, задачами и комментариями.
+                  </div>
+                </div>
+                <Button type="button" variant="danger" className="w-full justify-center sm:w-auto" onClick={requestDeleteProject}>
+                  <Trash2 size={16} />
+                  Удалить проект
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </Modal>

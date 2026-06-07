@@ -11,7 +11,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from .ai_assistant import GeminiClient, GeminiRequestError, humanize_gemini_error
 from .live_assistant import _has_live_assistant_access
-from .models import Client, Payment, Project, ProjectComment, ProjectStatus, SubscriptionInvoice, Task, User
+from .models import Account, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectStatus, SubscriptionInvoice, Task, User
 from .subscription import activate_subscription_invoice, ensure_subscription_defaults, issue_subscription_invoice
 
 
@@ -275,10 +275,21 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
             client_name="Client Two",
             client_phone="+70000000002",
         )
+        self.income_category, _ = FinanceCategory.objects.get_or_create(
+            name="Оплата клиента",
+            type=FinanceCategory.Type.INCOME,
+        )
+        self.expense_category, _ = FinanceCategory.objects.get_or_create(
+            name="Доставка",
+            type=FinanceCategory.Type.EXPENSE,
+        )
+        self.account, _ = Account.objects.get_or_create(name="Основной счет")
 
         self.manager_payment = Payment.objects.create(
             project=self.manager_project,
             created_by=self.manager,
+            category=self.income_category,
+            account=self.account,
             amount="15000.00",
             type=Payment.Type.ADVANCE,
             method=Payment.Method.TRANSFER,
@@ -321,6 +332,8 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
                 "amount": "27500.00",
                 "type": Payment.Type.ADVANCE,
                 "method": Payment.Method.CASH,
+                "category": self.income_category.id,
+                "account": self.account.id,
                 "comment": "New payment",
             },
             format="json",
@@ -332,6 +345,24 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
 
         created_payment = Payment.objects.get(id=response.data["id"])
         self.assertEqual(created_payment.created_by_id, self.manager.id)
+        self.assertEqual(created_payment.category_id, self.income_category.id)
+        self.assertEqual(created_payment.account_id, self.account.id)
+        self.assertEqual(response.data["category_name"], self.income_category.name)
+        self.assertEqual(response.data["category_type"], FinanceCategory.Type.INCOME)
+        self.assertEqual(response.data["account_name"], self.account.name)
+
+    def test_manager_can_read_finance_settings(self):
+        client = self.auth_client_for(self.manager)
+
+        category_response = client.get("/api/finance-categories/")
+        account_response = client.get("/api/accounts/")
+
+        self.assertEqual(category_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(account_response.status_code, status.HTTP_200_OK)
+        category_keys = {(item["name"], item["type"]) for item in category_response.data}
+        account_names = {item["name"] for item in account_response.data}
+        self.assertIn((self.income_category.name, self.income_category.type), category_keys)
+        self.assertIn(self.account.name, account_names)
 
     def test_manager_cannot_create_payment_for_foreign_project(self):
         client = self.auth_client_for(self.manager)

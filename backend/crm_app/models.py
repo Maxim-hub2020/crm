@@ -187,6 +187,20 @@ class Payment(models.Model):
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="payments")
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="created_payments")
+    category = models.ForeignKey(
+        FinanceCategory,
+        on_delete=models.SET_NULL,
+        related_name="payments",
+        blank=True,
+        null=True,
+    )
+    account = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        related_name="payments",
+        blank=True,
+        null=True,
+    )
     paid_at = models.DateTimeField(default=timezone.now, db_index=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     type = models.CharField(max_length=20, choices=Type.choices)

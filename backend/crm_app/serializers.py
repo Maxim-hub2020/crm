@@ -308,6 +308,10 @@ class DocumentTemplateSerializer(serializers.ModelSerializer):
 
 
 class PaymentSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    category_type = serializers.CharField(source="category.type", read_only=True)
+    account_name = serializers.CharField(source="account.name", read_only=True)
+
     def validate_project(self, project):
         request = self.context.get("request")
         user = getattr(request, "user", None)
@@ -319,9 +323,27 @@ class PaymentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Payment
-        fields = "__all__"
-        read_only_fields = ["created_by", "created_at"]
+        fields = [
+            "id",
+            "project",
+            "created_by",
+            "category",
+            "category_name",
+            "category_type",
+            "account",
+            "account_name",
+            "paid_at",
+            "amount",
+            "type",
+            "method",
+            "comment",
+            "attachment_url",
+            "created_at",
+        ]
+        read_only_fields = ["created_by", "created_at", "category_name", "category_type", "account_name"]
         extra_kwargs = {
+            "category": {"required": False, "allow_null": True},
+            "account": {"required": False, "allow_null": True},
             "comment": {"required": False, "allow_blank": True},
             "attachment_url": {"required": False, "allow_blank": True, "allow_null": True},
             "paid_at": {"required": False},
