@@ -52,6 +52,7 @@ function toDateTimeLocalValue(value) {
 
 function createPaymentEditForm(payment = {}) {
   return {
+    category_kind: payment.category_type || (payment.type === "refund" || payment.type === "correction" ? "expense" : "income"),
     category: payment.category ? String(payment.category) : "",
     account: payment.account ? String(payment.account) : "",
     type: payment.type || "advance",
@@ -120,6 +121,11 @@ export default function Finances() {
   }, []);
 
   const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+
+  const editCategoryOptions = useMemo(
+    () => categories.filter((item) => item.type === editForm.category_kind),
+    [categories, editForm.category_kind]
+  );
 
   const filteredPayments = useMemo(() => {
     const value = search.trim().toLowerCase();
@@ -334,12 +340,29 @@ export default function Finances() {
         <form className="space-y-4" onSubmit={submitPaymentEdit}>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
+              <Label>Доход / расход</Label>
+              <Select
+                value={editForm.category_kind}
+                onChange={(event) =>
+                  setEditForm((prev) => ({
+                    ...prev,
+                    category_kind: event.target.value,
+                    category: "",
+                    type: event.target.value === "expense" ? "correction" : "advance",
+                  }))
+                }
+              >
+                <option value="income">Доход</option>
+                <option value="expense">Расход</option>
+              </Select>
+            </div>
+            <div className="space-y-2">
               <Label>Категория</Label>
               <Select value={editForm.category} onChange={(event) => setEditForm((prev) => ({ ...prev, category: event.target.value }))}>
                 <option value="">Без категории</option>
-                {categories.map((item) => (
+                {editCategoryOptions.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name} · {item.type === "expense" ? "расход" : "доход"}
+                    {item.name}
                   </option>
                 ))}
               </Select>
@@ -356,7 +379,7 @@ export default function Finances() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Тип</Label>
+              <Label>Вид операции</Label>
               <Select value={editForm.type} onChange={(event) => setEditForm((prev) => ({ ...prev, type: event.target.value }))}>
                 {Object.entries(TYPE_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>

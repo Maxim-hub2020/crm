@@ -71,9 +71,9 @@ function IconButton({ children, className = "", ...props }) {
   );
 }
 
-function DeleteButton(props) {
+function DeleteButton({ className = "", ...props }) {
   return (
-    <button type="button" className="rounded-md p-1 text-gray-300 transition hover:bg-red-50 hover:text-red-500" {...props}>
+    <button type="button" className={`rounded-md p-1 text-gray-300 transition hover:bg-red-50 hover:text-red-500 ${className}`} {...props}>
       <Trash2 size={14} />
     </button>
   );
@@ -168,6 +168,13 @@ export default function Settings() {
   }, []);
 
   const managers = useMemo(() => users.filter((user) => user.role === "manager" || !user.is_admin), [users]);
+  const financeCategoriesByType = useMemo(
+    () => ({
+      income: categories.filter((category) => category.type === "income"),
+      expense: categories.filter((category) => category.type === "expense"),
+    }),
+    [categories]
+  );
 
   async function handleAddManager(event) {
     event.preventDefault();
@@ -335,28 +342,32 @@ export default function Settings() {
         <SettingsCard title="Этапы проектов" icon={<Layers size={16} />}>
           <div className="mb-4 space-y-2">
             {statuses.map((status) => (
-              <div key={status.id} className="flex items-center gap-3 rounded-lg bg-gray-50 p-2">
-                <GripVertical size={16} className="text-gray-300" />
-                <span className="min-w-0 flex-1 text-sm font-semibold">{status.name}</span>
-                <Input
-                  className="h-10 w-28 py-2 text-center"
-                  value={status.stuck_after_days ?? 3}
-                  onChange={(event) =>
-                    setStatuses((prev) =>
-                      prev.map((item) => (item.id === status.id ? { ...item, stuck_after_days: event.target.value } : item))
-                    )
-                  }
-                  onBlur={() => handleStageDaysBlur(status)}
-                />
-                <span className="text-xs text-gray-400">дней</span>
-                <DeleteButton onClick={() => removeAndReload(deleteProjectStatus, status.id, "Не удалось удалить этап.")} />
+              <div key={status.id} className="grid gap-2 rounded-lg bg-gray-50 p-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
+                <div className="flex min-w-0 items-center gap-2">
+                  <GripVertical size={16} className="shrink-0 text-gray-300" />
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold">{status.name}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    className="h-10 w-24 py-2 text-center"
+                    value={status.stuck_after_days ?? 3}
+                    onChange={(event) =>
+                      setStatuses((prev) =>
+                        prev.map((item) => (item.id === status.id ? { ...item, stuck_after_days: event.target.value } : item))
+                      )
+                    }
+                    onBlur={() => handleStageDaysBlur(status)}
+                  />
+                  <span className="shrink-0 text-xs text-gray-400">дней</span>
+                </div>
+                <DeleteButton className="justify-self-end" onClick={() => removeAndReload(deleteProjectStatus, status.id, "Не удалось удалить этап.")} />
               </div>
             ))}
           </div>
-          <div className="flex items-center gap-2 border-t pt-4">
+          <div className="grid gap-2 border-t pt-4 sm:grid-cols-[minmax(0,1fr)_96px_auto] sm:items-center">
             <Input value={stageName} onChange={(event) => setStageName(event.target.value)} placeholder="Новый этап" />
-            <Input className="w-28" value={stageDays} onChange={(event) => setStageDays(event.target.value)} />
-            <IconButton onClick={handleAddStage}>
+            <Input className="w-full sm:w-24" value={stageDays} onChange={(event) => setStageDays(event.target.value)} />
+            <IconButton className="justify-self-end" onClick={handleAddStage}>
               <Plus size={16} />
             </IconButton>
           </div>
@@ -392,23 +403,35 @@ export default function Settings() {
 
       <div className="space-y-6">
         <SettingsCard title="Категории финансов" icon={<Tag size={16} />}>
-          <div className="mb-4 space-y-2">
-            {categories.map((category) => (
-              <div key={category.id} className="flex items-center justify-between rounded-lg bg-gray-50 p-2">
-                <span className={`text-sm font-semibold ${category.type === "income" ? "text-green-600" : "text-red-600"}`}>
-                  {category.name}
-                </span>
-                <DeleteButton onClick={() => removeAndReload(deleteFinanceCategory, category.id, "Не удалось удалить категорию.")} />
+          <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-1">
+            {[
+              { key: "income", title: "Доходы", tone: "text-green-600", empty: "Доходных категорий пока нет." },
+              { key: "expense", title: "Расходы", tone: "text-red-600", empty: "Расходных категорий пока нет." },
+            ].map((group) => (
+              <div key={group.key} className="rounded-2xl bg-gray-50 p-2">
+                <div className={`mb-2 px-2 text-[10px] font-black uppercase tracking-widest ${group.tone}`}>{group.title}</div>
+                <div className="space-y-2">
+                  {financeCategoriesByType[group.key].length ? (
+                    financeCategoriesByType[group.key].map((category) => (
+                      <div key={category.id} className="flex items-center justify-between rounded-lg bg-white p-2">
+                        <span className="min-w-0 truncate text-sm font-semibold text-gray-800">{category.name}</span>
+                        <DeleteButton onClick={() => removeAndReload(deleteFinanceCategory, category.id, "Не удалось удалить категорию.")} />
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-lg bg-white px-3 py-3 text-xs text-gray-400">{group.empty}</div>
+                  )}
+                </div>
               </div>
             ))}
           </div>
-          <div className="flex items-center gap-2 border-t pt-4">
+          <div className="grid gap-2 border-t pt-4 sm:grid-cols-[minmax(0,1fr)_144px_auto] sm:items-center">
             <Input value={categoryName} onChange={(event) => setCategoryName(event.target.value)} placeholder="Новая категория" />
-            <Select className="w-36" value={categoryType} onChange={(event) => setCategoryType(event.target.value)}>
-              <option value="expense">Расход</option>
+            <Select className="w-full sm:w-36" value={categoryType} onChange={(event) => setCategoryType(event.target.value)}>
               <option value="income">Доход</option>
+              <option value="expense">Расход</option>
             </Select>
-            <IconButton onClick={handleAddCategory}>
+            <IconButton className="justify-self-end" onClick={handleAddCategory}>
               <Plus size={16} />
             </IconButton>
           </div>

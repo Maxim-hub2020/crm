@@ -113,6 +113,7 @@ function createEmptyProjectForm(status = "active") {
 
 function createEmptyPaymentForm() {
   return {
+    category_kind: "income",
     category: "",
     account: "",
     type: "advance",
@@ -614,6 +615,11 @@ export default function Projects() {
     [financeCategories]
   );
 
+  const paymentCategoryOptions = useMemo(
+    () => financeCategoryOptions.filter((category) => category.type === paymentForm.category_kind),
+    [financeCategoryOptions, paymentForm.category_kind]
+  );
+
   async function reloadData({ silent = false } = {}) {
     if (!silent) {
       setLoading(true);
@@ -1034,7 +1040,17 @@ export default function Projects() {
     setPaymentForm((prev) => ({
       ...prev,
       category: categoryId,
+      category_kind: category?.type || prev.category_kind,
       type: category?.type === "expense" ? "correction" : category?.type === "income" ? "advance" : prev.type,
+    }));
+  }
+
+  function handlePaymentCategoryKindChange(categoryKind) {
+    setPaymentForm((prev) => ({
+      ...prev,
+      category_kind: categoryKind,
+      category: "",
+      type: categoryKind === "expense" ? "correction" : "advance",
     }));
   }
 
@@ -1171,6 +1187,7 @@ export default function Projects() {
     setPaymentError("");
     setEditingPaymentId(payment.id);
     setPaymentForm({
+      category_kind: payment.category_type || (payment.type === "refund" || payment.type === "correction" ? "expense" : "income"),
       category: payment.category ? String(payment.category) : "",
       account: payment.account ? String(payment.account) : "",
       type: payment.type || "advance",
@@ -2273,20 +2290,27 @@ export default function Projects() {
                   </CardHeader>
                   <CardBody>
                     <form className="space-y-4" onSubmit={submitPayment}>
-                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                        <div className="space-y-2">
+                          <Label>Доход / расход</Label>
+                          <Select value={paymentForm.category_kind} onChange={(event) => handlePaymentCategoryKindChange(event.target.value)}>
+                            <option value="income">Доход</option>
+                            <option value="expense">Расход</option>
+                          </Select>
+                        </div>
                         <div className="space-y-2">
                           <Label>Категория</Label>
                           <Select value={paymentForm.category} onChange={(event) => handlePaymentCategoryChange(event.target.value)}>
                             <option value="">Без категории</option>
-                            {financeCategoryOptions.map((category) => (
+                            {paymentCategoryOptions.map((category) => (
                               <option key={category.value} value={category.value}>
-                                {category.label} · {category.type === "expense" ? "расход" : "доход"}
+                                {category.label}
                               </option>
                             ))}
                           </Select>
                         </div>
                         <div className="space-y-2">
-                          <Label>Тип</Label>
+                          <Label>Вид операции</Label>
                           <Select
                             value={paymentForm.type}
                             onChange={(event) => setPaymentForm((prev) => ({ ...prev, type: event.target.value }))}
