@@ -1,4 +1,4 @@
-FROM node:20-alpine AS frontend-build
+FROM public.ecr.aws/docker/library/node:20-alpine AS frontend-build
 
 WORKDIR /frontend
 
@@ -37,7 +37,7 @@ ENV VITE_ASSISTANT_PENDING_WATCHDOG_MS=$VITE_ASSISTANT_PENDING_WATCHDOG_MS
 
 RUN npm run build
 
-FROM nginx:1.27-alpine
+FROM public.ecr.aws/docker/library/nginx:1.27-alpine
 
 COPY docker/nginx/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=frontend-build /frontend/dist /usr/share/nginx/html
