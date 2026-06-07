@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { Briefcase } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { fetchBillingSummary, fetchMe, isAdminUser, login } from "../api";
+import { BrandLogo } from "../components/BrandLogo.jsx";
 import { Input } from "../components/ui.jsx";
 
 export default function Login() {
@@ -38,9 +38,7 @@ export default function Login() {
     <div className="app-screen flex items-center justify-center bg-[#F5F5F7] p-4">
       <div className="w-full max-w-sm rounded-3xl bg-white p-8 shadow-2xl ring-1 ring-black/5 sm:rounded-[40px] sm:p-10">
         <div className="mb-6 flex justify-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-black text-white shadow-lg">
-            <Briefcase size={32} />
-          </div>
+          <BrandLogo className="justify-center" markClassName="h-16 w-16 rounded-[24px]" />
         </div>
 
         {err && <div className="mb-4 rounded-lg bg-red-100 p-4 text-center text-sm text-red-800">{err}</div>}

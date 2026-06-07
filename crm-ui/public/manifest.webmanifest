@@ -1,6 +1,6 @@
 {
-  "name": "CehCRM",
-  "short_name": "CehCRM",
+  "name": "Цех CRM",
+  "short_name": "Цех CRM",
   "description": "CRM для проектов, финансов, задач и клиентов.",
   "start_url": "/",
   "scope": "/",
