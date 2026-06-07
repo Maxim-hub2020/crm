@@ -343,13 +343,13 @@ export default function Settings() {
         <SettingsCard title="Этапы проектов" icon={<Layers size={16} />}>
           <div className="mb-4 space-y-2">
             {statuses.map((status) => (
-              <div key={status.id} className="flex min-w-0 items-center gap-2 rounded-lg bg-gray-50 p-2">
+              <div key={status.id} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-lg bg-gray-50 p-2">
                 <GripVertical size={16} className="shrink-0 text-gray-300" />
                 <span className="min-w-0 flex-1 truncate text-sm font-semibold">{status.name}</span>
                 {status.id !== terminalStatusId ? (
                   <div className="flex shrink-0 items-center gap-1">
                     <Input
-                      className="h-9 w-12 px-1 py-1 text-center"
+                      className="h-9 !w-[4ch] !min-w-[4ch] !px-1 !py-1 text-center tabular-nums"
                       inputMode="numeric"
                       value={status.stuck_after_days ?? 3}
                       onChange={(event) =>
@@ -366,9 +366,9 @@ export default function Settings() {
               </div>
             ))}
           </div>
-          <div className="flex items-center gap-2 border-t pt-4">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 border-t pt-4">
             <Input value={stageName} onChange={(event) => setStageName(event.target.value)} placeholder="Новый этап" />
-            <Input className="h-10 w-12 shrink-0 px-1 text-center" inputMode="numeric" value={stageDays} onChange={(event) => setStageDays(event.target.value)} />
+            <Input className="h-10 !w-[4ch] !min-w-[4ch] shrink-0 !px-1 text-center tabular-nums" inputMode="numeric" value={stageDays} onChange={(event) => setStageDays(event.target.value)} />
             <IconButton className="shrink-0" onClick={handleAddStage}>
               <Plus size={16} />
             </IconButton>

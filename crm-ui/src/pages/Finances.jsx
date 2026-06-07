@@ -19,17 +19,14 @@ const METHOD_LABELS = {
   other: "Другое",
 };
 
-const TYPE_LABELS = {
-  advance: "Аванс",
-  additional: "Доплата",
-  refund: "Возврат",
-  correction: "Корректировка",
-};
-
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 });
+
+function defaultPaymentType(categoryKind) {
+  return categoryKind === "expense" ? "correction" : "advance";
+}
 
 function formatMoney(value) {
   return moneyFormatter.format(Number(value || 0));
@@ -51,11 +48,13 @@ function toDateTimeLocalValue(value) {
 }
 
 function createPaymentEditForm(payment = {}) {
+  const categoryKind = payment.id ? payment.category_type || (payment.type === "refund" || payment.type === "correction" ? "expense" : "income") : "";
+
   return {
-    category_kind: payment.id ? payment.category_type || (payment.type === "refund" || payment.type === "correction" ? "expense" : "income") : "",
+    category_kind: categoryKind,
     category: payment.category ? String(payment.category) : "",
     account: payment.account ? String(payment.account) : "",
-    type: payment.id ? payment.type || "advance" : "",
+    type: categoryKind ? payment.type || defaultPaymentType(categoryKind) : "",
     amount: payment.amount ? String(payment.amount) : "",
     method: payment.method || "transfer",
     comment: payment.comment || "",
@@ -75,7 +74,7 @@ function projectDisplayName(project) {
 }
 
 function paymentCategoryLabel(payment) {
-  return payment?.category_name || TYPE_LABELS[payment?.type] || payment?.type || "Без категории";
+  return payment?.category_name || "Без категории";
 }
 
 function paymentCategoryBadgeClass(payment) {
@@ -126,16 +125,6 @@ export default function Finances() {
     () => categories.filter((item) => item.type === editForm.category_kind),
     [categories, editForm.category_kind]
   );
-  const editPaymentTypeOptions = useMemo(() => {
-    if (editForm.category_kind === "expense") {
-      return Object.entries(TYPE_LABELS).filter(([value]) => value === "refund" || value === "correction");
-    }
-    if (editForm.category_kind === "income") {
-      return Object.entries(TYPE_LABELS).filter(([value]) => value === "advance" || value === "additional");
-    }
-    return [];
-  }, [editForm.category_kind]);
-
   const filteredPayments = useMemo(() => {
     const value = search.trim().toLowerCase();
 
@@ -167,14 +156,14 @@ export default function Finances() {
     setActionError("");
     setEditSaving(true);
     try {
-      if (!editForm.category_kind || !editForm.type) {
+      if (!editForm.category_kind) {
         setActionError("Выберите тип операции: доход или расход.");
         return;
       }
       const updated = await updatePayment(editingPayment.id, {
         category: editForm.category || null,
         account: editForm.account || null,
-        type: editForm.type,
+        type: editForm.type || defaultPaymentType(editForm.category_kind),
         amount: editForm.amount,
         method: editForm.method,
         comment: editForm.comment,
@@ -314,13 +303,12 @@ export default function Finances() {
                 </div>
                 <div className="text-xs text-gray-500">{formatDate(payment.paid_at)}</div>
               </div>
-              <div className="border-t pt-2 text-sm text-gray-600 [&>p:nth-child(3)]:hidden">
+              <div className="border-t pt-2 text-sm text-gray-600">
                 <p className="font-semibold text-gray-800">{projectDisplayName(projectMap.get(payment.project))}</p>
                 <p>
                   {paymentCategoryLabel(payment)} · {METHOD_LABELS[payment.method] || payment.method}
                   {payment.account_name ? ` · ${payment.account_name}` : ""}
                 </p>
-                <p>{TYPE_LABELS[payment.type] || payment.type} • {METHOD_LABELS[payment.method] || payment.method}</p>
                 <p className="truncate">{payment.comment || "Без комментария"}</p>
                 <div className="flex gap-2 pt-2">
                   <Button type="button" variant="secondary" className="flex-1 justify-center" onClick={() => openPaymentEdit(payment)}>
@@ -361,7 +349,7 @@ export default function Finances() {
                     ...prev,
                     category_kind: event.target.value,
                     category: "",
-                    type: event.target.value ? (event.target.value === "expense" ? "correction" : "advance") : "",
+                    type: event.target.value ? defaultPaymentType(event.target.value) : "",
                   }))
                 }
               >
@@ -390,21 +378,6 @@ export default function Finances() {
                 {accounts.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Подтип операции</Label>
-              <Select
-                value={editForm.type}
-                onChange={(event) => setEditForm((prev) => ({ ...prev, type: event.target.value }))}
-                disabled={!editForm.category_kind}
-              >
-                {!editForm.category_kind ? <option value="">Сначала выберите тип</option> : null}
-                {editPaymentTypeOptions.map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
                   </option>
                 ))}
               </Select>

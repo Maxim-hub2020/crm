@@ -61,13 +61,6 @@ const DEFAULT_STATUS_OPTIONS = [
   { value: "canceled", label: "Отменено", short: "Стоп", color: "rose", is_default: false },
 ];
 
-const PAYMENT_TYPE_OPTIONS = [
-  { value: "advance", label: "Аванс" },
-  { value: "additional", label: "Доплата" },
-  { value: "refund", label: "Возврат" },
-  { value: "correction", label: "Корректировка" },
-];
-
 const PAYMENT_METHOD_OPTIONS = [
   { value: "transfer", label: "Перевод" },
   { value: "cash", label: "Наличные" },
@@ -79,6 +72,10 @@ const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 });
+
+function defaultPaymentType(categoryKind) {
+  return categoryKind === "expense" ? "correction" : "advance";
+}
 
 function normalizeStatusOption(status) {
   return {
@@ -347,7 +344,7 @@ function paymentSignedAmount(payment) {
 }
 
 function paymentCategoryLabel(payment) {
-  return payment?.category_name || labelFor(PAYMENT_TYPE_OPTIONS, payment?.type);
+  return payment?.category_name || "Без категории";
 }
 
 function paymentCategoryBadgeClass(payment) {
@@ -622,16 +619,6 @@ export default function Projects() {
     () => financeCategoryOptions.filter((category) => category.type === paymentForm.category_kind),
     [financeCategoryOptions, paymentForm.category_kind]
   );
-  const paymentTypeOptions = useMemo(() => {
-    if (paymentForm.category_kind === "expense") {
-      return PAYMENT_TYPE_OPTIONS.filter((option) => option.value === "refund" || option.value === "correction");
-    }
-    if (paymentForm.category_kind === "income") {
-      return PAYMENT_TYPE_OPTIONS.filter((option) => option.value === "advance" || option.value === "additional");
-    }
-    return [];
-  }, [paymentForm.category_kind]);
-
   async function reloadData({ silent = false } = {}) {
     if (!silent) {
       setLoading(true);
@@ -1053,7 +1040,7 @@ export default function Projects() {
       ...prev,
       category: categoryId,
       category_kind: category?.type || prev.category_kind,
-      type: category?.type === "expense" ? "correction" : category?.type === "income" ? "advance" : prev.type,
+      type: category?.type ? defaultPaymentType(category.type) : prev.type,
     }));
   }
 
@@ -1062,7 +1049,7 @@ export default function Projects() {
       ...prev,
       category_kind: categoryKind,
       category: "",
-      type: categoryKind ? (categoryKind === "expense" ? "correction" : "advance") : "",
+      type: categoryKind ? defaultPaymentType(categoryKind) : "",
     }));
   }
 
@@ -1166,7 +1153,7 @@ export default function Projects() {
         setPaymentError("Укажите сумму операции.");
         return;
       }
-      if (!paymentForm.category_kind || !paymentForm.type) {
+      if (!paymentForm.category_kind) {
         setPaymentError("Выберите тип операции: доход или расход.");
         return;
       }
@@ -1175,7 +1162,7 @@ export default function Projects() {
         project: activeProject.id,
         category: paymentForm.category || null,
         account: paymentForm.account || null,
-        type: paymentForm.type,
+        type: paymentForm.type || defaultPaymentType(paymentForm.category_kind),
         amount: paymentForm.amount.trim(),
         method: paymentForm.method,
         comment: paymentForm.comment.trim(),
@@ -1202,11 +1189,12 @@ export default function Projects() {
     setDetailTab("finances");
     setPaymentError("");
     setEditingPaymentId(payment.id);
+    const categoryKind = payment.category_type || (payment.type === "refund" || payment.type === "correction" ? "expense" : "income");
     setPaymentForm({
-      category_kind: payment.category_type || (payment.type === "refund" || payment.type === "correction" ? "expense" : "income"),
+      category_kind: categoryKind,
       category: payment.category ? String(payment.category) : "",
       account: payment.account ? String(payment.account) : "",
-      type: payment.type || "advance",
+      type: payment.type || defaultPaymentType(categoryKind),
       amount: payment.amount ? String(payment.amount) : "",
       method: payment.method || "transfer",
       comment: payment.comment || "",
@@ -2329,21 +2317,6 @@ export default function Projects() {
                             </Select>
                           </div>
                         ) : null}
-                        <div className="space-y-2">
-                          <Label>Подтип операции</Label>
-                          <Select
-                            value={paymentForm.type}
-                            onChange={(event) => setPaymentForm((prev) => ({ ...prev, type: event.target.value }))}
-                            disabled={!paymentForm.category_kind}
-                          >
-                            {!paymentForm.category_kind ? <option value="">Сначала выберите тип</option> : null}
-                            {paymentTypeOptions.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </Select>
-                        </div>
                         <div className="space-y-2">
                           <Label>Сумма</Label>
                           <Input
