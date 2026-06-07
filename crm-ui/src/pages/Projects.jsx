@@ -28,12 +28,14 @@ import {
   deleteTask,
   downloadProjectDocument,
   extractApiErrorMessage,
+  fetchAddressSuggestions,
   fetchClients,
   fetchPayments,
   fetchProjectComments,
   fetchProjects,
   fetchProjectStatuses,
   fetchTasks,
+  hasDadataAddressSuggestions,
   updateTask,
   updateProject,
 } from "../api";
@@ -95,6 +97,11 @@ function createEmptyProjectForm(status = "active") {
     client_phone: "",
     client_email: "",
     object_address: "",
+    object_lat: "",
+    object_lon: "",
+    apartment: "",
+    entrance: "",
+    floor: "",
     description: "",
     total_amount: "",
     works_with_contract: false,
@@ -128,6 +135,11 @@ function buildProjectUpdatePayload(form) {
     client_phone: form.client_phone.trim(),
     client_email: form.client_email.trim(),
     object_address: form.object_address.trim(),
+    object_lat: form.object_lat.trim() || null,
+    object_lon: form.object_lon.trim() || null,
+    apartment: form.apartment.trim(),
+    entrance: form.entrance.trim(),
+    floor: form.floor.trim(),
     description: form.description.trim(),
     categories: "",
     status: form.status,
@@ -144,6 +156,11 @@ function normalizeProjectForm(project, fallbackStatus = "active") {
     client_phone: project?.client_phone || "",
     client_email: project?.client_email || "",
     object_address: project?.object_address || "",
+    object_lat: project?.object_lat || "",
+    object_lon: project?.object_lon || "",
+    apartment: project?.apartment || "",
+    entrance: project?.entrance || "",
+    floor: project?.floor || "",
     description: project?.description || "",
     total_amount: project?.total_amount ? String(project.total_amount) : "",
     works_with_contract: Boolean(project?.client_info?.works_with_contract ?? project?.works_with_contract),
@@ -199,10 +216,13 @@ function cleanAddressForMaps(value) {
     .trim();
 }
 
-function yandexRouteUrl(address) {
+function yandexRouteUrl(address, lat = "", lon = "") {
   const cleanAddress = cleanAddressForMaps(address);
-  if (!cleanAddress) return "";
-  return `https://yandex.ru/maps/?mode=routes&rtext=~${encodeURIComponent(cleanAddress)}&rtt=auto`;
+  const cleanLat = String(lat || "").trim();
+  const cleanLon = String(lon || "").trim();
+  const destination = cleanLat && cleanLon ? `${cleanLat},${cleanLon}` : cleanAddress;
+  if (!destination) return "";
+  return `https://yandex.ru/maps/?mode=routes&rtext=~${encodeURIComponent(destination)}&ruri=~&rtt=auto`;
 }
 
 function formatDateTime(value) {
@@ -454,6 +474,30 @@ function ProjectKanbanCard({ project, amount, ageDays, isDragging = false, onCli
   );
 }
 
+function ProjectDragGhost({ project, amount, ageDays, left, top, width }) {
+  return (
+    <div
+      className="pointer-events-none fixed z-[70] rounded-[22px] border border-blue-300 bg-white/85 px-4 py-4 text-left shadow-[0_24px_60px_rgba(37,99,235,0.28)] ring-4 ring-blue-500/15 backdrop-blur-md"
+      style={{
+        left,
+        top,
+        width,
+      }}
+    >
+      <div className="line-clamp-2 text-[1.02rem] font-black leading-6 tracking-tight text-slate-800">
+        {projectDisplayName(project)}
+      </div>
+      <div className="mt-1.5 text-sm text-slate-500">{project.client_name || "Клиент не назначен"}</div>
+      <div className="mt-4 flex items-end justify-between gap-3">
+        <div className="text-[1.05rem] font-black tracking-tight text-blue-600">{formatMoney(amount)} ₽</div>
+        <span className={`rounded-full px-3 py-1 text-sm font-semibold ${ageBadgeClass(ageDays)}`}>
+          {ageDays || 0} дн.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function Projects() {
   const location = useLocation();
 
@@ -485,6 +529,10 @@ export default function Projects() {
   const detailSnapshotRef = useRef("");
   const detailAutosaveTimerRef = useRef(null);
   const detailAutosaveRequestRef = useRef(0);
+  const [addressDetailsOpen, setAddressDetailsOpen] = useState(false);
+  const [addressSuggestions, setAddressSuggestions] = useState([]);
+  const [addressSuggestLoading, setAddressSuggestLoading] = useState(false);
+  const [addressSuggestError, setAddressSuggestError] = useState("");
   const [documentLoading, setDocumentLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
 
@@ -687,13 +735,26 @@ export default function Projects() {
     [dragPreview?.projectId, projects]
   );
 
+  const draggedProjectAmount = useMemo(
+    () => (draggedProject ? projectAmount(draggedProject, paymentsByProject) : 0),
+    [draggedProject, paymentsByProject]
+  );
+
+  const draggedProjectAgeDays = useMemo(
+    () => (draggedProject ? daysInWork(draggedProject.updated_at || draggedProject.created_at) : 0),
+    [draggedProject]
+  );
+
   const activeProjectPayments = useMemo(() => {
     if (!activeProjectId) return [];
     return paymentsByProject.get(activeProjectId) || [];
   }, [activeProjectId, paymentsByProject]);
 
   const cleanRouteAddress = useMemo(() => cleanAddressForMaps(detailForm.object_address), [detailForm.object_address]);
-  const routeUrl = useMemo(() => yandexRouteUrl(detailForm.object_address), [detailForm.object_address]);
+  const routeUrl = useMemo(
+    () => yandexRouteUrl(detailForm.object_address, detailForm.object_lat, detailForm.object_lon),
+    [detailForm.object_address, detailForm.object_lat, detailForm.object_lon]
+  );
 
   const activeProjectTasks = useMemo(() => {
     if (!activeProjectId) return [];
@@ -799,6 +860,49 @@ export default function Projects() {
     reloadComments(activeProjectId).catch(() => {});
   }, [activeProjectId]);
 
+  useEffect(() => {
+    if (!activeProject || !addressDetailsOpen || !hasDadataAddressSuggestions()) {
+      setAddressSuggestions([]);
+      setAddressSuggestLoading(false);
+      setAddressSuggestError("");
+      return;
+    }
+
+    const query = detailForm.object_address.trim();
+    if (query.length < 3) {
+      setAddressSuggestions([]);
+      setAddressSuggestLoading(false);
+      setAddressSuggestError("");
+      return;
+    }
+
+    let cancelled = false;
+    setAddressSuggestLoading(true);
+    const timerId = window.setTimeout(async () => {
+      try {
+        const suggestions = await fetchAddressSuggestions(query);
+        if (!cancelled) {
+          setAddressSuggestions(suggestions);
+          setAddressSuggestError("");
+        }
+      } catch {
+        if (!cancelled) {
+          setAddressSuggestions([]);
+          setAddressSuggestError("Не удалось загрузить подсказки Dadata.");
+        }
+      } finally {
+        if (!cancelled) {
+          setAddressSuggestLoading(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+    };
+  }, [activeProject, addressDetailsOpen, detailForm.object_address]);
+
   function openCreateModal(status = defaultStatusValue) {
     setCreateError("");
     setCreateForm(createEmptyProjectForm(status));
@@ -849,8 +953,21 @@ export default function Projects() {
     setTaskError("");
     setTaskForm(createEmptyTaskForm());
     setDetailAutosaveState("idle");
+    setAddressDetailsOpen(false);
+    setAddressSuggestions([]);
+    setAddressSuggestError("");
     detailSnapshotRef.current = "";
     window.clearTimeout(detailAutosaveTimerRef.current);
+  }
+
+  function applyAddressSuggestion(suggestion) {
+    setDetailForm((prev) => ({
+      ...prev,
+      object_address: suggestion.value || suggestion.unrestrictedValue || prev.object_address,
+      object_lat: suggestion.lat || "",
+      object_lon: suggestion.lon || "",
+    }));
+    setAddressSuggestions([]);
   }
 
   async function submitCreate(event) {
@@ -876,6 +993,11 @@ export default function Projects() {
         client_phone: createForm.client_phone.trim(),
         client_email: createForm.client_email.trim() || undefined,
         object_address: createForm.object_address.trim(),
+        object_lat: createForm.object_lat.trim() || undefined,
+        object_lon: createForm.object_lon.trim() || undefined,
+        apartment: createForm.apartment.trim(),
+        entrance: createForm.entrance.trim(),
+        floor: createForm.floor.trim(),
         description: createForm.description.trim(),
         categories: "",
         status: createForm.status,
@@ -1164,12 +1286,16 @@ export default function Projects() {
     if (event.pointerType === "mouse" && event.button !== 0) return;
 
     event.preventDefault();
+    const cardRect = event.currentTarget.getBoundingClientRect();
     pointerDragRef.current = {
       projectId,
       startX: event.clientX,
       startY: event.clientY,
       currentX: event.clientX,
       currentY: event.clientY,
+      offsetX: event.clientX - cardRect.left,
+      offsetY: event.clientY - cardRect.top,
+      width: cardRect.width,
       dragging: false,
     };
     bodyDragStyleRef.current = {
@@ -1198,7 +1324,12 @@ export default function Projects() {
 
     if (drag.dragging) {
       event.preventDefault();
-      setDragPreview({ projectId: drag.projectId, x: event.clientX, y: event.clientY });
+      setDragPreview({
+        projectId: drag.projectId,
+        left: event.clientX - drag.offsetX,
+        top: event.clientY - drag.offsetY,
+        width: drag.width,
+      });
       const targetColumn = document
         .elementFromPoint(event.clientX, event.clientY)
         ?.closest("[data-status-column]");
@@ -1266,16 +1397,14 @@ export default function Projects() {
   return (
     <div className="space-y-6">
       {dragPreview && draggedProject && (
-        <div
-          className="pointer-events-none fixed z-[70] max-w-[260px] rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-2xl ring-1 ring-white/20"
-          style={{
-            left: Math.max(12, Math.min(window.innerWidth - 280, dragPreview.x + 14)),
-            top: Math.max(12, Math.min(window.innerHeight - 96, dragPreview.y + 14)),
-          }}
-        >
-          <div className="text-[10px] uppercase tracking-[0.2em] text-blue-200">Перемещаем проект</div>
-          <div className="mt-1 truncate">{projectDisplayName(draggedProject)}</div>
-        </div>
+        <ProjectDragGhost
+          project={draggedProject}
+          amount={draggedProjectAmount}
+          ageDays={draggedProjectAgeDays}
+          left={dragPreview.left}
+          top={dragPreview.top}
+          width={dragPreview.width}
+        />
       )}
       <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="relative w-full max-w-[420px]">
@@ -1630,26 +1759,103 @@ export default function Projects() {
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>Адрес объекта</Label>
-                  <div className="flex flex-col gap-2 sm:flex-row">
+                  <div className="relative">
                     <Input
                       value={detailForm.object_address}
-                      onChange={(event) => setDetailForm((prev) => ({ ...prev, object_address: event.target.value }))}
-                      placeholder="Адрес, квартира, этаж"
+                      onClick={() => setAddressDetailsOpen(true)}
+                      onFocus={() => setAddressDetailsOpen(true)}
+                      onChange={(event) =>
+                        setDetailForm((prev) => ({
+                          ...prev,
+                          object_address: event.target.value,
+                          object_lat: "",
+                          object_lon: "",
+                        }))
+                      }
+                      placeholder={hasDadataAddressSuggestions() ? "Начните вводить адрес" : "Адрес объекта"}
                     />
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="shrink-0"
-                      disabled={!routeUrl}
-                      onClick={() => window.open(routeUrl, "_blank", "noopener,noreferrer")}
-                    >
-                      <MapPin size={16} />
-                      Маршрут
-                    </Button>
                   </div>
-                  {cleanRouteAddress && cleanRouteAddress !== detailForm.object_address.trim() && (
-                    <div className="ml-1 text-xs font-semibold text-slate-400">
-                      Для Яндекс Карт: {cleanRouteAddress}
+                  {addressDetailsOpen && (
+                    <div className="mt-3 space-y-3 rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
+                      {hasDadataAddressSuggestions() ? (
+                        <div className="space-y-2">
+                          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Подсказки Dadata</div>
+                          {addressSuggestLoading ? (
+                            <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-400">
+                              Ищем адрес...
+                            </div>
+                          ) : addressSuggestions.length > 0 ? (
+                            <div className="space-y-2">
+                              {addressSuggestions.map((suggestion) => (
+                                <button
+                                  key={`${suggestion.value}-${suggestion.lat}-${suggestion.lon}`}
+                                  type="button"
+                                  className="w-full rounded-2xl bg-slate-50 px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
+                                  onClick={() => applyAddressSuggestion(suggestion)}
+                                >
+                                  {suggestion.value}
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-400">
+                              Введите минимум 3 символа адреса.
+                            </div>
+                          )}
+                          {addressSuggestError && <div className="text-xs font-semibold text-red-500">{addressSuggestError}</div>}
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-700">
+                          Для подсказок Dadata добавьте `VITE_DADATA_API_KEY` в frontend env.
+                        </div>
+                      )}
+
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="space-y-2">
+                          <Label>Квартира</Label>
+                          <Input
+                            value={detailForm.apartment}
+                            onChange={(event) => setDetailForm((prev) => ({ ...prev, apartment: event.target.value }))}
+                            placeholder="12"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Подъезд</Label>
+                          <Input
+                            value={detailForm.entrance}
+                            onChange={(event) => setDetailForm((prev) => ({ ...prev, entrance: event.target.value }))}
+                            placeholder="3"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Этаж</Label>
+                          <Input
+                            value={detailForm.floor}
+                            onChange={(event) => setDetailForm((prev) => ({ ...prev, floor: event.target.value }))}
+                            placeholder="7"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="text-xs font-semibold text-slate-400">
+                          {detailForm.object_lat && detailForm.object_lon
+                            ? "Маршрут будет построен по координатам Dadata."
+                            : cleanRouteAddress
+                              ? `Маршрут будет построен до: ${cleanRouteAddress}`
+                              : "Укажите адрес, чтобы построить маршрут."}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="shrink-0"
+                          disabled={!routeUrl}
+                          onClick={() => window.open(routeUrl, "_blank", "noopener,noreferrer")}
+                        >
+                          <MapPin size={16} />
+                          Построить маршрут
+                        </Button>
+                      </div>
                     </div>
                   )}
                 </div>

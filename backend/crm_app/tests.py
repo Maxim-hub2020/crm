@@ -170,6 +170,11 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
                 "client_phone": "+70000000077",
                 "client_email": "client@example.com",
                 "object_address": "Moscow",
+                "object_lat": "55.755864",
+                "object_lon": "37.617698",
+                "apartment": "12",
+                "entrance": "3",
+                "floor": "7",
                 "categories": "mirrors",
             },
             format="json",
@@ -180,6 +185,12 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         created_client = Client.objects.get(id=response.data["client"])
         self.assertEqual(created_client.name, "Contract Client")
         self.assertEqual(created_client.phone, "+70000000077")
+        self.assertEqual(response.data["object_address"], "Moscow")
+        self.assertEqual(response.data["object_lat"], "55.755864")
+        self.assertEqual(response.data["object_lon"], "37.617698")
+        self.assertEqual(response.data["apartment"], "12")
+        self.assertEqual(response.data["entrance"], "3")
+        self.assertEqual(response.data["floor"], "7")
 
     def test_project_can_be_created_without_phone(self):
         client = self.auth_client_for(self.manager)

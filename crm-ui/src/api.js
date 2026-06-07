@@ -4,6 +4,7 @@ const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE || "",
 });
 
+const DADATA_API_KEY = import.meta.env.VITE_DADATA_API_KEY || "";
 const TOKEN_KEY = "crm_token";
 const REFRESH_TOKEN_KEY = "crm_refresh_token";
 const USER_KEY = "crm_user";
@@ -100,6 +101,36 @@ export function initApiAuth() {
   if (token) {
     api.defaults.headers.common.Authorization = `Bearer ${token}`;
   }
+}
+
+export function hasDadataAddressSuggestions() {
+  return Boolean(DADATA_API_KEY);
+}
+
+export async function fetchAddressSuggestions(query) {
+  const value = String(query || "").trim();
+  if (!DADATA_API_KEY || value.length < 3) {
+    return [];
+  }
+
+  const { data } = await axios.post(
+    "https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address",
+    { query: value, count: 6 },
+    {
+      headers: {
+        Authorization: `Token ${DADATA_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 7000,
+    }
+  );
+
+  return (data?.suggestions || []).map((item) => ({
+    value: item.value || "",
+    unrestrictedValue: item.unrestricted_value || item.value || "",
+    lat: item.data?.geo_lat || "",
+    lon: item.data?.geo_lon || "",
+  }));
 }
 
 async function refreshAccessToken() {
