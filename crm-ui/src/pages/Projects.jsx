@@ -3,7 +3,6 @@ import {
   BadgeRussianRuble,
   Calendar,
   Check,
-  CreditCard,
   FileText,
   LayoutGrid,
   List,
@@ -122,6 +121,20 @@ function createEmptyTaskForm() {
   };
 }
 
+function buildProjectUpdatePayload(form) {
+  return {
+    title: form.title.trim(),
+    client_name: form.client_name.trim(),
+    client_phone: form.client_phone.trim(),
+    client_email: form.client_email.trim(),
+    object_address: form.object_address.trim(),
+    description: form.description.trim(),
+    categories: "",
+    status: form.status,
+    total_amount: form.total_amount.trim() ? form.total_amount.trim() : null,
+  };
+}
+
 function normalizeProjectForm(project, fallbackStatus = "active") {
   return {
     title: project?.title || "",
@@ -161,6 +174,35 @@ function phoneDigits(value) {
 function phoneHref(value) {
   const normalized = String(value || "").replace(/[^\d+]/g, "");
   return normalized ? `tel:${normalized}` : "";
+}
+
+function cleanAddressForMaps(value) {
+  const rawAddress = String(value || "").trim();
+  if (!rawAddress) return "";
+
+  const privateMarkers =
+    /\b(кв\.?|квартира|ап\.?|апартаменты|офис|пом\.?|помещение|этаж|эт\.?|подъезд|парадная|домофон|код)\b/i;
+  const withoutCommaParts = rawAddress
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part && !privateMarkers.test(part))
+    .join(", ");
+
+  return withoutCommaParts
+    .replace(
+      /\s*(,?\s*(кв\.?|квартира|ап\.?|апартаменты|офис|пом\.?|помещение|этаж|эт\.?|подъезд|парадная|домофон|код)\s*[:№#-]?\s*[\wА-Яа-яЁё/-]+)+\s*$/gi,
+      ""
+    )
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+,/g, ",")
+    .replace(/,+$/g, "")
+    .trim();
+}
+
+function yandexRouteUrl(address) {
+  const cleanAddress = cleanAddressForMaps(address);
+  if (!cleanAddress) return "";
+  return `https://yandex.ru/maps/?mode=routes&rtext=~${encodeURIComponent(cleanAddress)}&rtt=auto`;
 }
 
 function formatDateTime(value) {
@@ -280,6 +322,14 @@ function statusBadgeClass(colorOrStatus) {
   return "bg-sky-100 text-sky-700";
 }
 
+function autosaveStatusLabel(status) {
+  if (status === "pending") return "Готовим автосохранение...";
+  if (status === "saving") return "Сохраняем изменения...";
+  if (status === "saved") return "Изменения сохранены автоматически";
+  if (status === "error") return "Автосохранение не сработало";
+  return "Изменения сохраняются автоматически";
+}
+
 function ModeButton({ active, icon: Icon, label, onClick }) {
   return (
     <Button
@@ -386,8 +436,8 @@ function ProjectKanbanCard({ project, amount, ageDays, isDragging = false, onCli
     <button
       type="button"
       onClick={onClick}
-      className={`w-full rounded-[22px] border border-slate-200/90 bg-white px-4 py-4 text-left shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_14px_32px_rgba(15,23,42,0.08)] ${
-        isDragging ? "scale-[0.98] cursor-grabbing opacity-70 ring-2 ring-blue-400" : "cursor-grab"
+      className={`w-full select-none rounded-[22px] border border-slate-200/90 bg-white px-4 py-4 text-left shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_14px_32px_rgba(15,23,42,0.08)] ${
+        isDragging ? "scale-[0.98] cursor-grabbing opacity-55 ring-2 ring-blue-500" : "cursor-grab"
       }`}
     >
       <div className="line-clamp-2 text-[1.02rem] font-black leading-6 tracking-tight text-slate-800">
@@ -416,10 +466,12 @@ export default function Projects() {
   const [query, setQuery] = useState(location.state?.q || "");
   const deferredQuery = useDeferredValue(query);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem(VIEW_MODE_KEY) || "kanban");
-  const [dragProjectId, setDragProjectId] = useState(null);
   const [touchDragProjectId, setTouchDragProjectId] = useState(null);
+  const [dragTargetStatus, setDragTargetStatus] = useState("");
+  const [dragPreview, setDragPreview] = useState(null);
   const pointerDragRef = useRef(null);
   const suppressProjectClickRef = useRef(false);
+  const bodyDragStyleRef = useRef(null);
 
   const [openCreate, setOpenCreate] = useState(false);
   const [createForm, setCreateForm] = useState(createEmptyProjectForm());
@@ -429,7 +481,10 @@ export default function Projects() {
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [detailForm, setDetailForm] = useState(createEmptyProjectForm());
   const [detailTab, setDetailTab] = useState("comments");
-  const [detailSaving, setDetailSaving] = useState(false);
+  const [detailAutosaveState, setDetailAutosaveState] = useState("idle");
+  const detailSnapshotRef = useRef("");
+  const detailAutosaveTimerRef = useRef(null);
+  const detailAutosaveRequestRef = useRef(0);
   const [documentLoading, setDocumentLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
 
@@ -627,10 +682,18 @@ export default function Projects() {
     [activeProjectId, projects]
   );
 
+  const draggedProject = useMemo(
+    () => projects.find((project) => project.id === dragPreview?.projectId) || null,
+    [dragPreview?.projectId, projects]
+  );
+
   const activeProjectPayments = useMemo(() => {
     if (!activeProjectId) return [];
     return paymentsByProject.get(activeProjectId) || [];
   }, [activeProjectId, paymentsByProject]);
+
+  const cleanRouteAddress = useMemo(() => cleanAddressForMaps(detailForm.object_address), [detailForm.object_address]);
+  const routeUrl = useMemo(() => yandexRouteUrl(detailForm.object_address), [detailForm.object_address]);
 
   const activeProjectTasks = useMemo(() => {
     if (!activeProjectId) return [];
@@ -665,9 +728,61 @@ export default function Projects() {
       return;
     }
 
-    setDetailForm(normalizeProjectForm(activeProject, defaultStatusValue));
+    const nextForm = normalizeProjectForm(activeProject, defaultStatusValue);
+    setDetailForm(nextForm);
+    detailSnapshotRef.current = JSON.stringify(buildProjectUpdatePayload(nextForm));
+    setDetailAutosaveState("idle");
     setDetailError("");
   }, [activeProject, defaultStatusValue]);
+
+  useEffect(() => {
+    if (!activeProject) return;
+
+    const payload = buildProjectUpdatePayload(detailForm);
+    const payloadKey = JSON.stringify(payload);
+
+    if (!detailSnapshotRef.current || payloadKey === detailSnapshotRef.current) {
+      return;
+    }
+
+    if (!payload.title || !payload.client_name) {
+      setDetailAutosaveState("idle");
+      return;
+    }
+
+    setDetailAutosaveState("pending");
+    window.clearTimeout(detailAutosaveTimerRef.current);
+
+    detailAutosaveTimerRef.current = window.setTimeout(async () => {
+      const requestId = detailAutosaveRequestRef.current + 1;
+      detailAutosaveRequestRef.current = requestId;
+      setDetailAutosaveState("saving");
+
+      try {
+        const updated = await updateProject(activeProject.id, payload);
+        if (detailAutosaveRequestRef.current !== requestId) return;
+
+        setProjects((prev) => prev.map((project) => (project.id === updated.id ? updated : project)));
+        if (updated.client_info) {
+          setClients((prev) => prev.map((client) => (client.id === updated.client_info.id ? updated.client_info : client)));
+        }
+        detailSnapshotRef.current = JSON.stringify(buildProjectUpdatePayload(normalizeProjectForm(updated, defaultStatusValue)));
+        setDetailError("");
+        setDetailAutosaveState("saved");
+        window.setTimeout(() => {
+          if (detailAutosaveRequestRef.current === requestId) {
+            setDetailAutosaveState("idle");
+          }
+        }, 1400);
+      } catch (error) {
+        if (detailAutosaveRequestRef.current !== requestId) return;
+        setDetailAutosaveState("error");
+        setDetailError(extractApiErrorMessage(error, "Не удалось автоматически сохранить проект."));
+      }
+    }, 900);
+
+    return () => window.clearTimeout(detailAutosaveTimerRef.current);
+  }, [activeProject, defaultStatusValue, detailForm]);
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -733,6 +848,9 @@ export default function Projects() {
     setPaymentError("");
     setTaskError("");
     setTaskForm(createEmptyTaskForm());
+    setDetailAutosaveState("idle");
+    detailSnapshotRef.current = "";
+    window.clearTimeout(detailAutosaveTimerRef.current);
   }
 
   async function submitCreate(event) {
@@ -779,46 +897,6 @@ export default function Projects() {
       setCreateError(extractApiErrorMessage(error, "Не удалось создать проект."));
     } finally {
       setCreateSaving(false);
-    }
-  }
-
-  async function submitProjectUpdate() {
-    if (!activeProject) return;
-
-    setDetailError("");
-    setDetailSaving(true);
-
-    try {
-      if (!detailForm.title.trim()) {
-        setDetailError("Укажите наименование проекта.");
-        return;
-      }
-
-      if (!detailForm.client_name.trim()) {
-        setDetailError("Укажите клиента.");
-        return;
-      }
-
-      const updated = await updateProject(activeProject.id, {
-        title: detailForm.title.trim(),
-        client_name: detailForm.client_name.trim(),
-        client_phone: detailForm.client_phone.trim(),
-        client_email: detailForm.client_email.trim(),
-        object_address: detailForm.object_address.trim(),
-        description: detailForm.description.trim(),
-        categories: "",
-        status: detailForm.status,
-        total_amount: detailForm.total_amount.trim() ? detailForm.total_amount.trim() : null,
-      });
-
-      setProjects((prev) => prev.map((project) => (project.id === updated.id ? updated : project)));
-      if (updated.client_info) {
-        setClients((prev) => prev.map((client) => (client.id === updated.client_info.id ? updated.client_info : client)));
-      }
-    } catch (error) {
-      setDetailError(extractApiErrorMessage(error, "Не удалось сохранить проект."));
-    } finally {
-      setDetailSaving(false);
     }
   }
 
@@ -1082,27 +1160,35 @@ export default function Projects() {
     }
   }
 
-  function handleDrop(status) {
-    if (!dragProjectId) return;
-    moveProjectToStatus(dragProjectId, status).catch(() => {});
-    setDragProjectId(null);
-  }
-
   function handleProjectPointerDown(event, projectId) {
-    if (event.pointerType === "mouse") return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
 
+    event.preventDefault();
     pointerDragRef.current = {
       projectId,
       startX: event.clientX,
       startY: event.clientY,
+      currentX: event.clientX,
+      currentY: event.clientY,
       dragging: false,
     };
+    bodyDragStyleRef.current = {
+      cursor: document.body.style.cursor,
+      userSelect: document.body.style.userSelect,
+      webkitUserSelect: document.body.style.webkitUserSelect,
+    };
+    document.body.style.cursor = "grabbing";
+    document.body.style.userSelect = "none";
+    document.body.style.webkitUserSelect = "none";
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
 
   function handleProjectPointerMove(event) {
     const drag = pointerDragRef.current;
     if (!drag) return;
+
+    drag.currentX = event.clientX;
+    drag.currentY = event.clientY;
 
     const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
     if (!drag.dragging && distance > 12) {
@@ -1112,17 +1198,40 @@ export default function Projects() {
 
     if (drag.dragging) {
       event.preventDefault();
+      setDragPreview({ projectId: drag.projectId, x: event.clientX, y: event.clientY });
+      const targetColumn = document
+        .elementFromPoint(event.clientX, event.clientY)
+        ?.closest("[data-status-column]");
+      setDragTargetStatus(targetColumn?.getAttribute("data-status-column") || "");
     }
+  }
+
+  function cleanupProjectDrag() {
+    const previousBodyStyle = bodyDragStyleRef.current;
+    if (previousBodyStyle) {
+      document.body.style.cursor = previousBodyStyle.cursor;
+      document.body.style.userSelect = previousBodyStyle.userSelect;
+      document.body.style.webkitUserSelect = previousBodyStyle.webkitUserSelect;
+    }
+    bodyDragStyleRef.current = null;
+    pointerDragRef.current = null;
+    setTouchDragProjectId(null);
+    setDragTargetStatus("");
+    setDragPreview(null);
   }
 
   function handleProjectPointerEnd(event) {
     const drag = pointerDragRef.current;
     if (!drag) return;
 
-    pointerDragRef.current = null;
     event.currentTarget.releasePointerCapture?.(event.pointerId);
 
     if (!drag.dragging) {
+      cleanupProjectDrag();
+      const project = projects.find((item) => item.id === drag.projectId);
+      if (project) {
+        openProject(project);
+      }
       return;
     }
 
@@ -1151,11 +1260,23 @@ export default function Projects() {
       moveProjectToStatus(drag.projectId, nextStatus).catch(() => {});
     }
 
-    setTouchDragProjectId(null);
+    cleanupProjectDrag();
   }
 
   return (
     <div className="space-y-6">
+      {dragPreview && draggedProject && (
+        <div
+          className="pointer-events-none fixed z-[70] max-w-[260px] rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white shadow-2xl ring-1 ring-white/20"
+          style={{
+            left: Math.max(12, Math.min(window.innerWidth - 280, dragPreview.x + 14)),
+            top: Math.max(12, Math.min(window.innerHeight - 96, dragPreview.y + 14)),
+          }}
+        >
+          <div className="text-[10px] uppercase tracking-[0.2em] text-blue-200">Перемещаем проект</div>
+          <div className="mt-1 truncate">{projectDisplayName(draggedProject)}</div>
+        </div>
+      )}
       <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="relative w-full max-w-[420px]">
           <Search
@@ -1188,7 +1309,7 @@ export default function Projects() {
           <CardBody className="p-12 text-center text-sm text-slate-500">Загружаем проекты и операции...</CardBody>
         </Card>
       ) : viewMode === "kanban" ? (
-        <div className="-mx-4 overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0">
+        <div className="-mx-4 select-none overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0">
           <div className="grid snap-x snap-mandatory grid-flow-col auto-cols-[calc(100vw-2rem)] gap-5 sm:auto-cols-[minmax(360px,420px)]">
           {statusOptions.map((status) => {
             const columnProjects = groupedProjects[status.value] || [];
@@ -1201,7 +1322,7 @@ export default function Projects() {
                 key={status.value}
                 data-status-column={status.value}
                 className={`flex min-h-[calc(100dvh-235px)] snap-start flex-col overflow-hidden rounded-[28px] border border-slate-200/90 bg-white shadow-[0_14px_36px_rgba(15,23,42,0.05)] transition ${
-                  touchDragProjectId ? "ring-2 ring-blue-100" : ""
+                  dragTargetStatus === status.value ? "scale-[1.01] ring-2 ring-blue-400" : touchDragProjectId ? "ring-2 ring-blue-100" : ""
                 }`}
               >
                 <ColumnHeader status={status} count={columnProjects.length} totalAmount={columnTotal} />
@@ -1209,8 +1330,6 @@ export default function Projects() {
                 <div
                   className="flex min-h-[calc(100dvh-365px)] flex-1 flex-col gap-3 bg-[#fbfcff] px-3 py-3"
                   data-status-column={status.value}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={() => handleDrop(status.value)}
                 >
                   <div className="space-y-3">
                     {columnProjects.map((project) => {
@@ -1220,23 +1339,17 @@ export default function Projects() {
                       return (
                         <div
                           key={project.id}
-                          draggable
-                          onDragStart={() => setDragProjectId(project.id)}
-                          onDragEnd={() => setDragProjectId(null)}
                           onPointerDown={(event) => handleProjectPointerDown(event, project.id)}
                           onPointerMove={handleProjectPointerMove}
                           onPointerUp={handleProjectPointerEnd}
-                          onPointerCancel={() => {
-                            pointerDragRef.current = null;
-                            setTouchDragProjectId(null);
-                          }}
-                          style={{ touchAction: "pan-y" }}
+                          onPointerCancel={cleanupProjectDrag}
+                          style={{ touchAction: "none" }}
                         >
                           <ProjectKanbanCard
                             project={project}
                             amount={amount}
                             ageDays={ageDays}
-                            isDragging={dragProjectId === project.id || touchDragProjectId === project.id}
+                            isDragging={touchDragProjectId === project.id}
                             onClick={() => {
                               if (!suppressProjectClickRef.current) {
                                 openProject(project);
@@ -1307,11 +1420,7 @@ export default function Projects() {
                       {project.description && <div className="max-w-3xl text-sm leading-6 text-slate-600">{project.description}</div>}
                     </div>
 
-                    <div className="grid min-w-[280px] gap-3 lg:grid-cols-3 xl:grid-cols-1">
-                      <div className="rounded-[28px] bg-slate-50 px-5 py-4 ring-1 ring-slate-200/70">
-                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Операций</div>
-                        <div className="mt-2 text-2xl font-black text-slate-900">{rows.length}</div>
-                      </div>
+                    <div className="grid min-w-[240px] gap-3 lg:grid-cols-2 xl:grid-cols-1">
                       <div className="rounded-[28px] bg-slate-50 px-5 py-4 ring-1 ring-slate-200/70">
                         <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Сумма</div>
                         <div className="mt-2 text-2xl font-black text-slate-900">{formatMoney(total)}</div>
@@ -1487,136 +1596,137 @@ export default function Projects() {
         onClose={closeProject}
         widthClassName="max-w-5xl"
         bodyClassName="min-h-0"
+        positionClassName="items-start pt-4 sm:pt-6"
       >
         {activeProject && (
           <div className="space-y-4">
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_320px]">
-              <div className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2 md:col-span-2">
-                    <Label>Наименование проекта</Label>
-                    <Input
-                      value={detailForm.title}
-                      onChange={(event) => setDetailForm((prev) => ({ ...prev, title: event.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <Label>Клиент</Label>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                      {phoneHref(detailForm.client_phone) ? (
-                        <a
-                          className="inline-flex items-center gap-2 text-base font-black text-slate-900 transition hover:text-blue-600"
-                          href={phoneHref(detailForm.client_phone)}
-                        >
-                          <Phone size={17} />
-                          {detailForm.client_name || "Клиент без имени"}
-                        </a>
-                      ) : (
-                        <div className="text-base font-black text-slate-900">{detailForm.client_name || "Клиент не указан"}</div>
-                      )}
-                      <div className="mt-1 text-xs font-semibold text-slate-400">
-                        {phoneHref(detailForm.client_phone) ? "Нажмите на имя, чтобы позвонить клиенту." : "Телефон клиента не указан."}
-                      </div>
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Наименование проекта</Label>
+                  <Input
+                    value={detailForm.title}
+                    onChange={(event) => setDetailForm((prev) => ({ ...prev, title: event.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Клиент</Label>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    {phoneHref(detailForm.client_phone) ? (
+                      <a
+                        className="inline-flex items-center gap-2 text-base font-black text-slate-900 transition hover:text-blue-600"
+                        href={phoneHref(detailForm.client_phone)}
+                      >
+                        <Phone size={17} />
+                        {detailForm.client_name || "Клиент без имени"}
+                      </a>
+                    ) : (
+                      <div className="text-base font-black text-slate-900">{detailForm.client_name || "Клиент не указан"}</div>
+                    )}
+                    <div className="mt-1 text-xs font-semibold text-slate-400">
+                      {phoneHref(detailForm.client_phone) ? "Нажмите на имя, чтобы позвонить клиенту." : "Телефон клиента не указан."}
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Адрес объекта</Label>
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Адрес объекта</Label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
                     <Input
                       value={detailForm.object_address}
                       onChange={(event) => setDetailForm((prev) => ({ ...prev, object_address: event.target.value }))}
+                      placeholder="Адрес, квартира, этаж"
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Статус</Label>
-                    <Select
-                      value={detailForm.status}
-                      onChange={(event) => setDetailForm((prev) => ({ ...prev, status: event.target.value }))}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="shrink-0"
+                      disabled={!routeUrl}
+                      onClick={() => window.open(routeUrl, "_blank", "noopener,noreferrer")}
                     >
-                      {statusOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </Select>
+                      <MapPin size={16} />
+                      Маршрут
+                    </Button>
                   </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <Label>Сумма проекта</Label>
-                    <Input
-                      value={detailForm.total_amount}
-                      onChange={(event) => setDetailForm((prev) => ({ ...prev, total_amount: event.target.value }))}
-                      placeholder="Например, 120000"
-                    />
-                  </div>
+                  {cleanRouteAddress && cleanRouteAddress !== detailForm.object_address.trim() && (
+                    <div className="ml-1 text-xs font-semibold text-slate-400">
+                      Для Яндекс Карт: {cleanRouteAddress}
+                    </div>
+                  )}
                 </div>
-
                 <div className="space-y-2">
-                  <Label>Описание</Label>
-                  <textarea
-                    className="min-h-24 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
-                    value={detailForm.description}
-                    onChange={(event) => setDetailForm((prev) => ({ ...prev, description: event.target.value }))}
+                  <Label>Статус</Label>
+                  <Select
+                    value={detailForm.status}
+                    onChange={(event) => setDetailForm((prev) => ({ ...prev, status: event.target.value }))}
+                  >
+                    {statusOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Сумма проекта</Label>
+                  <Input
+                    value={detailForm.total_amount}
+                    onChange={(event) => setDetailForm((prev) => ({ ...prev, total_amount: event.target.value }))}
+                    placeholder="Например, 120000"
                   />
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <div className="rounded-[26px] bg-slate-900 px-5 py-4 text-white">
-                  <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-300">Проект</div>
-                  <div className="mt-2 text-xl font-black">{projectDisplayName(activeProject)}</div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Badge className="bg-white/15 text-white">{labelFor(statusOptions, detailForm.status)}</Badge>
-                    {detailForm.works_with_contract && <Badge className="bg-white/15 text-white">Договор</Badge>}
+              <div className="space-y-2">
+                <Label>Описание</Label>
+                <textarea
+                  className="min-h-20 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+                  value={detailForm.description}
+                  onChange={(event) => setDetailForm((prev) => ({ ...prev, description: event.target.value }))}
+                />
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Финансы</div>
+                      <div className="mt-1 text-xl font-black text-slate-900">{formatMoney(activeProjectPaymentTotal)} ₽</div>
+                    </div>
+                    <BadgeRussianRuble size={18} className="text-slate-400" />
                   </div>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                  <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Операций</div>
-                        <div className="mt-1 text-xl font-black text-slate-900">{activeProjectPayments.length}</div>
-                      </div>
-                      <CreditCard size={18} className="text-slate-400" />
+                <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Комментариев</div>
+                      <div className="mt-1 text-xl font-black text-slate-900">{comments.length}</div>
                     </div>
-                  </div>
-
-                  <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Финансы</div>
-                        <div className="mt-1 text-xl font-black text-slate-900">{formatMoney(activeProjectPaymentTotal)}</div>
-                      </div>
-                      <BadgeRussianRuble size={18} className="text-slate-400" />
-                    </div>
-                  </div>
-
-                  <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Комментариев</div>
-                        <div className="mt-1 text-xl font-black text-slate-900">{comments.length}</div>
-                      </div>
-                      <MessageSquare size={18} className="text-slate-400" />
-                    </div>
-                  </div>
-
-                  <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Задач</div>
-                        <div className="mt-1 text-xl font-black text-slate-900">{activeProjectTasks.length}</div>
-                      </div>
-                      <ListTodo size={18} className="text-slate-400" />
-                    </div>
+                    <MessageSquare size={18} className="text-slate-400" />
                   </div>
                 </div>
 
-                <div className="space-y-3">
+                <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Задач</div>
+                      <div className="mt-1 text-xl font-black text-slate-900">{activeProjectTasks.length}</div>
+                    </div>
+                    <ListTodo size={18} className="text-slate-400" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70 sm:flex-row sm:items-center sm:justify-between">
+                <div className={`text-sm font-bold ${detailAutosaveState === "error" ? "text-red-600" : "text-slate-500"}`}>
+                  {autosaveStatusLabel(detailAutosaveState)}
+                </div>
+                <div className="flex flex-wrap gap-2">
                   {detailForm.works_with_contract ? (
                     <Button
                       type="button"
                       variant="secondary"
-                      className="w-full justify-center"
+                      className="justify-center"
                       onClick={() => handleDocumentDownload("contract")}
                       disabled={documentLoading}
                     >
@@ -1624,10 +1734,7 @@ export default function Projects() {
                       {documentLoading ? "Формируем..." : "Сформировать договор"}
                     </Button>
                   ) : null}
-                  <Button type="button" className="w-full justify-center" onClick={submitProjectUpdate} disabled={detailSaving}>
-                    {detailSaving ? "Сохраняем..." : "Сохранить изменения"}
-                  </Button>
-                  <Button type="button" variant="danger" className="w-full justify-center" onClick={requestDeleteProject}>
+                  <Button type="button" variant="danger" className="justify-center" onClick={requestDeleteProject}>
                     <Trash2 size={16} />
                     Удалить проект
                   </Button>
@@ -1811,8 +1918,7 @@ export default function Projects() {
               </div>
             ) : (
               <div className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  <StatCard icon={CreditCard} label="Операций" value={activeProjectPayments.length} dark />
+                <div className="grid gap-4 md:grid-cols-3">
                   <StatCard icon={Wallet} label="Доходы" value={`${formatMoney(activeProjectFinanceStats.income)} ₽`} />
                   <StatCard icon={BadgeRussianRuble} label="Расходы" value={`${formatMoney(activeProjectFinanceStats.expense)} ₽`} />
                   <StatCard

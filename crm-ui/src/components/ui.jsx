@@ -63,16 +63,24 @@ export function Badge({ children, className = "" }) {
   );
 }
 
-export function Modal({ open, title, onClose, children, widthClassName = "max-w-3xl", bodyClassName = "" }) {
+export function Modal({
+  open,
+  title,
+  onClose,
+  children,
+  widthClassName = "max-w-3xl",
+  bodyClassName = "",
+  positionClassName = "items-center",
+}) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 p-2 backdrop-blur-md sm:p-4">
+    <div className={`fixed inset-0 z-50 flex justify-center overflow-y-auto bg-gray-900/40 p-2 backdrop-blur-md sm:p-4 ${positionClassName}`}>
       <div className="absolute inset-0" onClick={onClose} />
       <div
-        className={`relative z-10 flex max-h-[95vh] w-full flex-col overflow-hidden rounded-3xl bg-white shadow-2xl sm:rounded-[32px] ${widthClassName}`}
+        className={`relative z-10 flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-3xl bg-white shadow-2xl sm:rounded-[32px] ${widthClassName}`}
       >
-        <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-6 py-4 sm:px-8">
+        <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-5 py-3.5 sm:px-7">
           <h2 className="truncate pr-4 text-lg font-bold uppercase tracking-tight text-gray-900 sm:text-xl">{title}</h2>
           <button
             className="rounded-full bg-gray-100 p-2 text-gray-500 transition hover:bg-gray-200"
@@ -82,7 +90,7 @@ export function Modal({ open, title, onClose, children, widthClassName = "max-w-
             <X size={18} />
           </button>
         </div>
-        <div className={`flex-1 overflow-y-auto px-6 py-5 sm:px-8 ${bodyClassName}`}>{children}</div>
+        <div className={`flex-1 overflow-y-auto px-5 py-4 sm:px-7 ${bodyClassName}`}>{children}</div>
       </div>
     </div>
   );
