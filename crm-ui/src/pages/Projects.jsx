@@ -371,11 +371,11 @@ function statusBadgeClass(colorOrStatus) {
 }
 
 function autosaveStatusLabel(status) {
-  if (status === "pending") return "Готовим автосохранение...";
-  if (status === "saving") return "Сохраняем изменения...";
-  if (status === "saved") return "Изменения сохранены автоматически";
-  if (status === "error") return "Автосохранение не сработало";
-  return "Изменения сохраняются автоматически";
+  if (status === "pending") return "Готовим сохранение...";
+  if (status === "saving") return "Сохраняем...";
+  if (status === "saved") return "Сохранено";
+  if (status === "error") return "Не удалось сохранить";
+  return "";
 }
 
 function ModeButton({ active, icon: Icon, label, onClick }) {
@@ -2080,28 +2080,6 @@ export default function Projects() {
                 />
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Комментариев</div>
-                      <div className="mt-1 text-xl font-black text-slate-900">{comments.length}</div>
-                    </div>
-                    <MessageSquare size={18} className="text-slate-400" />
-                  </div>
-                </div>
-
-                <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Задач</div>
-                      <div className="mt-1 text-xl font-black text-slate-900">{activeProjectTasks.length}</div>
-                    </div>
-                    <ListTodo size={18} className="text-slate-400" />
-                  </div>
-                </div>
-              </div>
-
               <div className="flex flex-col gap-3 rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70 sm:flex-row sm:items-center sm:justify-between">
                 <div className={`text-sm font-bold ${detailAutosaveState === "error" ? "text-red-600" : "text-slate-500"}`}>
                   {autosaveStatusLabel(detailAutosaveState)}
@@ -2156,18 +2134,32 @@ export default function Projects() {
             </div>
 
             {detailTab === "comments" ? (
-              <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_380px]">
-                <Card className="border border-slate-100 shadow-none ring-0">
-                  <CardHeader>
-                    <div className="text-lg font-black tracking-tight text-slate-900">Лента комментариев</div>
-                    <div className="mt-1 text-sm text-slate-500">Все заметки по проекту в одном месте.</div>
-                  </CardHeader>
-                  <CardBody className="space-y-4">
+              <Card className="border border-slate-100 shadow-none ring-0">
+                <CardHeader>
+                  <div className="text-lg font-black tracking-tight text-slate-900">Комментарии</div>
+                </CardHeader>
+                <CardBody className="space-y-5">
+                  <form className="space-y-3" onSubmit={submitComment}>
+                    <textarea
+                      className="min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+                      value={commentText}
+                      onChange={(event) => setCommentText(event.target.value)}
+                      placeholder="Например: согласовали замер на пятницу, ждём предоплату..."
+                    />
+
+                    {commentError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{commentError}</div>}
+
+                    <Button type="submit" disabled={commentSaving}>
+                      {commentSaving ? "Сохраняем..." : "Добавить комментарий"}
+                    </Button>
+                  </form>
+
+                  <div className="space-y-4 border-t border-slate-100 pt-5">
                     {commentsLoading ? (
                       <div className="rounded-[24px] bg-slate-50 px-4 py-6 text-sm text-slate-500">Загружаем комментарии...</div>
                     ) : comments.length === 0 ? (
                       <div className="rounded-[24px] bg-slate-50 px-4 py-6 text-sm text-slate-500">
-                        Пока нет комментариев. Добавьте первый комментарий справа.
+                        Пока нет комментариев.
                       </div>
                     ) : (
                       comments.map((comment) => (
@@ -2189,34 +2181,9 @@ export default function Projects() {
                         </div>
                       ))
                     )}
-                  </CardBody>
-                </Card>
-
-                <Card className="border border-slate-100 shadow-none ring-0">
-                  <CardHeader>
-                    <div className="text-lg font-black tracking-tight text-slate-900">Новый комментарий</div>
-                  </CardHeader>
-                  <CardBody>
-                    <form className="space-y-4" onSubmit={submitComment}>
-                      <div className="space-y-2">
-                        <Label>Текст комментария</Label>
-                        <textarea
-                          className="min-h-40 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
-                          value={commentText}
-                          onChange={(event) => setCommentText(event.target.value)}
-                          placeholder="Например: согласовали замер на пятницу, ждём предоплату..."
-                        />
-                      </div>
-
-                      {commentError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{commentError}</div>}
-
-                      <Button type="submit" disabled={commentSaving}>
-                        {commentSaving ? "Сохраняем..." : "Добавить комментарий"}
-                      </Button>
-                    </form>
-                  </CardBody>
-                </Card>
-              </div>
+                  </div>
+                </CardBody>
+              </Card>
             ) : detailTab === "tasks" ? (
               <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_360px]">
                 <Card className="border border-slate-100 shadow-none ring-0">

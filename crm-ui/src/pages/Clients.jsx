@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ChevronRight, Mail, MapPin, Phone, Search, Wallet } from "lucide-react";
+import { ChevronRight, Edit3, Mail, MapPin, Phone, Search, Wallet } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { extractApiErrorMessage, fetchClients, fetchPayments, fetchProjects, updateClient } from "../api";
@@ -31,6 +31,28 @@ function createClientEditForm(client = {}) {
   };
 }
 
+function InfoRow({ icon: Icon, label, value, href }) {
+  const content = (
+    <>
+      <Icon size={16} className="shrink-0 text-slate-400" />
+      <div className="min-w-0">
+        <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{label}</div>
+        <div className="mt-1 truncate text-sm font-semibold text-slate-800">{value || "Не указано"}</div>
+      </div>
+    </>
+  );
+
+  if (href && value) {
+    return (
+      <a className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 transition hover:bg-blue-50" href={href}>
+        {content}
+      </a>
+    );
+  }
+
+  return <div className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3">{content}</div>;
+}
+
 export default function Clients() {
   const navigate = useNavigate();
   const [clientRows, setClientRows] = useState([]);
@@ -41,6 +63,7 @@ export default function Clients() {
   const [selectedClientId, setSelectedClientId] = useState(null);
   const [editForm, setEditForm] = useState(createClientEditForm());
   const [savingClient, setSavingClient] = useState(false);
+  const [clientEditMode, setClientEditMode] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -107,7 +130,20 @@ export default function Clients() {
   function openClientCard(client) {
     setSelectedClientId(client.id);
     setEditForm(createClientEditForm(client));
+    setClientEditMode(false);
     setError("");
+  }
+
+  function closeClientCard() {
+    if (savingClient) return;
+    setSelectedClientId(null);
+    setClientEditMode(false);
+  }
+
+  function startClientEdit() {
+    if (!selectedClient) return;
+    setEditForm(createClientEditForm(selectedClient));
+    setClientEditMode(true);
   }
 
   async function saveClient(event) {
@@ -125,7 +161,9 @@ export default function Clients() {
         works_with_contract: editForm.works_with_contract,
       });
       setClientRows((current) => current.map((row) => (row.id === updated.id ? updated : row)));
-      setSelectedClientId(null);
+      setSelectedClientId(updated.id);
+      setEditForm(createClientEditForm(updated));
+      setClientEditMode(false);
     } catch (requestError) {
       setError(extractApiErrorMessage(requestError, "Не удалось сохранить клиента."));
     } finally {
@@ -133,24 +171,12 @@ export default function Clients() {
     }
   }
 
-  async function toggleContract(client) {
-    setError("");
-    try {
-      const updated = await updateClient(client.id, {
-        works_with_contract: !client.worksWithContract,
-      });
-      setClientRows((current) => current.map((row) => (row.id === updated.id ? updated : row)));
-    } catch (requestError) {
-      setError(extractApiErrorMessage(requestError, "Не удалось сохранить признак договора."));
-    }
-  }
-
   return (
     <div>
-      <div className="mb-6 max-w-xs">
+      <div className="mb-5 max-w-xs">
         <div className="relative">
           <Input
-            className="pl-10"
+            className="h-12 rounded-[18px] pl-10"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Поиск клиентов..."
@@ -161,62 +187,31 @@ export default function Clients() {
 
       {error && <div className="mb-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         {filteredClients.map((client) => (
-          <div
+          <button
             key={client.id}
-            className="flex w-full items-center rounded-2xl bg-white p-4 text-left shadow transition-all hover:bg-gray-50 hover:shadow-lg"
+            type="button"
+            className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-2xl bg-white px-4 py-3 text-left shadow-sm ring-1 ring-slate-100 transition hover:-translate-y-0.5 hover:bg-gray-50 hover:shadow-md md:grid-cols-[minmax(0,1fr)_190px_110px_32px]"
+            onClick={() => openClientCard(client)}
           >
-            <div className="grid flex-grow grid-cols-1 items-center gap-4 md:grid-cols-4">
-              <div>
-                <div className="font-bold text-gray-800">{client.name || "Без имени"}</div>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  <Badge>{client.projectCount} проектов</Badge>
-                  <Badge>{client.paymentsCount} платежей</Badge>
-                  {client.worksWithContract && <Badge className="bg-blue-100 text-blue-700">Договор</Badge>}
-                </div>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-gray-500">
-                <Phone size={16} />
-                {client.phone || "Телефон не указан"}
-              </div>
-              <div className="min-w-0 space-y-1 text-sm text-gray-500">
-                <div className="flex items-center gap-2 truncate">
-                  <Mail size={16} className="shrink-0" />
-                  <span className="truncate">{client.email || "Email не указан"}</span>
-                </div>
-                <div className="flex items-center gap-2 truncate">
-                  <MapPin size={16} className="shrink-0" />
-                  <span className="truncate">{client.address || "Адрес не указан"}</span>
-                </div>
-              </div>
-              <div className="flex items-center justify-between gap-3 md:justify-end">
-                <label className="flex items-center gap-2 text-xs font-semibold text-gray-500">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600"
-                    checked={client.worksWithContract}
-                    onChange={() => toggleContract(client)}
-                  />
-                  Договор
-                </label>
-                <div className="text-right">
-                  <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-gray-400">
-                    <Wallet size={12} />
-                    Сумма
-                  </div>
-                  <div className="mt-1 font-black text-gray-800">{formatMoney(client.total)} ₽</div>
-                </div>
-                <button
-                  type="button"
-                  className="rounded-full p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
-                  onClick={() => openClientCard(client)}
-                >
-                  <ChevronRight />
-                </button>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-black text-slate-900">{client.name || "Без имени"}</div>
+              <div className="mt-1 flex flex-wrap gap-2">
+                <Badge>{client.projectCount} проект(ов)</Badge>
+                {client.worksWithContract && <Badge className="bg-blue-100 text-blue-700">Договор</Badge>}
               </div>
             </div>
-          </div>
+
+            <div className="hidden items-center gap-2 text-sm font-semibold text-slate-500 md:flex">
+              <Phone size={15} />
+              <span className="truncate">{client.phone || "Телефон не указан"}</span>
+            </div>
+
+            <div className="hidden text-right text-sm font-black text-slate-800 md:block">{formatMoney(client.total)} ₽</div>
+
+            <ChevronRight className="text-slate-300" size={20} />
+          </button>
         ))}
 
         {filteredClients.length === 0 && (
@@ -228,54 +223,81 @@ export default function Clients() {
 
       <Modal
         open={Boolean(selectedClient)}
-        title={selectedClient ? `Клиент — ${selectedClient.name || "без имени"}` : "Клиент"}
-        onClose={() => !savingClient && setSelectedClientId(null)}
+        title={selectedClient ? selectedClient.name || "Клиент без имени" : "Клиент"}
+        onClose={closeClientCard}
         widthClassName="max-w-4xl"
       >
         {selectedClient && (
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-            <form className="space-y-4" onSubmit={saveClient}>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Имя клиента</Label>
-                  <Input value={editForm.name} onChange={(event) => setEditForm((prev) => ({ ...prev, name: event.target.value }))} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Телефон</Label>
-                  <Input
-                    type="tel"
-                    inputMode="numeric"
-                    value={editForm.phone}
-                    onChange={(event) => setEditForm((prev) => ({ ...prev, phone: event.target.value }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Email</Label>
-                  <Input value={editForm.email} onChange={(event) => setEditForm((prev) => ({ ...prev, email: event.target.value }))} />
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Адрес</Label>
-                  <Input value={editForm.address} onChange={(event) => setEditForm((prev) => ({ ...prev, address: event.target.value }))} />
-                </div>
-              </div>
-              <label className="flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-gray-300 text-blue-600"
-                  checked={editForm.works_with_contract}
-                  onChange={(event) => setEditForm((prev) => ({ ...prev, works_with_contract: event.target.checked }))}
-                />
-                Работает по договору
-              </label>
-              <div className="flex justify-end gap-3">
-                <Button type="button" variant="secondary" disabled={savingClient} onClick={() => setSelectedClientId(null)}>
-                  Отмена
-                </Button>
-                <Button type="submit" disabled={savingClient}>
-                  {savingClient ? "Сохраняем..." : "Сохранить клиента"}
-                </Button>
-              </div>
-            </form>
+            <div className="space-y-4">
+              {!clientEditMode ? (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge>{selectedClient.projectCount} проект(ов)</Badge>
+                      <Badge>{selectedClient.paymentsCount} операция(й)</Badge>
+                      {selectedClient.worksWithContract ? <Badge className="bg-blue-100 text-blue-700">Работает по договору</Badge> : null}
+                    </div>
+                    <Button type="button" variant="secondary" onClick={startClientEdit}>
+                      <Edit3 size={16} />
+                      Редактировать
+                    </Button>
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <InfoRow icon={Phone} label="Телефон" value={selectedClient.phone} href={selectedClient.phone ? `tel:${selectedClient.phone}` : ""} />
+                    <InfoRow icon={Mail} label="Email" value={selectedClient.email} href={selectedClient.email ? `mailto:${selectedClient.email}` : ""} />
+                    <div className="md:col-span-2">
+                      <InfoRow icon={MapPin} label="Адрес" value={selectedClient.address} />
+                    </div>
+                    <InfoRow icon={Wallet} label="Финансы по проектам" value={`${formatMoney(selectedClient.total)} ₽`} />
+                  </div>
+                </>
+              ) : (
+                <form className="space-y-4" onSubmit={saveClient}>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Имя клиента</Label>
+                      <Input value={editForm.name} onChange={(event) => setEditForm((prev) => ({ ...prev, name: event.target.value }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Телефон</Label>
+                      <Input
+                        type="tel"
+                        inputMode="numeric"
+                        value={editForm.phone}
+                        onChange={(event) => setEditForm((prev) => ({ ...prev, phone: event.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Email</Label>
+                      <Input value={editForm.email} onChange={(event) => setEditForm((prev) => ({ ...prev, email: event.target.value }))} />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Адрес</Label>
+                      <Input value={editForm.address} onChange={(event) => setEditForm((prev) => ({ ...prev, address: event.target.value }))} />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                      checked={editForm.works_with_contract}
+                      onChange={(event) => setEditForm((prev) => ({ ...prev, works_with_contract: event.target.checked }))}
+                    />
+                    Работает по договору
+                  </label>
+                  <div className="flex justify-end gap-3">
+                    <Button type="button" variant="secondary" disabled={savingClient} onClick={() => setClientEditMode(false)}>
+                      Отмена
+                    </Button>
+                    <Button type="submit" disabled={savingClient}>
+                      {savingClient ? "Сохраняем..." : "Сохранить клиента"}
+                    </Button>
+                  </div>
+                </form>
+              )}
+            </div>
 
             <div className="space-y-3">
               <div className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-400">Проекты клиента</div>
