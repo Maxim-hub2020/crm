@@ -37,9 +37,9 @@ class AuthenticatedApiMixin:
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['access']}")
         return client
 
-    def activate_subscription(self, actor=None):
+    def activate_subscription(self, actor=None, plan_code=None):
         ensure_subscription_defaults()
-        invoice = issue_subscription_invoice(actor=actor)
+        invoice = issue_subscription_invoice(actor=actor, plan_code=plan_code)
         return activate_subscription_invoice(invoice)
 
 
@@ -257,6 +257,29 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
         self.client_card.refresh_from_db()
         self.assertTrue(self.client_card.works_with_contract)
 
+    def test_client_card_can_be_updated(self):
+        api_client = self.auth_client_for(self.manager)
+
+        response = api_client.patch(
+            f"/api/clients/{self.client_card.id}/",
+            {
+                "name": "Updated Client",
+                "phone": "+70000000099",
+                "email": "updated@example.com",
+                "address": "Updated address",
+                "works_with_contract": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.client_card.refresh_from_db()
+        self.assertEqual(self.client_card.name, "Updated Client")
+        self.assertEqual(self.client_card.phone, "+70000000099")
+        self.assertEqual(self.client_card.email, "updated@example.com")
+        self.assertEqual(self.client_card.address, "Updated address")
+        self.assertTrue(self.client_card.works_with_contract)
+
 
 class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
@@ -363,6 +386,31 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         account_names = {item["name"] for item in account_response.data}
         self.assertIn((self.income_category.name, self.income_category.type), category_keys)
         self.assertIn(self.account.name, account_names)
+
+    def test_manager_can_update_own_payment(self):
+        client = self.auth_client_for(self.manager)
+
+        response = client.patch(
+            f"/api/payments/{self.manager_payment.id}/",
+            {
+                "amount": "22000.00",
+                "comment": "Updated payment",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.manager_payment.refresh_from_db()
+        self.assertEqual(str(self.manager_payment.amount), "22000.00")
+        self.assertEqual(self.manager_payment.comment, "Updated payment")
+
+    def test_manager_can_delete_own_payment(self):
+        client = self.auth_client_for(self.manager)
+
+        response = client.delete(f"/api/payments/{self.manager_payment.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Payment.objects.filter(id=self.manager_payment.id).exists())
 
     def test_manager_cannot_create_payment_for_foreign_project(self):
         client = self.auth_client_for(self.manager)
@@ -1178,6 +1226,15 @@ class TestBillingApi(AuthenticatedApiMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["plan"]["price_rub"], "1500.00")
+        self.assertEqual(
+            {plan["code"]: plan["price_rub"] for plan in response.data["plans"]},
+            {
+                "crm-basic-monthly": "1000.00",
+                "crm-ai-monthly": "1500.00",
+            },
+        )
+        self.assertEqual(response.data["trial"]["project_limit"], 10)
+        self.assertEqual(response.data["trial"]["project_creations_count"], 0)
         self.assertFalse(response.data["subscription"]["is_active_now"])
 
     def test_admin_profile_reports_subscription_access(self):
@@ -1193,13 +1250,56 @@ class TestBillingApi(AuthenticatedApiMixin, APITestCase):
         self.assertTrue(async_to_sync(_has_live_assistant_access)(self.admin))
         self.assertFalse(async_to_sync(_has_live_assistant_access)(self.manager))
 
-    def test_inactive_subscription_blocks_business_api(self):
+    def test_inactive_subscription_allows_trial_business_api(self):
         client = self.auth_client_for(self.manager)
 
         response = client.get("/api/projects/")
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertIn("Подписка", str(response.data))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_trial_limit_blocks_eleventh_project_even_after_delete(self):
+        ProjectStatus.objects.get_or_create(
+            code="active",
+            defaults={"name": "Active", "short_name": "Active", "color": "sky", "sort_order": 10, "is_default": True},
+        )
+        client = self.auth_client_for(self.manager)
+        created_project_ids = []
+
+        for index in range(9):
+            response = client.post(
+                "/api/projects/",
+                {
+                    "title": f"Trial project {index + 1}",
+                    "client_name": f"Client {index + 1}",
+                },
+                format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+            created_project_ids.append(response.data["id"])
+
+        delete_response = client.delete(f"/api/projects/{created_project_ids[0]}/")
+        self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
+
+        tenth_response = client.post(
+            "/api/projects/",
+            {
+                "title": "Trial project 10",
+                "client_name": "Last Trial Client",
+            },
+            format="json",
+        )
+        self.assertEqual(tenth_response.status_code, status.HTTP_201_CREATED)
+
+        blocked_response = client.post(
+            "/api/projects/",
+            {
+                "title": "Trial project 11",
+                "client_name": "Blocked Client",
+            },
+            format="json",
+        )
+
+        self.assertEqual(blocked_response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_admin_can_use_business_api_without_active_subscription(self):
         client = self.auth_client_for(self.admin)
@@ -1207,6 +1307,15 @@ class TestBillingApi(AuthenticatedApiMixin, APITestCase):
         response = client.get("/api/projects/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_basic_subscription_does_not_enable_assistant(self):
+        self.activate_subscription(actor=self.admin, plan_code="crm-basic-monthly")
+        client = self.auth_client_for(self.manager)
+
+        response = client.post("/api/assistant/chat/", {"message": "Какие есть проекты?"}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(async_to_sync(_has_live_assistant_access)(self.manager))
 
     def test_admin_can_create_and_activate_invoice(self):
         client = self.auth_client_for(self.admin)

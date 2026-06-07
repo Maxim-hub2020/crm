@@ -212,9 +212,9 @@ export async function fetchBillingSummary() {
   return data;
 }
 
-export async function createBillingInvoice() {
+export async function createBillingInvoice(planCode) {
   initApiAuth();
-  const { data } = await api.post("/api/billing/invoices/", {});
+  const { data } = await api.post("/api/billing/invoices/", planCode ? { plan_code: planCode } : {});
   if (data?.summary) {
     setBillingSummary(data.summary);
   }
@@ -436,6 +436,12 @@ export async function deleteTask(taskId) {
 export async function createPayment(payload) {
   initApiAuth();
   const { data } = await api.post("/api/payments/", payload);
+  return data;
+}
+
+export async function updatePayment(paymentId, payload) {
+  initApiAuth();
+  const { data } = await api.patch(`/api/payments/${paymentId}/`, payload);
   return data;
 }
 

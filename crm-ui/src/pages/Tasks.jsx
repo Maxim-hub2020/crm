@@ -75,6 +75,7 @@ export default function Tasks() {
   const [notes, setNotes] = useState("");
   const [deadline, setDeadline] = useState("");
   const [showArchive, setShowArchive] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -147,6 +148,7 @@ export default function Tasks() {
       setText("");
       setNotes("");
       setDeadline("");
+      setShowCreate(false);
     } catch (requestError) {
       setError(extractApiErrorMessage(requestError, "Не удалось создать задачу."));
     } finally {
@@ -203,35 +205,12 @@ export default function Tasks() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="text-lg font-black tracking-tight text-gray-900">
-              {showArchive ? "Архив задач" : "Новая задача"}
+              {showArchive ? "Архив задач" : "Задачи"}
             </div>
             <div className="text-sm font-semibold text-gray-400">{tasks.length} всего</div>
           </div>
         </CardHeader>
         <CardBody className="space-y-6">
-          {!showArchive && (
-            <form className="grid gap-4 rounded-2xl bg-gray-50 p-4 md:grid-cols-2" onSubmit={addTask}>
-              <div className="space-y-2 md:col-span-2">
-                <Label>Новая задача</Label>
-                <Input value={text} onChange={(event) => setText(event.target.value)} placeholder="Что нужно сделать?" />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label>Комментарий</Label>
-                <Input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Краткое описание или следующий шаг" />
-              </div>
-              <div className="space-y-2">
-                <Label>Срок</Label>
-                <Input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} />
-              </div>
-              <div className="flex items-end">
-                <Button className="w-full md:w-auto" disabled={saving} type="submit">
-                  <Plus size={16} />
-                  {saving ? "Добавляем..." : "Добавить"}
-                </Button>
-              </div>
-            </form>
-          )}
-
           {error && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
           {showArchive ? (
@@ -266,6 +245,39 @@ export default function Tasks() {
                   Добавьте первую задачу, чтобы раздел начал работать.
                 </div>
               )}
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-4">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white transition hover:bg-black"
+                  onClick={() => setShowCreate((value) => !value)}
+                >
+                  <Plus size={16} />
+                  {showCreate ? "Скрыть новую задачу" : "Новая задача"}
+                </button>
+
+                {showCreate && (
+                  <form className="mt-4 grid gap-4 rounded-2xl bg-gray-50 p-4 md:grid-cols-2" onSubmit={addTask}>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Наименование задачи</Label>
+                      <Input value={text} onChange={(event) => setText(event.target.value)} placeholder="Что нужно сделать?" />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Комментарий</Label>
+                      <Input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Краткое описание или следующий шаг" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Срок</Label>
+                      <Input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} />
+                    </div>
+                    <div className="flex items-end">
+                      <Button className="w-full md:w-auto" disabled={saving} type="submit">
+                        <Plus size={16} />
+                        {saving ? "Добавляем..." : "Добавить задачу"}
+                      </Button>
+                    </div>
+                  </form>
+                )}
+              </div>
             </div>
           )}
         </CardBody>

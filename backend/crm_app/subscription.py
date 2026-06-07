@@ -4,17 +4,33 @@ from decimal import Decimal
 
 from django.utils import timezone
 
-from .models import SubscriptionInvoice, SubscriptionPlan, WorkspaceSubscription
+from .models import Project, SubscriptionInvoice, SubscriptionPlan, WorkspaceSubscription
 
 
-DEFAULT_SUBSCRIPTION_PLAN = {
-    "code": "procrm-monthly",
-    "name": "ProCRM",
-    "description": "Полный доступ ко всей CRM-системе, голосовому помощнику и модулям команды.",
-    "price_rub": Decimal("1500.00"),
-    "interval_months": 1,
-    "is_active": True,
-}
+TRIAL_PROJECT_LIMIT = 10
+BASIC_PLAN_CODE = "crm-basic-monthly"
+ASSISTANT_PLAN_CODE = "crm-ai-monthly"
+
+SUBSCRIPTION_PLANS = [
+    {
+        "code": BASIC_PLAN_CODE,
+        "name": "CRM без AI-помощника",
+        "description": "Доступ к CRM, проектам, клиентам, задачам и финансам без голосового AI-помощника.",
+        "price_rub": Decimal("1000.00"),
+        "interval_months": 1,
+        "includes_assistant": False,
+        "is_active": True,
+    },
+    {
+        "code": ASSISTANT_PLAN_CODE,
+        "name": "CRM + AI-помощник",
+        "description": "Полный доступ к CRM и голосовому AI-помощнику.",
+        "price_rub": Decimal("1500.00"),
+        "interval_months": 1,
+        "includes_assistant": True,
+        "is_active": True,
+    },
+]
 
 
 def add_months(source_date, months):
@@ -27,17 +43,26 @@ def add_months(source_date, months):
 
 
 def ensure_subscription_defaults():
-    plan, _ = SubscriptionPlan.objects.get_or_create(
-        code=DEFAULT_SUBSCRIPTION_PLAN["code"],
-        defaults=DEFAULT_SUBSCRIPTION_PLAN,
-    )
+    plans_by_code = {}
+    for plan_data in SUBSCRIPTION_PLANS:
+        plan, _ = SubscriptionPlan.objects.update_or_create(
+            code=plan_data["code"],
+            defaults=plan_data,
+        )
+        plans_by_code[plan.code] = plan
+    SubscriptionPlan.objects.filter(code="procrm-monthly").update(is_active=False)
+
+    assistant_plan = plans_by_code[ASSISTANT_PLAN_CODE]
     subscription = WorkspaceSubscription.objects.select_related("plan").first()
     if not subscription:
-        subscription = WorkspaceSubscription.objects.create(plan=plan)
-    elif not subscription.plan_id:
-        subscription.plan = plan
+        subscription = WorkspaceSubscription.objects.create(
+            plan=assistant_plan,
+            project_creations_count=Project.objects.count(),
+        )
+    elif not subscription.plan_id or subscription.plan.code == "procrm-monthly":
+        subscription.plan = assistant_plan
         subscription.save(update_fields=["plan", "updated_at"])
-    return plan, subscription
+    return assistant_plan, subscription
 
 
 def get_workspace_subscription():
@@ -55,11 +80,44 @@ def is_subscription_active(subscription=None):
     return active_subscription.is_active_now()
 
 
-def issue_subscription_invoice(actor=None):
+def has_trial_access(subscription=None):
+    active_subscription = subscription or get_workspace_subscription()
+    return active_subscription.project_creations_count < TRIAL_PROJECT_LIMIT
+
+
+def can_create_trial_project(subscription=None):
+    active_subscription = subscription or get_workspace_subscription()
+    return active_subscription.project_creations_count < TRIAL_PROJECT_LIMIT
+
+
+def has_assistant_access(subscription=None):
+    active_subscription = subscription or get_workspace_subscription()
+    return active_subscription.is_active_now() and bool(active_subscription.plan.includes_assistant)
+
+
+def record_project_created(subscription=None):
+    active_subscription = subscription or get_workspace_subscription()
+    active_subscription.project_creations_count += 1
+    active_subscription.save(update_fields=["project_creations_count", "updated_at"])
+    return active_subscription
+
+
+def get_subscription_plan(plan_code=None):
+    ensure_subscription_defaults()
+    code = plan_code or ASSISTANT_PLAN_CODE
+    return SubscriptionPlan.objects.filter(code=code, is_active=True).first() or SubscriptionPlan.objects.get(code=ASSISTANT_PLAN_CODE)
+
+
+def issue_subscription_invoice(actor=None, plan_code=None):
     subscription = get_workspace_subscription()
-    latest_pending = subscription.invoices.filter(status=SubscriptionInvoice.Status.PENDING).first()
+    plan = get_subscription_plan(plan_code)
+    latest_pending = subscription.invoices.filter(status=SubscriptionInvoice.Status.PENDING, plan=plan).first()
     if latest_pending:
         return latest_pending
+
+    if subscription.plan_id != plan.id:
+        subscription.plan = plan
+        subscription.save(update_fields=["plan", "updated_at"])
 
     today = timezone.localdate()
     if subscription.current_period_end and subscription.current_period_end >= today:
@@ -67,12 +125,12 @@ def issue_subscription_invoice(actor=None):
     else:
         period_start = today
 
-    period_end = add_months(period_start, subscription.plan.interval_months) - timedelta(days=1)
+    period_end = add_months(period_start, plan.interval_months) - timedelta(days=1)
 
     return SubscriptionInvoice.objects.create(
         subscription=subscription,
-        plan=subscription.plan,
-        amount_rub=subscription.plan.price_rub,
+        plan=plan,
+        amount_rub=plan.price_rub,
         period_start=period_start,
         period_end=period_end,
         created_by=actor,
@@ -89,6 +147,7 @@ def activate_subscription_invoice(invoice):
     invoice.save(update_fields=["status", "paid_at"])
 
     subscription = invoice.subscription
+    subscription.plan = invoice.plan
     subscription.status = WorkspaceSubscription.Status.ACTIVE
     subscription.started_at = subscription.started_at or now
     subscription.current_period_start = invoice.period_start
@@ -96,6 +155,7 @@ def activate_subscription_invoice(invoice):
     subscription.last_payment_at = now
     subscription.save(
         update_fields=[
+            "plan",
             "status",
             "started_at",
             "current_period_start",
@@ -117,6 +177,8 @@ def billing_summary_payload(user):
         else 0
     )
 
+    plans = SubscriptionPlan.objects.filter(is_active=True).order_by("price_rub", "id")
+
     return {
         "can_manage": bool(user and user.is_authenticated and user.is_admin()),
         "plan": {
@@ -126,7 +188,28 @@ def billing_summary_payload(user):
             "description": subscription.plan.description,
             "price_rub": str(subscription.plan.price_rub),
             "interval_months": subscription.plan.interval_months,
+            "includes_assistant": subscription.plan.includes_assistant,
             "is_active": subscription.plan.is_active,
+        },
+        "plans": [
+            {
+                "id": plan.id,
+                "code": plan.code,
+                "name": plan.name,
+                "description": plan.description,
+                "price_rub": str(plan.price_rub),
+                "interval_months": plan.interval_months,
+                "includes_assistant": plan.includes_assistant,
+                "is_active": plan.is_active,
+            }
+            for plan in plans
+        ],
+        "trial": {
+            "project_limit": TRIAL_PROJECT_LIMIT,
+            "project_creations_count": subscription.project_creations_count,
+            "remaining_projects": max(TRIAL_PROJECT_LIMIT - subscription.project_creations_count, 0),
+            "can_use_trial": has_trial_access(subscription),
+            "can_create_project": subscription.is_active_now() or can_create_trial_project(subscription),
         },
         "subscription": {
             "id": subscription.id,

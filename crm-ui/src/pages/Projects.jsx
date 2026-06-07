@@ -1,6 +1,5 @@
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
-  BadgeRussianRuble,
   Calendar,
   Check,
   FileText,
@@ -38,6 +37,7 @@ import {
   fetchProjectStatuses,
   fetchTasks,
   hasDadataAddressSuggestions,
+  updatePayment,
   updateTask,
   updateProject,
 } from "../api";
@@ -249,6 +249,35 @@ function formatDate(value) {
   return date.toLocaleDateString("ru-RU");
 }
 
+function toDateTimeLocalValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return offsetDate.toISOString().slice(0, 16);
+}
+
+function projectSearchText(project, statusMap) {
+  const status = statusMap.get(project.status);
+  return normalizeSearchText(
+    [
+      project.title,
+      project.client_name,
+      project.client_phone,
+      project.client_email,
+      project.object_address,
+      project.apartment,
+      project.entrance,
+      project.floor,
+      project.description,
+      status?.label,
+      status?.short,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+}
+
 function formatDeadline(value) {
   if (!value) return "";
   const date = new Date(value);
@@ -324,23 +353,6 @@ function paymentCategoryBadgeClass(payment) {
   if (payment?.category_type === "expense") return "bg-red-50 text-red-600";
   if (payment?.category_type === "income") return "bg-emerald-50 text-emerald-600";
   return "bg-slate-100 text-slate-600";
-}
-
-function projectFinanceStats(rows) {
-  return rows.reduce(
-    (stats, payment) => {
-      const signedAmount = paymentSignedAmount(payment);
-      if (signedAmount >= 0) {
-        stats.income += signedAmount;
-      } else {
-        stats.expense += Math.abs(signedAmount);
-      }
-      stats.margin = stats.income - stats.expense;
-      stats.marginPercent = stats.income > 0 ? (stats.margin / stats.income) * 100 : 0;
-      return stats;
-    },
-    { income: 0, expense: 0, margin: 0, marginPercent: 0 }
-  );
 }
 
 function ageBadgeClass(days) {
@@ -565,6 +577,7 @@ export default function Projects() {
   const [commentError, setCommentError] = useState("");
 
   const [paymentForm, setPaymentForm] = useState(createEmptyPaymentForm());
+  const [editingPaymentId, setEditingPaymentId] = useState(null);
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [paymentError, setPaymentError] = useState("");
 
@@ -742,15 +755,20 @@ export default function Projects() {
   }, [clientDirectory, createForm.client]);
 
   const filteredProjects = useMemo(() => {
-    const value = deferredQuery.trim().toLowerCase();
-    if (!value) return projects;
+    const tokens = normalizeSearchText(deferredQuery).split(/\s+/).filter(Boolean);
+    if (!tokens.length) return projects;
 
-    return projects.filter((project) =>
-      [project.title, project.client_name, project.client_phone, project.object_address, project.description]
-        .filter(Boolean)
-        .some((field) => field.toLowerCase().includes(value))
-    );
-  }, [deferredQuery, projects]);
+    return projects.filter((project) => {
+      const searchText = projectSearchText(project, statusMap);
+      return tokens.every((token) => searchText.includes(token));
+    });
+  }, [deferredQuery, projects, statusMap]);
+
+  const projectSearchResults = useMemo(() => {
+    const tokens = normalizeSearchText(deferredQuery).split(/\s+/).filter(Boolean);
+    if (!tokens.length) return [];
+    return filteredProjects.slice(0, 8);
+  }, [deferredQuery, filteredProjects]);
 
   const groupedProjects = useMemo(() => {
     const groups = Object.fromEntries(statusOptions.map((status) => [status.value, []]));
@@ -809,21 +827,6 @@ export default function Projects() {
         return (left.due_date || "9999-12-31").localeCompare(right.due_date || "9999-12-31");
       });
   }, [activeProjectId, tasks]);
-
-  const activeProjectFinanceStats = useMemo(
-    () => projectFinanceStats(activeProjectPayments),
-    [activeProjectPayments]
-  );
-
-  const activeProjectPaymentTotal = useMemo(
-    () => activeProjectFinanceStats.margin,
-    [activeProjectFinanceStats]
-  );
-
-  const activeProjectMarginLabel = useMemo(
-    () => `${formatMoney(activeProjectFinanceStats.margin)} ₽ / ${activeProjectFinanceStats.marginPercent.toFixed(0)}%`,
-    [activeProjectFinanceStats]
-  );
 
   useEffect(() => {
     if (!activeProject) {
@@ -893,6 +896,7 @@ export default function Projects() {
       setCommentText("");
       setCommentError("");
       setPaymentForm(createEmptyPaymentForm());
+      setEditingPaymentId(null);
       setPaymentError("");
       setTaskForm(createEmptyTaskForm());
       setTaskError("");
@@ -900,6 +904,8 @@ export default function Projects() {
     }
 
     reloadComments(activeProjectId).catch(() => {});
+    setEditingPaymentId(null);
+    setPaymentForm(createEmptyPaymentForm());
   }, [activeProjectId]);
 
   useEffect(() => {
@@ -1133,7 +1139,7 @@ export default function Projects() {
         return;
       }
 
-      const created = await createPayment({
+      const payload = {
         project: activeProject.id,
         category: paymentForm.category || null,
         account: paymentForm.account || null,
@@ -1142,10 +1148,17 @@ export default function Projects() {
         method: paymentForm.method,
         comment: paymentForm.comment.trim(),
         paid_at: paymentForm.paid_at || undefined,
-      });
+      };
 
-      setPayments((prev) => [created, ...prev]);
+      if (editingPaymentId) {
+        const updated = await updatePayment(editingPaymentId, payload);
+        setPayments((prev) => prev.map((payment) => (payment.id === updated.id ? updated : payment)));
+      } else {
+        const created = await createPayment(payload);
+        setPayments((prev) => [created, ...prev]);
+      }
       setPaymentForm(createEmptyPaymentForm());
+      setEditingPaymentId(null);
     } catch (error) {
       setPaymentError(extractApiErrorMessage(error, "Не удалось сохранить операцию."));
     } finally {
@@ -1153,10 +1166,34 @@ export default function Projects() {
     }
   }
 
+  function startPaymentEdit(payment) {
+    setDetailTab("finances");
+    setPaymentError("");
+    setEditingPaymentId(payment.id);
+    setPaymentForm({
+      category: payment.category ? String(payment.category) : "",
+      account: payment.account ? String(payment.account) : "",
+      type: payment.type || "advance",
+      amount: payment.amount ? String(payment.amount) : "",
+      method: payment.method || "transfer",
+      comment: payment.comment || "",
+      paid_at: toDateTimeLocalValue(payment.paid_at),
+    });
+  }
+
+  function cancelPaymentEdit() {
+    setEditingPaymentId(null);
+    setPaymentForm(createEmptyPaymentForm());
+    setPaymentError("");
+  }
+
   async function handlePaymentDelete(paymentId) {
     try {
       await deletePayment(paymentId);
       setPayments((prev) => prev.filter((payment) => payment.id !== paymentId));
+      if (editingPaymentId === paymentId) {
+        cancelPaymentEdit();
+      }
     } catch (error) {
       setPaymentError(extractApiErrorMessage(error, "Не удалось удалить операцию."));
     }
@@ -1549,6 +1586,26 @@ export default function Projects() {
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Поиск проектов..."
           />
+          {projectSearchResults.length > 0 && (
+            <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-30 overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_24px_60px_rgba(15,23,42,0.12)]">
+              {projectSearchResults.map((project) => (
+                <button
+                  key={project.id}
+                  type="button"
+                  className="block w-full border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 hover:bg-blue-50"
+                  onClick={() => {
+                    setQuery("");
+                    openProject(project);
+                  }}
+                >
+                  <div className="font-black text-slate-900">{projectDisplayName(project)}</div>
+                  <div className="mt-1 line-clamp-1 text-sm font-semibold text-slate-500">
+                    {[project.client_name, project.object_address, statusMap.get(project.status)?.label].filter(Boolean).join(" · ")}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -2023,17 +2080,7 @@ export default function Projects() {
                 />
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Финансы</div>
-                      <div className="mt-1 text-xl font-black text-slate-900">{formatMoney(activeProjectPaymentTotal)} ₽</div>
-                    </div>
-                    <BadgeRussianRuble size={18} className="text-slate-400" />
-                  </div>
-                </div>
-
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
                   <div className="flex items-center justify-between gap-3">
                     <div>
@@ -2252,16 +2299,6 @@ export default function Projects() {
               </div>
             ) : (
               <div className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-3">
-                  <StatCard icon={Wallet} label="Доходы" value={`${formatMoney(activeProjectFinanceStats.income)} ₽`} />
-                  <StatCard icon={BadgeRussianRuble} label="Расходы" value={`${formatMoney(activeProjectFinanceStats.expense)} ₽`} />
-                  <StatCard
-                    icon={BadgeRussianRuble}
-                    label="Маржа"
-                    value={activeProjectMarginLabel}
-                  />
-                </div>
-
                 <Card className="border border-slate-100 shadow-none ring-0">
                   <CardHeader>
                     <div className="text-lg font-black tracking-tight text-slate-900">Добавить операцию</div>
@@ -2350,9 +2387,16 @@ export default function Projects() {
 
                       {paymentError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{paymentError}</div>}
 
-                      <Button type="submit" disabled={paymentSaving}>
-                        {paymentSaving ? "Сохраняем..." : "Добавить операцию"}
-                      </Button>
+                      <div className="flex flex-wrap gap-3">
+                        <Button type="submit" disabled={paymentSaving}>
+                          {paymentSaving ? "Сохраняем..." : editingPaymentId ? "Сохранить операцию" : "Добавить операцию"}
+                        </Button>
+                        {editingPaymentId ? (
+                          <Button type="button" variant="secondary" onClick={cancelPaymentEdit}>
+                            Отменить редактирование
+                          </Button>
+                        ) : null}
+                      </div>
                     </form>
                   </CardBody>
                 </Card>
@@ -2397,6 +2441,15 @@ export default function Projects() {
                                   </td>
                                   <td className="py-4 text-slate-500">{payment.comment || "—"}</td>
                                   <td className="py-4 text-right">
+                                    <div className="flex justify-end gap-2">
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        className="px-3 text-blue-600 hover:bg-blue-50"
+                                        onClick={() => startPaymentEdit(payment)}
+                                      >
+                                        Редактировать
+                                      </Button>
                                     <Button
                                       type="button"
                                       variant="ghost"
@@ -2406,6 +2459,7 @@ export default function Projects() {
                                       <Trash2 size={16} />
                                       Удалить
                                     </Button>
+                                    </div>
                                   </td>
                                 </tr>
                               );

@@ -11,7 +11,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 
 from .ai_assistant import CRMAssistantService, humanize_gemini_error
 from .models import User
-from .subscription import is_subscription_active
+from .subscription import has_assistant_access
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def _authenticate_websocket_token(raw_token):
 def _has_live_assistant_access(user):
     if user and (getattr(user, "is_superuser", False) or getattr(user, "is_admin", lambda: False)()):
         return True
-    return is_subscription_active()
+    return has_assistant_access()
 
 
 @database_sync_to_async

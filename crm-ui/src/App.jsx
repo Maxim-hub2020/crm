@@ -71,7 +71,9 @@ function AdminOnly({ children }) {
 
 function SubscriptionOnly({ children }) {
   const cachedSummary = getBillingSummary();
-  const [allowed, setAllowed] = useState(() => isAdminUser(getUser()) || Boolean(cachedSummary?.subscription?.is_active_now));
+  const [allowed, setAllowed] = useState(
+    () => isAdminUser(getUser()) || Boolean(cachedSummary?.subscription?.is_active_now || cachedSummary?.trial?.can_use_trial)
+  );
   const [loading, setLoading] = useState(() => Boolean(getToken()));
 
   useEffect(() => {
@@ -96,7 +98,7 @@ function SubscriptionOnly({ children }) {
 
         const summary = await fetchBillingSummary();
         if (!active) return;
-        setAllowed(Boolean(summary?.subscription?.is_active_now));
+        setAllowed(Boolean(summary?.subscription?.is_active_now || summary?.trial?.can_use_trial));
       } catch {
         if (!active) return;
         setAllowed(false);

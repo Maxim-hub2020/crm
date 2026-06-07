@@ -26,7 +26,7 @@ export default function Login() {
       }
 
       const billing = await fetchBillingSummary();
-      nav(billing?.subscription?.is_active_now ? "/" : "/billing");
+      nav(billing?.subscription?.is_active_now || billing?.trial?.can_use_trial ? "/" : "/billing");
     } catch {
       setErr("Неверный логин или пароль");
     } finally {

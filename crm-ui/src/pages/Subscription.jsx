@@ -66,16 +66,19 @@ export default function Subscription() {
   const subscription = summary?.subscription || null;
   const latestInvoice = summary?.latest_invoice || null;
   const plan = summary?.plan || null;
+  const plans = summary?.plans || [];
+  const trial = summary?.trial || null;
   const isActiveNow = Boolean(subscription?.is_active_now);
   const priceLabel = useMemo(() => formatRub(plan?.price_rub || 1500), [plan?.price_rub]);
+  const trialRemaining = Math.max(Number(trial?.remaining_projects || 0), 0);
 
-  async function handleCreateInvoice() {
+  async function handleCreateInvoice(planCode) {
     setActionLoading(true);
     setError("");
     setNotice("");
 
     try {
-      const response = await createBillingInvoice();
+      const response = await createBillingInvoice(planCode);
       setSummary(response.summary);
       setNotice("Счет на продление создан.");
     } catch (requestError) {
@@ -122,8 +125,8 @@ export default function Subscription() {
               {isActiveNow ? "Подписка активна" : "Доступ к CRM приостановлен"}
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-500 sm:text-base">
-              CRM работает по ежемесячной подписке. Текущий тариф открывает все модули системы, проекты,
-              финансы, задачи и голосового помощника.
+              CRM работает по ежемесячной подписке. Первые 10 созданных проектов доступны как пробный
+              период, дальше можно выбрать тариф без помощника или с AI-помощником.
             </p>
           </div>
 
@@ -140,16 +143,18 @@ export default function Subscription() {
                 <div>
                   <div className="text-[11px] font-black uppercase tracking-[0.26em] text-slate-400">Тариф</div>
                   <div className="mt-3 text-3xl font-black tracking-tight text-slate-900">
-                    {plan?.name || "ProCRM"}
+                    {isActiveNow ? plan?.name || "ProCRM" : "Выберите тариф"}
                   </div>
                   <div className="mt-2 text-sm text-slate-500">
-                    {plan?.description || "Полный доступ ко всем модулям CRM."}
+                    {isActiveNow
+                      ? plan?.description || "Полный доступ ко всем модулям CRM."
+                      : "После пробного лимита CRM предложит оформить ежемесячную подписку."}
                   </div>
                 </div>
 
                 <div className="rounded-[28px] bg-slate-900 px-6 py-5 text-white shadow-lg shadow-slate-900/10">
                   <div className="text-[11px] font-black uppercase tracking-[0.2em] text-white/60">Стоимость</div>
-                  <div className="mt-2 text-3xl font-black">{priceLabel}</div>
+                  <div className="mt-2 text-3xl font-black">{isActiveNow ? priceLabel : "от 1 000 ₽"}</div>
                   <div className="mt-1 text-sm text-white/70">в месяц</div>
                 </div>
               </div>
@@ -196,6 +201,15 @@ export default function Subscription() {
                 </div>
               </div>
 
+              {trial ? (
+                <div className="rounded-[28px] border border-blue-100 bg-blue-50/70 px-5 py-4 text-sm text-blue-800">
+                  Пробный доступ: создано {trial.project_creations_count} из {trial.project_limit} проектов.
+                  {trial.can_create_project
+                    ? ` Осталось ${trialRemaining} проекта до выбора подписки.`
+                    : " Лимит пробного доступа исчерпан, выберите тариф для продолжения работы."}
+                </div>
+              ) : null}
+
               {error ? <div className="rounded-[24px] bg-red-50 px-5 py-4 text-sm text-red-700">{error}</div> : null}
               {notice ? <div className="rounded-[24px] bg-emerald-50 px-5 py-4 text-sm text-emerald-700">{notice}</div> : null}
 
@@ -208,10 +222,34 @@ export default function Subscription() {
                 ) : null}
 
                 {!isActiveNow && isAdmin && !latestInvoice ? (
-                  <Button type="button" className="px-6 py-3" disabled={actionLoading} onClick={handleCreateInvoice}>
-                    <CreditCard size={16} />
-                    Оформить подписку за {priceLabel}
-                  </Button>
+                  <div className="grid w-full gap-3 sm:grid-cols-2">
+                    {plans.length ? (
+                      plans.map((option) => (
+                        <button
+                          key={option.code}
+                          className="btn-hover rounded-[28px] border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg"
+                          disabled={actionLoading}
+                          type="button"
+                          onClick={() => handleCreateInvoice(option.code)}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-base font-black text-slate-900">{option.name}</div>
+                              <div className="mt-2 text-sm leading-6 text-slate-500">{option.description}</div>
+                            </div>
+                            <CreditCard className="text-slate-400" size={18} />
+                          </div>
+                          <div className="mt-5 text-2xl font-black text-slate-900">{formatRub(option.price_rub)}</div>
+                          <div className="mt-1 text-xs font-bold uppercase tracking-[0.16em] text-slate-400">в месяц</div>
+                        </button>
+                      ))
+                    ) : (
+                      <Button type="button" className="px-6 py-3" disabled={actionLoading} onClick={() => handleCreateInvoice()}>
+                        <CreditCard size={16} />
+                        Оформить подписку за {priceLabel}
+                      </Button>
+                    )}
+                  </div>
                 ) : null}
 
                 {!isActiveNow && isAdmin && latestInvoice?.status === "pending" && !latestInvoice?.checkout_url ? (
@@ -258,10 +296,10 @@ export default function Subscription() {
                   1. Подписка единая для всей CRM и всей команды.
                 </div>
                 <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-4 text-sm text-slate-600">
-                  2. Стоимость фиксирована: {priceLabel} в месяц.
+                  2. Доступны два тарифа: CRM без помощника за 1 000 ₽ и CRM с AI-помощником за 1 500 ₽.
                 </div>
                 <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-4 text-sm text-slate-600">
-                  3. После активации снова доступны проекты, финансы, задачи и голосовой помощник.
+                  3. После активации снова доступны проекты, финансы и задачи; голосовой помощник работает только на тарифе с AI.
                 </div>
               </div>
             </CardBody>

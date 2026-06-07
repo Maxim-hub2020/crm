@@ -1,8 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowUpCircle, Search } from "lucide-react";
+import { ArrowUpCircle, Search, Trash2 } from "lucide-react";
 
-import { fetchAccounts, fetchFinanceCategories, fetchPayments, fetchProjects } from "../api";
-import { Badge, Input, Select } from "../components/ui.jsx";
+import {
+  deletePayment,
+  extractApiErrorMessage,
+  fetchAccounts,
+  fetchFinanceCategories,
+  fetchPayments,
+  fetchProjects,
+  updatePayment,
+} from "../api";
+import { Badge, Button, Input, Label, Modal, Select } from "../components/ui.jsx";
 
 const METHOD_LABELS = {
   transfer: "Перевод",
@@ -34,6 +42,26 @@ function formatDate(value) {
   return date.toLocaleDateString("ru-RU");
 }
 
+function toDateTimeLocalValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return offsetDate.toISOString().slice(0, 16);
+}
+
+function createPaymentEditForm(payment = {}) {
+  return {
+    category: payment.category ? String(payment.category) : "",
+    account: payment.account ? String(payment.account) : "",
+    type: payment.type || "advance",
+    amount: payment.amount ? String(payment.amount) : "",
+    method: payment.method || "transfer",
+    comment: payment.comment || "",
+    paid_at: toDateTimeLocalValue(payment.paid_at),
+  };
+}
+
 function paymentSignedAmount(payment) {
   const amount = Number(payment?.amount || 0);
   if (payment?.category_type === "expense") return -amount;
@@ -55,17 +83,6 @@ function paymentCategoryBadgeClass(payment) {
   return "";
 }
 
-function StatTile({ label, value, tone = "light" }) {
-  return (
-    <div className={`rounded-3xl p-4 shadow-lg sm:p-6 ${tone === "dark" ? "bg-gray-900 text-white" : "bg-white"}`}>
-      <div className={`mb-1 text-sm font-bold uppercase tracking-wider ${tone === "dark" ? "text-gray-300" : "text-gray-400"}`}>
-        {label}
-      </div>
-      <div className={`text-2xl font-black sm:text-3xl ${tone === "dark" ? "text-white" : "text-gray-800"}`}>{value}</div>
-    </div>
-  );
-}
-
 export default function Finances() {
   const [projects, setProjects] = useState([]);
   const [payments, setPayments] = useState([]);
@@ -75,6 +92,10 @@ export default function Finances() {
   const [method, setMethod] = useState("all");
   const [category, setCategory] = useState("all");
   const [account, setAccount] = useState("all");
+  const [editingPayment, setEditingPayment] = useState(null);
+  const [editForm, setEditForm] = useState(createPaymentEditForm());
+  const [editSaving, setEditSaving] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -118,37 +139,53 @@ export default function Finances() {
     });
   }, [account, category, method, payments, projectMap, search]);
 
-  const stats = useMemo(() => {
-    const income = filteredPayments.reduce((sum, payment) => {
-      const signedAmount = paymentSignedAmount(payment);
-      return signedAmount > 0 ? sum + signedAmount : sum;
-    }, 0);
-    const expense = filteredPayments.reduce((sum, payment) => {
-      const signedAmount = paymentSignedAmount(payment);
-      return signedAmount < 0 ? sum + Math.abs(signedAmount) : sum;
-    }, 0);
-    const total = income - expense;
-    const average = filteredPayments.length ? total / filteredPayments.length : 0;
-    const thisMonth = filteredPayments
-      .filter((payment) => {
-        const date = payment.paid_at ? new Date(payment.paid_at) : null;
-        if (!date || Number.isNaN(date.getTime())) return false;
-        const now = new Date();
-        return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
-      })
-      .reduce((sum, payment) => sum + paymentSignedAmount(payment), 0);
+  function openPaymentEdit(payment) {
+    setActionError("");
+    setEditingPayment(payment);
+    setEditForm(createPaymentEditForm(payment));
+  }
 
-    return { total, income, expense, average, thisMonth, count: filteredPayments.length };
-  }, [filteredPayments]);
+  async function submitPaymentEdit(event) {
+    event.preventDefault();
+    if (!editingPayment) return;
+
+    setActionError("");
+    setEditSaving(true);
+    try {
+      const updated = await updatePayment(editingPayment.id, {
+        category: editForm.category || null,
+        account: editForm.account || null,
+        type: editForm.type,
+        amount: editForm.amount,
+        method: editForm.method,
+        comment: editForm.comment,
+        paid_at: editForm.paid_at || undefined,
+      });
+      setPayments((current) => current.map((payment) => (payment.id === updated.id ? updated : payment)));
+      setEditingPayment(null);
+      setEditForm(createPaymentEditForm());
+    } catch (requestError) {
+      setActionError(extractApiErrorMessage(requestError, "Не удалось сохранить операцию."));
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function removePayment(paymentId) {
+    if (!window.confirm("Удалить финансовую операцию?")) return;
+
+    setActionError("");
+    try {
+      await deletePayment(paymentId);
+      setPayments((current) => current.filter((payment) => payment.id !== paymentId));
+    } catch (requestError) {
+      setActionError(extractApiErrorMessage(requestError, "Не удалось удалить операцию."));
+    }
+  }
 
   return (
     <div>
-      <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="Маржа" value={`${formatMoney(stats.total)} ₽`} tone="dark" />
-        <StatTile label="Операции" value={stats.count} />
-        <StatTile label="Доходы / расходы" value={`${formatMoney(stats.income)} / ${formatMoney(stats.expense)} ₽`} />
-        <StatTile label="За месяц" value={`${formatMoney(stats.thisMonth)} ₽`} />
-      </div>
+      {actionError && <div className="mb-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{actionError}</div>}
 
       <div className="mb-4 flex flex-col gap-4 sm:flex-row">
         <div className="relative flex-grow">
@@ -196,6 +233,7 @@ export default function Finances() {
               <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-widest text-gray-500">Сумма</th>
               <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-widest text-gray-500">Способ</th>
               <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-widest text-gray-500">Комментарий</th>
+              <th className="px-6 py-3 text-right text-xs font-black uppercase tracking-widest text-gray-500">Действия</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -221,12 +259,23 @@ export default function Finances() {
                     {payment.account_name ? ` · ${payment.account_name}` : ""}
                   </td>
                   <td className="max-w-xs truncate px-6 py-4 text-sm text-gray-500">{payment.comment || "—"}</td>
+                  <td className="whitespace-nowrap px-6 py-4 text-right text-sm">
+                    <div className="flex justify-end gap-2">
+                      <Button type="button" variant="ghost" className="px-3 text-blue-600 hover:bg-blue-50" onClick={() => openPaymentEdit(payment)}>
+                        Редактировать
+                      </Button>
+                      <Button type="button" variant="ghost" className="px-3 text-red-600 hover:bg-red-50" onClick={() => removePayment(payment.id)}>
+                        <Trash2 size={16} />
+                        Удалить
+                      </Button>
+                    </div>
+                  </td>
                 </tr>
               );
             })}
             {filteredPayments.length === 0 && (
               <tr>
-                <td className="py-10 text-center text-gray-400" colSpan={6}>
+                <td className="py-10 text-center text-gray-400" colSpan={7}>
                   Платежи не найдены
                 </td>
               </tr>
@@ -254,6 +303,14 @@ export default function Finances() {
                 </p>
                 <p>{TYPE_LABELS[payment.type] || payment.type} • {METHOD_LABELS[payment.method] || payment.method}</p>
                 <p className="truncate">{payment.comment || "Без комментария"}</p>
+                <div className="flex gap-2 pt-2">
+                  <Button type="button" variant="secondary" className="flex-1 justify-center" onClick={() => openPaymentEdit(payment)}>
+                    Редактировать
+                  </Button>
+                  <Button type="button" variant="danger" className="flex-1 justify-center" onClick={() => removePayment(payment.id)}>
+                    Удалить
+                  </Button>
+                </div>
               </div>
             </div>
           );
@@ -262,6 +319,89 @@ export default function Finances() {
           <div className="rounded-2xl bg-white p-8 text-center text-sm text-gray-400 shadow-lg">Платежи не найдены</div>
         )}
       </div>
+
+      <Modal
+        open={Boolean(editingPayment)}
+        title="Редактировать операцию"
+        onClose={() => {
+          if (!editSaving) {
+            setEditingPayment(null);
+            setEditForm(createPaymentEditForm());
+          }
+        }}
+        widthClassName="max-w-2xl"
+      >
+        <form className="space-y-4" onSubmit={submitPaymentEdit}>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Категория</Label>
+              <Select value={editForm.category} onChange={(event) => setEditForm((prev) => ({ ...prev, category: event.target.value }))}>
+                <option value="">Без категории</option>
+                {categories.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} · {item.type === "expense" ? "расход" : "доход"}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Счет</Label>
+              <Select value={editForm.account} onChange={(event) => setEditForm((prev) => ({ ...prev, account: event.target.value }))}>
+                <option value="">Без счета</option>
+                {accounts.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Тип</Label>
+              <Select value={editForm.type} onChange={(event) => setEditForm((prev) => ({ ...prev, type: event.target.value }))}>
+                {Object.entries(TYPE_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Сумма</Label>
+              <Input value={editForm.amount} onChange={(event) => setEditForm((prev) => ({ ...prev, amount: event.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Способ оплаты</Label>
+              <Select value={editForm.method} onChange={(event) => setEditForm((prev) => ({ ...prev, method: event.target.value }))}>
+                {Object.entries(METHOD_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Дата</Label>
+              <Input
+                type="datetime-local"
+                value={editForm.paid_at}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, paid_at: event.target.value }))}
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Комментарий</Label>
+            <Input value={editForm.comment} onChange={(event) => setEditForm((prev) => ({ ...prev, comment: event.target.value }))} />
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="secondary" disabled={editSaving} onClick={() => setEditingPayment(null)}>
+              Отмена
+            </Button>
+            <Button type="submit" disabled={editSaving}>
+              {editSaving ? "Сохраняем..." : "Сохранить"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

@@ -26,7 +26,7 @@ from .models import (
     Task,
     User,
 )
-from .permissions import HasActiveSubscription, IsAdmin, IsAuthenticatedAny
+from .permissions import HasActiveSubscription, HasAssistantSubscription, IsAdmin, IsAuthenticatedAny
 from .serializers import (
     AdminUserSerializer,
     AccountSerializer,
@@ -41,7 +41,15 @@ from .serializers import (
     ProjectSerializer,
     TaskSerializer,
 )
-from .subscription import activate_subscription_invoice, billing_summary_payload, issue_subscription_invoice
+from .subscription import (
+    activate_subscription_invoice,
+    billing_summary_payload,
+    can_create_trial_project,
+    get_workspace_subscription,
+    is_subscription_active,
+    issue_subscription_invoice,
+    record_project_created,
+)
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticatedAny])
@@ -64,7 +72,7 @@ def billing_summary_view(request):
 @api_view(["POST"])
 @permission_classes([IsAdmin])
 def billing_create_invoice_view(request):
-    invoice = issue_subscription_invoice(actor=request.user)
+    invoice = issue_subscription_invoice(actor=request.user, plan_code=request.data.get("plan_code"))
     return Response(
         {
             "detail": "Счет на подписку создан.",
@@ -96,7 +104,7 @@ def billing_activate_invoice_view(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny, HasAssistantSubscription])
 def assistant_chat_view(request):
     message = (request.data.get("message") or "").strip()
     history = request.data.get("history") or []
@@ -121,7 +129,7 @@ def assistant_chat_view(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny, HasAssistantSubscription])
 def assistant_voice_view(request):
     audio_file = request.FILES.get("audio")
     raw_history = request.data.get("history") or "[]"
@@ -165,7 +173,20 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return qs.filter(manager=self.request.user)
 
     def perform_create(self, serializer):
-        serializer.save(manager=self.request.user)
+        subscription = get_workspace_subscription()
+        user = self.request.user
+        if not user.is_admin() and not is_subscription_active(subscription) and not can_create_trial_project(subscription):
+            raise ValidationError(
+                {
+                    "subscription": (
+                        "Бесплатный лимит 10 созданных проектов исчерпан. "
+                        "Оформите подписку: 1000 ₽/мес без AI-помощника или 1500 ₽/мес с AI-помощником."
+                    )
+                }
+            )
+
+        serializer.save(manager=user)
+        record_project_created(subscription)
 
     @action(detail=True, methods=["get"], url_path=r"documents/(?P<document_type>contract|act)")
     def document(self, request, pk=None, document_type=None):

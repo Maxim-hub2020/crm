@@ -14,7 +14,7 @@ from .models import (
     Task,
     User,
 )
-from .subscription import is_subscription_active
+from .subscription import has_trial_access, is_subscription_active
 
 class MeSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
@@ -45,7 +45,7 @@ class MeSerializer(serializers.ModelSerializer):
     def get_subscription_active(self, obj):
         if obj.is_admin():
             return True
-        return is_subscription_active()
+        return is_subscription_active() or has_trial_access()
 
 
 class ClientSerializer(serializers.ModelSerializer):
