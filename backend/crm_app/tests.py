@@ -352,6 +352,19 @@ class TestTaskApi(AuthenticatedApiMixin, APITestCase):
         self.other_manager = self.create_user("manager.two")
         self.admin = self.create_user("admin.user", role=User.Role.ADMIN)
 
+        self.manager_project = Project.objects.create(
+            title="Manager project",
+            manager=self.manager,
+            client_name="Client One",
+            client_phone="+79000000001",
+        )
+        self.other_project = Project.objects.create(
+            title="Other project",
+            manager=self.other_manager,
+            client_name="Client Two",
+            client_phone="+79000000002",
+        )
+
         self.manager_task = Task.objects.create(
             title="Manager task",
             due_date="2026-05-25",
@@ -401,6 +414,42 @@ class TestTaskApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["assignee"], self.manager.id)
         self.assertEqual(response.data["created_by"], self.manager.id)
+
+    def test_manager_can_create_task_for_own_project(self):
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/tasks/",
+            {
+                "title": "Project follow-up",
+                "project": self.manager_project.id,
+                "notes": "Call client after measurements",
+                "due_date": "2026-05-28",
+                "priority": Task.Priority.HIGH,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["project"], self.manager_project.id)
+        self.assertEqual(response.data["project_title"], self.manager_project.title)
+        self.assertEqual(Task.objects.get(id=response.data["id"]).project_id, self.manager_project.id)
+
+    def test_manager_cannot_create_task_for_foreign_project(self):
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/tasks/",
+            {
+                "title": "Forbidden project task",
+                "project": self.other_project.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("project", response.data)
+        self.assertEqual(Task.objects.filter(title="Forbidden project task").count(), 0)
 
     def test_manager_cannot_assign_task_to_other_user(self):
         client = self.auth_client_for(self.manager)
@@ -880,6 +929,7 @@ class TestAssistantApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["intent"], "create_project_tasks_from_analysis")
         self.assertEqual(Task.objects.filter(assignee=self.manager).count(), 2)
         self.assertTrue(Task.objects.filter(title="Уточнить готовность замера").exists())
+        self.assertEqual(Task.objects.filter(project=self.project).count(), 2)
         self.assertIn(f"#{self.project.id}", Task.objects.get(title="Подготовить КП").notes)
 
     @patch("crm_app.ai_assistant.GeminiClient.generate_content")

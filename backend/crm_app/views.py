@@ -349,10 +349,15 @@ class TaskViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
 
     def get_queryset(self):
-        qs = Task.objects.select_related("assignee", "created_by").all().order_by("status", "due_date", "-created_at")
-        if self.request.user.is_admin():
-            return qs
-        return qs.filter(assignee=self.request.user)
+        qs = Task.objects.select_related("assignee", "created_by", "project").all().order_by("status", "due_date", "-created_at")
+        if not self.request.user.is_admin():
+            qs = qs.filter(assignee=self.request.user)
+
+        project_id = self.request.query_params.get("project")
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+
+        return qs
 
     def perform_create(self, serializer):
         assignee = serializer.validated_data.get("assignee") or self.request.user

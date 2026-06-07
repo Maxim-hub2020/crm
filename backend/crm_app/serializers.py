@@ -351,12 +351,15 @@ class ProjectCommentSerializer(serializers.ModelSerializer):
 class TaskSerializer(serializers.ModelSerializer):
     assignee_name = serializers.SerializerMethodField()
     created_by_name = serializers.SerializerMethodField()
+    project_title = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
         fields = [
             "id",
             "title",
+            "project",
+            "project_title",
             "notes",
             "due_date",
             "status",
@@ -368,8 +371,9 @@ class TaskSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_by", "created_at", "updated_at", "assignee_name", "created_by_name"]
+        read_only_fields = ["created_by", "created_at", "updated_at", "assignee_name", "created_by_name", "project_title"]
         extra_kwargs = {
+            "project": {"required": False, "allow_null": True},
             "notes": {"required": False, "allow_blank": True},
             "due_date": {"required": False, "allow_null": True},
             "status": {"required": False},
@@ -382,6 +386,20 @@ class TaskSerializer(serializers.ModelSerializer):
 
     def get_created_by_name(self, obj):
         return obj.created_by.get_full_name() or obj.created_by.username
+
+    def get_project_title(self, obj):
+        if not obj.project:
+            return ""
+        return obj.project.title or obj.project.client_name or f"Проект #{obj.project_id}"
+
+    def validate_project(self, project):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+
+        if user and user.is_authenticated and project and not user.is_admin() and project.manager_id != user.id:
+            raise serializers.ValidationError("You can create tasks only for your own projects.")
+
+        return project
 
     def validate_assignee(self, assignee):
         request = self.context.get("request")

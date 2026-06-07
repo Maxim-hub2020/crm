@@ -209,6 +209,7 @@ class Task(models.Model):
         HIGH = "high", "High"
 
     title = models.CharField(max_length=200)
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="tasks", blank=True, null=True)
     notes = models.TextField(blank=True, default="")
     due_date = models.DateField(blank=True, null=True, db_index=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN, db_index=True)

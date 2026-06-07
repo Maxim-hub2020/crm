@@ -1,10 +1,13 @@
-import React, { useDeferredValue, useEffect, useMemo, useState } from "react";
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   BadgeRussianRuble,
+  Calendar,
+  Check,
   CreditCard,
   FileText,
   LayoutGrid,
   List,
+  ListTodo,
   MapPin,
   MessageSquare,
   Phone,
@@ -19,9 +22,11 @@ import {
   createPayment,
   createProject,
   createProjectComment,
+  createTask,
   deletePayment,
   deleteProject,
   deleteProjectComment,
+  deleteTask,
   downloadProjectDocument,
   extractApiErrorMessage,
   fetchClients,
@@ -29,6 +34,8 @@ import {
   fetchProjectComments,
   fetchProjects,
   fetchProjectStatuses,
+  fetchTasks,
+  updateTask,
   updateProject,
 } from "../api";
 import {
@@ -106,6 +113,15 @@ function createEmptyPaymentForm() {
   };
 }
 
+function createEmptyTaskForm() {
+  return {
+    title: "",
+    notes: "",
+    due_date: "",
+    priority: "medium",
+  };
+}
+
 function normalizeProjectForm(project, fallbackStatus = "active") {
   return {
     title: project?.title || "",
@@ -142,6 +158,11 @@ function phoneDigits(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
+function phoneHref(value) {
+  const normalized = String(value || "").replace(/[^\d+]/g, "");
+  return normalized ? `tel:${normalized}` : "";
+}
+
 function formatDateTime(value) {
   if (!value) return "—";
   const date = new Date(value);
@@ -160,6 +181,17 @@ function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString("ru-RU");
+}
+
+function formatDeadline(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("ru-RU", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
 }
 
 function sanitizeFileName(value) {
@@ -262,6 +294,65 @@ function ModeButton({ active, icon: Icon, label, onClick }) {
   );
 }
 
+function StatCard({ icon: Icon, label, value, dark = false }) {
+  return (
+    <div
+      className={`rounded-[26px] px-5 py-4 ring-1 ${
+        dark
+          ? "bg-slate-900 text-white ring-slate-900"
+          : "bg-slate-50 text-slate-900 ring-slate-200/70"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className={`text-[10px] font-black uppercase tracking-[0.2em] ${dark ? "text-slate-300" : "text-slate-400"}`}>
+            {label}
+          </div>
+          <div className="mt-2 text-xl font-black tracking-tight">{value}</div>
+        </div>
+        <Icon size={18} className={dark ? "text-white/70" : "text-slate-400"} />
+      </div>
+    </div>
+  );
+}
+
+function ProjectTaskRow({ task, onToggle, onDelete }) {
+  const done = task.status === "done";
+
+  return (
+    <div className={`flex items-start gap-4 rounded-[22px] px-4 py-4 ${done ? "bg-emerald-50" : "bg-slate-50"}`}>
+      <button
+        type="button"
+        className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 transition ${
+          done ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 text-transparent hover:border-blue-500"
+        }`}
+        onClick={() => onToggle(task)}
+      >
+        <Check size={15} />
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className={`font-black leading-5 ${done ? "text-slate-400 line-through" : "text-slate-900"}`}>
+          {task.title}
+        </div>
+        {task.notes && <div className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-slate-500">{task.notes}</div>}
+        {task.due_date && (
+          <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-600">
+            <Calendar size={12} />
+            {formatDeadline(task.due_date)}
+          </div>
+        )}
+      </div>
+      <button
+        type="button"
+        className="rounded-full p-2 text-slate-400 transition hover:bg-white hover:text-red-600"
+        onClick={() => onDelete(task.id)}
+      >
+        <Trash2 size={16} />
+      </button>
+    </div>
+  );
+}
+
 function EmptyColumn({ onCreate }) {
   return (
     <button
@@ -290,17 +381,19 @@ function ColumnHeader({ status, count, totalAmount }) {
   );
 }
 
-function ProjectKanbanCard({ project, amount, ageDays, onClick }) {
+function ProjectKanbanCard({ project, amount, ageDays, isDragging = false, onClick }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="w-full rounded-[22px] border border-slate-200/90 bg-white px-4 py-4 text-left shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_14px_32px_rgba(15,23,42,0.08)]"
+      className={`w-full rounded-[22px] border border-slate-200/90 bg-white px-4 py-4 text-left shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_14px_32px_rgba(15,23,42,0.08)] ${
+        isDragging ? "scale-[0.98] cursor-grabbing opacity-70 ring-2 ring-blue-400" : "cursor-grab"
+      }`}
     >
       <div className="line-clamp-2 text-[1.02rem] font-black leading-6 tracking-tight text-slate-800">
         {projectDisplayName(project)}
       </div>
-      <div className="mt-1.5 text-sm text-slate-500">{project.client_name || project.client_phone || "Клиент не назначен"}</div>
+      <div className="mt-1.5 text-sm text-slate-500">{project.client_name || "Клиент не назначен"}</div>
       <div className="mt-4 flex items-end justify-between gap-3">
         <div className="text-[1.05rem] font-black tracking-tight text-blue-600">{formatMoney(amount)} ₽</div>
         <span className={`rounded-full px-3 py-1 text-sm font-semibold ${ageBadgeClass(ageDays)}`}>
@@ -317,12 +410,16 @@ export default function Projects() {
   const [projects, setProjects] = useState([]);
   const [clients, setClients] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [tasks, setTasks] = useState([]);
   const [statusRows, setStatusRows] = useState(DEFAULT_STATUS_OPTIONS);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState(location.state?.q || "");
   const deferredQuery = useDeferredValue(query);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem(VIEW_MODE_KEY) || "kanban");
   const [dragProjectId, setDragProjectId] = useState(null);
+  const [touchDragProjectId, setTouchDragProjectId] = useState(null);
+  const pointerDragRef = useRef(null);
+  const suppressProjectClickRef = useRef(false);
 
   const [openCreate, setOpenCreate] = useState(false);
   const [createForm, setCreateForm] = useState(createEmptyProjectForm());
@@ -346,6 +443,10 @@ export default function Projects() {
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [paymentError, setPaymentError] = useState("");
 
+  const [taskForm, setTaskForm] = useState(createEmptyTaskForm());
+  const [taskSaving, setTaskSaving] = useState(false);
+  const [taskError, setTaskError] = useState("");
+
   const [confirmState, setConfirmState] = useState(null);
   const [confirmDeleting, setConfirmDeleting] = useState(false);
 
@@ -368,16 +469,18 @@ export default function Projects() {
     }
 
     try {
-      const [projectRows, clientRows, paymentRows, statusItems] = await Promise.all([
+      const [projectRows, clientRows, paymentRows, taskRows, statusItems] = await Promise.all([
         fetchProjects(),
         fetchClients(),
         fetchPayments(),
+        fetchTasks(),
         fetchProjectStatuses(),
       ]);
 
       setProjects(projectRows);
       setClients(clientRows);
       setPayments(paymentRows);
+      setTasks(taskRows);
       setStatusRows(statusItems.length > 0 ? statusItems : DEFAULT_STATUS_OPTIONS);
     } finally {
       if (!silent) {
@@ -408,6 +511,7 @@ export default function Projects() {
       setProjects([]);
       setClients([]);
       setPayments([]);
+      setTasks([]);
       setStatusRows(DEFAULT_STATUS_OPTIONS);
       setLoading(false);
     });
@@ -528,6 +632,19 @@ export default function Projects() {
     return paymentsByProject.get(activeProjectId) || [];
   }, [activeProjectId, paymentsByProject]);
 
+  const activeProjectTasks = useMemo(() => {
+    if (!activeProjectId) return [];
+
+    return tasks
+      .filter((task) => String(task.project || "") === String(activeProjectId))
+      .sort((left, right) => {
+        if (left.status !== right.status) {
+          return left.status === "done" ? 1 : -1;
+        }
+        return (left.due_date || "9999-12-31").localeCompare(right.due_date || "9999-12-31");
+      });
+  }, [activeProjectId, tasks]);
+
   const activeProjectFinanceStats = useMemo(
     () => projectFinanceStats(activeProjectPayments),
     [activeProjectPayments]
@@ -559,6 +676,8 @@ export default function Projects() {
       setCommentError("");
       setPaymentForm(createEmptyPaymentForm());
       setPaymentError("");
+      setTaskForm(createEmptyTaskForm());
+      setTaskError("");
       return;
     }
 
@@ -612,6 +731,8 @@ export default function Projects() {
     setDetailError("");
     setCommentError("");
     setPaymentError("");
+    setTaskError("");
+    setTaskForm(createEmptyTaskForm());
   }
 
   async function submitCreate(event) {
@@ -777,6 +898,56 @@ export default function Projects() {
     }
   }
 
+  async function submitTask(event) {
+    event.preventDefault();
+    if (!activeProject) return;
+
+    setTaskError("");
+    setTaskSaving(true);
+
+    try {
+      if (!taskForm.title.trim()) {
+        setTaskError("Укажите название задачи.");
+        return;
+      }
+
+      const created = await createTask({
+        project: activeProject.id,
+        title: taskForm.title.trim(),
+        notes: taskForm.notes.trim(),
+        due_date: taskForm.due_date || null,
+        priority: taskForm.priority,
+      });
+
+      setTasks((prev) => [created, ...prev]);
+      setTaskForm(createEmptyTaskForm());
+    } catch (error) {
+      setTaskError(extractApiErrorMessage(error, "Не удалось создать задачу."));
+    } finally {
+      setTaskSaving(false);
+    }
+  }
+
+  async function toggleProjectTask(task) {
+    try {
+      const updated = await updateTask(task.id, {
+        status: task.status === "done" ? "open" : "done",
+      });
+      setTasks((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+    } catch (error) {
+      setTaskError(extractApiErrorMessage(error, "Не удалось обновить задачу."));
+    }
+  }
+
+  async function handleTaskDelete(taskId) {
+    try {
+      await deleteTask(taskId);
+      setTasks((prev) => prev.filter((task) => task.id !== taskId));
+    } catch (error) {
+      setTaskError(extractApiErrorMessage(error, "Не удалось удалить задачу."));
+    }
+  }
+
   async function handleProjectDelete() {
     if (!activeProject) return;
 
@@ -784,6 +955,7 @@ export default function Projects() {
       await deleteProject(activeProject.id);
       setProjects((prev) => prev.filter((project) => project.id !== activeProject.id));
       setPayments((prev) => prev.filter((payment) => payment.project !== activeProject.id));
+      setTasks((prev) => prev.filter((task) => String(task.project || "") !== String(activeProject.id)));
       closeProject();
     } catch (error) {
       setDetailError(extractApiErrorMessage(error, "Не удалось удалить проект."));
@@ -856,6 +1028,15 @@ export default function Projects() {
     });
   }
 
+  function requestDeleteTask(taskId) {
+    setConfirmState({
+      kind: "task",
+      id: taskId,
+      title: "Удалить задачу",
+      message: "Задача исчезнет из карточки проекта и из общего раздела задач.",
+    });
+  }
+
   async function submitDeleteConfirmation() {
     if (!confirmState) return;
 
@@ -867,6 +1048,8 @@ export default function Projects() {
         await handlePaymentDelete(confirmState.id);
       } else if (confirmState.kind === "comment") {
         await handleCommentDelete(confirmState.id);
+      } else if (confirmState.kind === "task") {
+        await handleTaskDelete(confirmState.id);
       }
 
       setConfirmState(null);
@@ -905,6 +1088,72 @@ export default function Projects() {
     setDragProjectId(null);
   }
 
+  function handleProjectPointerDown(event, projectId) {
+    if (event.pointerType === "mouse") return;
+
+    pointerDragRef.current = {
+      projectId,
+      startX: event.clientX,
+      startY: event.clientY,
+      dragging: false,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function handleProjectPointerMove(event) {
+    const drag = pointerDragRef.current;
+    if (!drag) return;
+
+    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+    if (!drag.dragging && distance > 12) {
+      drag.dragging = true;
+      setTouchDragProjectId(drag.projectId);
+    }
+
+    if (drag.dragging) {
+      event.preventDefault();
+    }
+  }
+
+  function handleProjectPointerEnd(event) {
+    const drag = pointerDragRef.current;
+    if (!drag) return;
+
+    pointerDragRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+
+    if (!drag.dragging) {
+      return;
+    }
+
+    event.preventDefault();
+    suppressProjectClickRef.current = true;
+    window.setTimeout(() => {
+      suppressProjectClickRef.current = false;
+    }, 120);
+
+    const targetColumn = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest("[data-status-column]");
+    let nextStatus = targetColumn?.getAttribute("data-status-column") || "";
+
+    if (!nextStatus) {
+      const project = projects.find((item) => item.id === drag.projectId);
+      const currentIndex = statusOptions.findIndex((status) => status.value === project?.status);
+      const swipeDelta = event.clientX - drag.startX;
+
+      if (currentIndex >= 0 && Math.abs(swipeDelta) > 90) {
+        nextStatus = swipeDelta < 0 ? statusOptions[currentIndex + 1]?.value : statusOptions[currentIndex - 1]?.value;
+      }
+    }
+
+    if (nextStatus) {
+      moveProjectToStatus(drag.projectId, nextStatus).catch(() => {});
+    }
+
+    setTouchDragProjectId(null);
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
@@ -939,8 +1188,8 @@ export default function Projects() {
           <CardBody className="p-12 text-center text-sm text-slate-500">Загружаем проекты и операции...</CardBody>
         </Card>
       ) : viewMode === "kanban" ? (
-        <div className="overflow-x-auto pb-3">
-          <div className="grid min-w-max grid-flow-col auto-cols-[minmax(328px,396px)] gap-5">
+        <div className="-mx-4 overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0">
+          <div className="grid snap-x snap-mandatory grid-flow-col auto-cols-[calc(100vw-2rem)] gap-5 sm:auto-cols-[minmax(360px,420px)]">
           {statusOptions.map((status) => {
             const columnProjects = groupedProjects[status.value] || [];
             const columnTotal = columnProjects.reduce((sum, project) => {
@@ -950,12 +1199,16 @@ export default function Projects() {
             return (
               <div
                 key={status.value}
-                className="flex min-h-[602px] flex-col overflow-hidden rounded-[28px] border border-slate-200/90 bg-white shadow-[0_14px_36px_rgba(15,23,42,0.05)]"
+                data-status-column={status.value}
+                className={`flex min-h-[calc(100dvh-235px)] snap-start flex-col overflow-hidden rounded-[28px] border border-slate-200/90 bg-white shadow-[0_14px_36px_rgba(15,23,42,0.05)] transition ${
+                  touchDragProjectId ? "ring-2 ring-blue-100" : ""
+                }`}
               >
                 <ColumnHeader status={status} count={columnProjects.length} totalAmount={columnTotal} />
 
                 <div
-                  className="flex min-h-[468px] flex-1 flex-col gap-3 bg-[#fbfcff] px-3 py-3"
+                  className="flex min-h-[calc(100dvh-365px)] flex-1 flex-col gap-3 bg-[#fbfcff] px-3 py-3"
+                  data-status-column={status.value}
                   onDragOver={(event) => event.preventDefault()}
                   onDrop={() => handleDrop(status.value)}
                 >
@@ -970,12 +1223,25 @@ export default function Projects() {
                           draggable
                           onDragStart={() => setDragProjectId(project.id)}
                           onDragEnd={() => setDragProjectId(null)}
+                          onPointerDown={(event) => handleProjectPointerDown(event, project.id)}
+                          onPointerMove={handleProjectPointerMove}
+                          onPointerUp={handleProjectPointerEnd}
+                          onPointerCancel={() => {
+                            pointerDragRef.current = null;
+                            setTouchDragProjectId(null);
+                          }}
+                          style={{ touchAction: "pan-y" }}
                         >
                           <ProjectKanbanCard
                             project={project}
                             amount={amount}
                             ageDays={ageDays}
-                            onClick={() => openProject(project)}
+                            isDragging={dragProjectId === project.id || touchDragProjectId === project.id}
+                            onClick={() => {
+                              if (!suppressProjectClickRef.current) {
+                                openProject(project);
+                              }
+                            }}
                           />
                         </div>
                       );
@@ -1021,11 +1287,17 @@ export default function Projects() {
                       </div>
 
                       <div className="grid gap-3 text-sm text-slate-500 sm:grid-cols-2">
-                        <div className="font-semibold text-slate-700">{project.client_name || "Клиент не указан"}</div>
-                        <div className="flex items-center gap-2">
-                          <Phone size={16} />
-                          {project.client_phone || "Телефон не указан"}
-                        </div>
+                        {phoneHref(project.client_phone) ? (
+                          <a
+                            className="inline-flex items-center gap-2 font-semibold text-slate-700 transition hover:text-blue-600"
+                            href={phoneHref(project.client_phone)}
+                          >
+                            <Phone size={16} />
+                            {project.client_name || "Клиент без имени"}
+                          </a>
+                        ) : (
+                          <div className="font-semibold text-slate-700">{project.client_name || "Клиент не указан"}</div>
+                        )}
                         <div className="flex items-center gap-2">
                           <MapPin size={16} />
                           {project.object_address || "Адрес не указан"}
@@ -1102,8 +1374,17 @@ export default function Projects() {
             {createClientLookup.queryReady && (
               <div className="space-y-2 md:col-span-2">
                 {selectedCreateClient ? (
-                  <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
-                    Выбран клиент: {selectedCreateClient.client_name || "без имени"} • {selectedCreateClient.client_phone || "телефон не указан"}
+                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
+                    <span>Выбран клиент: {selectedCreateClient.client_name || "Клиент без имени"}</span>
+                    {phoneHref(selectedCreateClient.client_phone) && (
+                      <a
+                        className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-black text-blue-600"
+                        href={phoneHref(selectedCreateClient.client_phone)}
+                      >
+                        <Phone size={13} />
+                        Позвонить
+                      </a>
+                    )}
                   </div>
                 ) : createClientLookup.matches.length > 0 ? (
                   createClientLookup.matches.map((client) => (
@@ -1204,13 +1485,13 @@ export default function Projects() {
         open={Boolean(activeProject)}
         title={activeProject ? `Карточка проекта — ${projectDisplayName(activeProject)}` : "Карточка проекта"}
         onClose={closeProject}
-        widthClassName="max-w-6xl"
-        bodyClassName="max-h-[82vh] overflow-y-auto"
+        widthClassName="max-w-5xl"
+        bodyClassName="min-h-0"
       >
         {activeProject && (
-          <div className="space-y-6">
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_360px]">
-              <div className="space-y-5">
+          <div className="space-y-4">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_320px]">
+              <div className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2 md:col-span-2">
                     <Label>Наименование проекта</Label>
@@ -1219,23 +1500,24 @@ export default function Projects() {
                       onChange={(event) => setDetailForm((prev) => ({ ...prev, title: event.target.value }))}
                     />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-2 md:col-span-2">
                     <Label>Клиент</Label>
-                    <Input
-                      value={detailForm.client_name}
-                      onChange={(event) => setDetailForm((prev) => ({ ...prev, client_name: event.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Телефон</Label>
-                    <Input
-                      type="tel"
-                      inputMode="numeric"
-                      autoComplete="tel"
-                      pattern="[0-9+()\\-\\s]*"
-                      value={detailForm.client_phone}
-                      onChange={(event) => setDetailForm((prev) => ({ ...prev, client_phone: event.target.value }))}
-                    />
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      {phoneHref(detailForm.client_phone) ? (
+                        <a
+                          className="inline-flex items-center gap-2 text-base font-black text-slate-900 transition hover:text-blue-600"
+                          href={phoneHref(detailForm.client_phone)}
+                        >
+                          <Phone size={17} />
+                          {detailForm.client_name || "Клиент без имени"}
+                        </a>
+                      ) : (
+                        <div className="text-base font-black text-slate-900">{detailForm.client_name || "Клиент не указан"}</div>
+                      )}
+                      <div className="mt-1 text-xs font-semibold text-slate-400">
+                        {phoneHref(detailForm.client_phone) ? "Нажмите на имя, чтобы позвонить клиенту." : "Телефон клиента не указан."}
+                      </div>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Адрес объекта</Label>
@@ -1270,7 +1552,7 @@ export default function Projects() {
                 <div className="space-y-2">
                   <Label>Описание</Label>
                   <textarea
-                    className="min-h-32 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+                    className="min-h-24 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
                     value={detailForm.description}
                     onChange={(event) => setDetailForm((prev) => ({ ...prev, description: event.target.value }))}
                   />
@@ -1278,43 +1560,53 @@ export default function Projects() {
               </div>
 
               <div className="space-y-4">
-                <div className="rounded-[28px] bg-slate-900 px-5 py-5 text-white">
+                <div className="rounded-[26px] bg-slate-900 px-5 py-4 text-white">
                   <div className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-300">Проект</div>
-                  <div className="mt-3 text-2xl font-black">{projectDisplayName(activeProject)}</div>
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  <div className="mt-2 text-xl font-black">{projectDisplayName(activeProject)}</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
                     <Badge className="bg-white/15 text-white">{labelFor(statusOptions, detailForm.status)}</Badge>
                     {detailForm.works_with_contract && <Badge className="bg-white/15 text-white">Договор</Badge>}
                   </div>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                  <div className="rounded-[28px] bg-slate-50 px-5 py-4 ring-1 ring-slate-200/70">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                  <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Операций</div>
-                        <div className="mt-2 text-2xl font-black text-slate-900">{activeProjectPayments.length}</div>
+                        <div className="mt-1 text-xl font-black text-slate-900">{activeProjectPayments.length}</div>
                       </div>
                       <CreditCard size={18} className="text-slate-400" />
                     </div>
                   </div>
 
-                  <div className="rounded-[28px] bg-slate-50 px-5 py-4 ring-1 ring-slate-200/70">
+                  <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Финансы</div>
-                        <div className="mt-2 text-2xl font-black text-slate-900">{formatMoney(activeProjectPaymentTotal)}</div>
+                        <div className="mt-1 text-xl font-black text-slate-900">{formatMoney(activeProjectPaymentTotal)}</div>
                       </div>
                       <BadgeRussianRuble size={18} className="text-slate-400" />
                     </div>
                   </div>
 
-                  <div className="rounded-[28px] bg-slate-50 px-5 py-4 ring-1 ring-slate-200/70">
+                  <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Комментариев</div>
-                        <div className="mt-2 text-2xl font-black text-slate-900">{comments.length}</div>
+                        <div className="mt-1 text-xl font-black text-slate-900">{comments.length}</div>
                       </div>
                       <MessageSquare size={18} className="text-slate-400" />
+                    </div>
+                  </div>
+
+                  <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Задач</div>
+                        <div className="mt-1 text-xl font-black text-slate-900">{activeProjectTasks.length}</div>
+                      </div>
+                      <ListTodo size={18} className="text-slate-400" />
                     </div>
                   </div>
                 </div>
@@ -1354,6 +1646,15 @@ export default function Projects() {
               >
                 <MessageSquare size={16} />
                 Комментарии
+              </Button>
+              <Button
+                type="button"
+                variant={detailTab === "tasks" ? "primary" : "ghost"}
+                className="px-4"
+                onClick={() => setDetailTab("tasks")}
+              >
+                <ListTodo size={16} />
+                Задачи
               </Button>
               <Button
                 type="button"
@@ -1423,6 +1724,86 @@ export default function Projects() {
 
                       <Button type="submit" disabled={commentSaving}>
                         {commentSaving ? "Сохраняем..." : "Добавить комментарий"}
+                      </Button>
+                    </form>
+                  </CardBody>
+                </Card>
+              </div>
+            ) : detailTab === "tasks" ? (
+              <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_360px]">
+                <Card className="border border-slate-100 shadow-none ring-0">
+                  <CardHeader>
+                    <div className="text-lg font-black tracking-tight text-slate-900">Задачи по проекту</div>
+                    <div className="mt-1 text-sm text-slate-500">Все задачи из этой вкладки также отображаются в общем модуле задач.</div>
+                  </CardHeader>
+                  <CardBody className="space-y-3">
+                    {activeProjectTasks.length === 0 ? (
+                      <div className="rounded-[24px] bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                        По этому проекту пока нет задач. Добавьте первую задачу справа.
+                      </div>
+                    ) : (
+                      activeProjectTasks.map((task) => (
+                        <ProjectTaskRow
+                          key={task.id}
+                          task={task}
+                          onToggle={toggleProjectTask}
+                          onDelete={requestDeleteTask}
+                        />
+                      ))
+                    )}
+                  </CardBody>
+                </Card>
+
+                <Card className="border border-slate-100 shadow-none ring-0">
+                  <CardHeader>
+                    <div className="text-lg font-black tracking-tight text-slate-900">Новая задача</div>
+                  </CardHeader>
+                  <CardBody>
+                    <form className="space-y-4" onSubmit={submitTask}>
+                      <div className="space-y-2">
+                        <Label>Что нужно сделать</Label>
+                        <Input
+                          value={taskForm.title}
+                          onChange={(event) => setTaskForm((prev) => ({ ...prev, title: event.target.value }))}
+                          placeholder="Например, согласовать дату замера"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Комментарий</Label>
+                        <textarea
+                          className="min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+                          value={taskForm.notes}
+                          onChange={(event) => setTaskForm((prev) => ({ ...prev, notes: event.target.value }))}
+                          placeholder="Коротко опишите следующий шаг"
+                        />
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+                        <div className="space-y-2">
+                          <Label>Срок</Label>
+                          <Input
+                            type="date"
+                            value={taskForm.due_date}
+                            onChange={(event) => setTaskForm((prev) => ({ ...prev, due_date: event.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Приоритет</Label>
+                          <Select
+                            value={taskForm.priority}
+                            onChange={(event) => setTaskForm((prev) => ({ ...prev, priority: event.target.value }))}
+                          >
+                            <option value="low">Низкий</option>
+                            <option value="medium">Средний</option>
+                            <option value="high">Высокий</option>
+                          </Select>
+                        </div>
+                      </div>
+
+                      {taskError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{taskError}</div>}
+
+                      <Button type="submit" disabled={taskSaving}>
+                        <Plus size={16} />
+                        {taskSaving ? "Добавляем..." : "Добавить задачу"}
                       </Button>
                     </form>
                   </CardBody>

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Archive, Calendar, Check, ListTodo, Plus, Trash2 } from "lucide-react";
+import { Archive, Calendar, Check, FolderKanban, ListTodo, Plus, Trash2 } from "lucide-react";
 
 import { createTask, deleteTask, extractApiErrorMessage, fetchTasks, updateTask } from "../api";
 import { Button, Card, CardBody, CardHeader, Input, Label } from "../components/ui.jsx";
@@ -33,6 +33,12 @@ function TaskRow({ task, onToggle, onDelete }) {
       <div className="min-w-0 flex-1">
         <div className="font-semibold">{task.title}</div>
         {task.notes && <div className="mt-1 text-sm text-gray-500">{task.notes}</div>}
+        {task.project_title && (
+          <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-600">
+            <FolderKanban size={12} />
+            {task.project_title}
+          </div>
+        )}
         {task.due_date && (
           <div className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-amber-600">
             <Calendar size={12} />

@@ -1891,6 +1891,8 @@ class CRMAssistantService:
     def _serialize_task(self, task):
         return {
             "task_id": task.id,
+            "project_id": task.project_id,
+            "project_title": (task.project.title or task.project.client_name) if task.project else "",
             "title": task.title,
             "notes": truncate_text(task.notes, 300),
             "due_date": task.due_date.isoformat() if task.due_date else "",
@@ -2663,6 +2665,7 @@ class CRMAssistantService:
 
         task = Task.objects.create(
             title=title,
+            project=project,
             notes=notes,
             due_date=due_date,
             priority=priority,
@@ -2764,6 +2767,7 @@ class CRMAssistantService:
             created_tasks.append(
                 Task.objects.create(
                     title=title[:200],
+                    project=project,
                     notes=notes,
                     due_date=due_date,
                     priority=priority,

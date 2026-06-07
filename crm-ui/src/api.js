@@ -377,9 +377,11 @@ export async function fetchPayments() {
   return data;
 }
 
-export async function fetchTasks() {
+export async function fetchTasks(params) {
   initApiAuth();
-  const { data } = await api.get("/api/tasks/");
+  const { data } = await api.get("/api/tasks/", {
+    params: params || undefined,
+  });
   return data;
 }
 
