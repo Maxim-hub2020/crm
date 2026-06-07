@@ -28,13 +28,31 @@ jobs:
 
       - name: Build Docker images on GitHub
         run: |
-          docker build \
-            -t "$BACKEND_IMAGE" \
+          build_with_retry() {
+            local image="$1"
+            shift
+
+            for attempt in 1 2 3; do
+              echo "Docker build attempt ${attempt}/3 for ${image}..."
+              if docker build -t "$image" "$@"; then
+                return 0
+              fi
+
+              if [ "$attempt" = "3" ]; then
+                echo "Docker build failed after 3 attempts for ${image}."
+                return 1
+              fi
+
+              echo "Docker build failed, retrying after network backoff..."
+              sleep $((attempt * 20))
+            done
+          }
+
+          build_with_retry "$BACKEND_IMAGE" \
             -f backend/Dockerfile.prod \
             ./backend
 
-          docker build \
-            -t "$NGINX_IMAGE" \
+          build_with_retry "$NGINX_IMAGE" \
             -f docker/nginx/Dockerfile \
             .
 
@@ -135,6 +153,11 @@ jobs:
         if: failure()
         continue-on-error: true
         run: |
+          if [ ! -f ~/.ssh/timeweb_key ]; then
+            echo "SSH key was not created before failure; skipping remote diagnostics."
+            exit 0
+          fi
+
           SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
           ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" '
             set +e
