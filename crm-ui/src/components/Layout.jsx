@@ -1,17 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  Briefcase,
-  FolderKanban,
-  Home,
-  ListTodo,
-  LogOut,
-  Menu,
-  Mic,
-  Settings,
-  ShieldQuestion,
-  Users,
-  Wallet,
-} from "lucide-react";
+import { Briefcase, FolderKanban, Home, ListTodo, LogOut, Menu, Mic, Settings, ShieldQuestion, Users, Wallet } from "lucide-react";
 import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
 
 import { clearToken, fetchMe, getUser, isAdminUser } from "../api";
@@ -35,13 +23,13 @@ function NavItem({ to, icon: Icon, label, onClick }) {
       title={label}
       onClick={onClick}
       className={({ isActive }) =>
-        `mb-2 flex h-11 w-full items-center gap-3 rounded-2xl px-3 text-sm font-bold transition ${
+        `mb-2 flex h-11 w-full items-center justify-center rounded-2xl px-0 text-sm font-bold transition ${
           isActive ? "bg-blue-50 text-blue-600" : "text-slate-400 hover:bg-slate-50 hover:text-slate-700"
         }`
       }
     >
       <Icon size={18} className="shrink-0" />
-      <span className="truncate">{label}</span>
+      <span className="sr-only">{label}</span>
     </NavLink>
   );
 }
@@ -87,12 +75,12 @@ export default function Layout({ children }) {
       {sidebarOpen && <div className="fixed inset-0 z-40 bg-black/30 md:hidden" onClick={closeSidebar} />}
 
       <aside
-        className={`fixed z-50 flex h-full w-64 shrink-0 flex-col border-r border-slate-200/70 bg-white transition-transform md:relative md:w-56 md:translate-x-0 xl:w-60 ${
+        className={`fixed z-50 flex h-full w-20 shrink-0 flex-col border-r border-slate-200/70 bg-white transition-transform md:relative md:translate-x-0 ${
           isAssistantMode ? "pointer-events-none opacity-20 blur-[2px] saturate-50" : ""
         } ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
       >
-        <div className="flex h-16 shrink-0 items-center border-b border-slate-100 px-4">
-          <BrandLogo />
+        <div className="flex h-16 shrink-0 items-center justify-center border-b border-slate-100">
+          <BrandLogo compact markClassName="h-10 w-10" />
         </div>
 
         <nav className="mt-4 flex flex-1 flex-col px-3">
@@ -109,12 +97,12 @@ export default function Layout({ children }) {
         <div className="flex shrink-0 justify-center border-t border-slate-100 px-3 py-3">
           <button
             onClick={logout}
-            className="flex h-11 w-full items-center gap-3 rounded-2xl px-3 text-sm font-bold text-slate-400 transition hover:bg-red-50 hover:text-red-500"
+            className="flex h-11 w-full items-center justify-center rounded-2xl px-0 text-sm font-bold text-slate-400 transition hover:bg-red-50 hover:text-red-500"
             type="button"
             title="Выход"
           >
             <LogOut size={17} className="shrink-0" />
-            <span className="truncate">Выход</span>
+            <span className="sr-only">Выход</span>
           </button>
         </div>
       </aside>

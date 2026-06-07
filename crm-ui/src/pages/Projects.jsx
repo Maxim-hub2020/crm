@@ -8,6 +8,7 @@ import {
   ListTodo,
   MapPin,
   MessageSquare,
+  Pencil,
   Phone,
   Plus,
   Search,
@@ -587,6 +588,8 @@ export default function Projects() {
 
   const [confirmState, setConfirmState] = useState(null);
   const [confirmDeleting, setConfirmDeleting] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [confirmError, setConfirmError] = useState("");
 
   const statusOptions = useMemo(() => {
     const source = statusRows.length > 0 ? statusRows : DEFAULT_STATUS_OPTIONS;
@@ -1325,14 +1328,18 @@ export default function Projects() {
   function requestDeleteProject() {
     if (!activeProject) return;
 
+    setConfirmText("");
+    setConfirmError("");
     setConfirmState({
       kind: "project",
       title: "Удалить проект",
-      message: `Проект «${projectDisplayName(activeProject)}» будет удалён вместе с операциями и комментариями.`,
+      message: `Точно удалить проект «${projectDisplayName(activeProject)}»? Это действие удалит проект вместе с операциями, задачами и комментариями.`,
     });
   }
 
   function requestDeletePayment(paymentId) {
+    setConfirmText("");
+    setConfirmError("");
     setConfirmState({
       kind: "payment",
       id: paymentId,
@@ -1342,6 +1349,8 @@ export default function Projects() {
   }
 
   function requestDeleteComment(commentId) {
+    setConfirmText("");
+    setConfirmError("");
     setConfirmState({
       kind: "comment",
       id: commentId,
@@ -1351,6 +1360,8 @@ export default function Projects() {
   }
 
   function requestDeleteTask(taskId) {
+    setConfirmText("");
+    setConfirmError("");
     setConfirmState({
       kind: "task",
       id: taskId,
@@ -1362,6 +1373,12 @@ export default function Projects() {
   async function submitDeleteConfirmation() {
     if (!confirmState) return;
 
+    if (confirmState.kind === "project" && confirmText.trim().toLowerCase() !== "удалить") {
+      setConfirmError("Введите слово «удалить», чтобы подтвердить удаление проекта.");
+      return;
+    }
+
+    setConfirmError("");
     setConfirmDeleting(true);
     try {
       if (confirmState.kind === "project") {
@@ -1375,6 +1392,7 @@ export default function Projects() {
       }
 
       setConfirmState(null);
+      setConfirmText("");
     } finally {
       setConfirmDeleting(false);
     }
@@ -2431,20 +2449,23 @@ export default function Projects() {
                                       <Button
                                         type="button"
                                         variant="ghost"
-                                        className="px-3 text-blue-600 hover:bg-blue-50"
+                                        className="h-10 w-10 px-0 text-blue-600 hover:bg-blue-50"
                                         onClick={() => startPaymentEdit(payment)}
+                                        title="Редактировать"
+                                        aria-label="Редактировать операцию"
                                       >
-                                        Редактировать
+                                        <Pencil size={16} />
                                       </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      className="px-3 text-red-600 hover:bg-red-50"
-                                      onClick={() => requestDeletePayment(payment.id)}
-                                    >
-                                      <Trash2 size={16} />
-                                      Удалить
-                                    </Button>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        className="h-10 w-10 px-0 text-red-600 hover:bg-red-50"
+                                        onClick={() => requestDeletePayment(payment.id)}
+                                        title="Удалить"
+                                        aria-label="Удалить операцию"
+                                      >
+                                        <Trash2 size={16} />
+                                      </Button>
                                     </div>
                                   </td>
                                 </tr>
@@ -2459,19 +2480,11 @@ export default function Projects() {
               </div>
             )}
 
-            <div className="rounded-[24px] border border-red-100 bg-red-50/80 p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="text-sm font-black text-red-700">Удаление проекта</div>
-                  <div className="mt-1 text-xs font-semibold text-red-500">
-                    Проект будет удален вместе с операциями, задачами и комментариями.
-                  </div>
-                </div>
-                <Button type="button" variant="danger" className="w-full justify-center sm:w-auto" onClick={requestDeleteProject}>
-                  <Trash2 size={16} />
-                  Удалить проект
-                </Button>
-              </div>
+            <div className="flex justify-center border-t border-slate-100 pt-5">
+              <Button type="button" variant="danger" className="w-full justify-center sm:w-auto" onClick={requestDeleteProject}>
+                <Trash2 size={16} />
+                Удалить проект
+              </Button>
             </div>
           </div>
         )}
@@ -2480,7 +2493,13 @@ export default function Projects() {
       <Modal
         open={Boolean(confirmState)}
         title={confirmState?.title || "Подтвердите действие"}
-        onClose={() => !confirmDeleting && setConfirmState(null)}
+        onClose={() => {
+          if (!confirmDeleting) {
+            setConfirmState(null);
+            setConfirmText("");
+            setConfirmError("");
+          }
+        }}
         widthClassName="max-w-xl"
       >
         <div className="space-y-5">
@@ -2488,8 +2507,33 @@ export default function Projects() {
             {confirmState?.message}
           </div>
 
+          {confirmState?.kind === "project" ? (
+            <div className="space-y-2">
+              <Label>Для удаления введите слово «удалить»</Label>
+              <Input
+                value={confirmText}
+                onChange={(event) => {
+                  setConfirmText(event.target.value);
+                  setConfirmError("");
+                }}
+                placeholder="удалить"
+                autoComplete="off"
+              />
+              {confirmError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{confirmError}</div>}
+            </div>
+          ) : null}
+
           <div className="flex justify-end gap-3">
-            <Button type="button" variant="secondary" disabled={confirmDeleting} onClick={() => setConfirmState(null)}>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={confirmDeleting}
+              onClick={() => {
+                setConfirmState(null);
+                setConfirmText("");
+                setConfirmError("");
+              }}
+            >
               Отмена
             </Button>
             <Button type="button" variant="danger" disabled={confirmDeleting} onClick={submitDeleteConfirmation}>
