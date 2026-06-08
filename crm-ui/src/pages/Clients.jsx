@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ChevronRight, Edit3, Mail, MapPin, Phone, Search, Wallet } from "lucide-react";
+import { ChevronRight, Edit3, Mail, MapPin, Phone, Plus, Search, Wallet } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-import { extractApiErrorMessage, fetchClients, fetchPayments, fetchProjects, updateClient } from "../api";
+import { createClient, extractApiErrorMessage, fetchClients, fetchPayments, fetchProjects, updateClient } from "../api";
 import { Badge, Button, Input, Label, Modal } from "../components/ui.jsx";
 
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
@@ -61,6 +61,9 @@ export default function Clients() {
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [selectedClientId, setSelectedClientId] = useState(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState(createClientEditForm());
+  const [creatingClient, setCreatingClient] = useState(false);
   const [editForm, setEditForm] = useState(createClientEditForm());
   const [savingClient, setSavingClient] = useState(false);
   const [clientEditMode, setClientEditMode] = useState(false);
@@ -140,6 +143,19 @@ export default function Clients() {
     setClientEditMode(false);
   }
 
+  function openClientCreate() {
+    setCreateForm(createClientEditForm());
+    setCreateOpen(true);
+    setError("");
+  }
+
+  function closeClientCreate() {
+    if (creatingClient) return;
+    setCreateOpen(false);
+    setCreateForm(createClientEditForm());
+    setError("");
+  }
+
   function startClientEdit() {
     if (!selectedClient) return;
     setEditForm(createClientEditForm(selectedClient));
@@ -171,10 +187,45 @@ export default function Clients() {
     }
   }
 
+  async function submitCreateClient(event) {
+    event.preventDefault();
+
+    setCreatingClient(true);
+    setError("");
+    try {
+      if (!createForm.name.trim()) {
+        setError("Укажите имя клиента.");
+        return;
+      }
+
+      const created = await createClient({
+        name: createForm.name.trim(),
+        phone: createForm.phone.trim(),
+        email: createForm.email.trim() || null,
+        address: createForm.address.trim() || null,
+        works_with_contract: createForm.works_with_contract,
+      });
+
+      setClientRows((current) => {
+        const exists = current.some((row) => row.id === created.id);
+        return exists ? current.map((row) => (row.id === created.id ? created : row)) : [created, ...current];
+      });
+      setCreateOpen(false);
+      setCreateForm(createClientEditForm());
+      setSelectedClientId(created.id);
+      setEditForm(createClientEditForm(created));
+      setClientEditMode(false);
+    } catch (requestError) {
+      setError(extractApiErrorMessage(requestError, "Не удалось создать клиента."));
+    } finally {
+      setCreatingClient(false);
+    }
+  }
+
   return (
     <div>
-      <div className="mb-5 max-w-xs">
-        <div className="relative">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-full sm:max-w-xs">
           <Input
             className="h-12 rounded-[18px] pl-10"
             value={search}
@@ -183,6 +234,11 @@ export default function Clients() {
           />
           <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
         </div>
+
+        <Button type="button" className="w-full justify-center sm:w-auto" onClick={openClientCreate}>
+          <Plus size={16} />
+          Добавить клиента
+        </Button>
       </div>
 
       {error && <div className="mb-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
@@ -319,6 +375,72 @@ export default function Clients() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal open={createOpen} title="Добавить клиента" onClose={closeClientCreate} widthClassName="max-w-2xl">
+        <form className="space-y-4" onSubmit={submitCreateClient}>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2 md:col-span-2">
+              <Label>Имя клиента</Label>
+              <Input
+                value={createForm.name}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, name: event.target.value }))}
+                placeholder="Например: Алексей"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Телефон</Label>
+              <Input
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel"
+                pattern="[0-9+()\\-\\s]*"
+                value={createForm.phone}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, phone: event.target.value }))}
+                placeholder="+7..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Email</Label>
+              <Input
+                type="email"
+                value={createForm.email}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, email: event.target.value }))}
+                placeholder="client@example.com"
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Адрес</Label>
+              <Input
+                value={createForm.address}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, address: event.target.value }))}
+                placeholder="Адрес клиента"
+              />
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-gray-300 text-blue-600"
+              checked={createForm.works_with_contract}
+              onChange={(event) => setCreateForm((prev) => ({ ...prev, works_with_contract: event.target.checked }))}
+            />
+            Работает по договору
+          </label>
+
+          {error && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="secondary" disabled={creatingClient} onClick={closeClientCreate}>
+              Отмена
+            </Button>
+            <Button type="submit" disabled={creatingClient}>
+              {creatingClient ? "Создаём..." : "Создать клиента"}
+            </Button>
+          </div>
+        </form>
       </Modal>
     </div>
   );
