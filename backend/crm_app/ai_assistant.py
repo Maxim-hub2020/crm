@@ -580,6 +580,7 @@ class CRMAssistantService:
         tools = self._tool_declarations() if self._should_enable_tools(message) else None
         mutation_requested = self._requires_mutating_tool(message)
         forced_tool_retry = False
+        empty_content_retry = False
 
         for _ in range(self.MAX_TOOL_ROUNDS):
             response = self.client.generate_content(
@@ -589,7 +590,29 @@ class CRMAssistantService:
                 temperature=0.1,
                 max_output_tokens=700,
             )
-            content = self.client.extract_candidate_content(response)
+            try:
+                content = self.client.extract_candidate_content(response)
+            except GeminiRequestError as exc:
+                if self._is_empty_content_error(exc):
+                    if not empty_content_retry:
+                        contents.append(
+                            {
+                                "role": "user",
+                                "parts": [
+                                    {
+                                        "text": (
+                                            "Предыдущий ответ был пустым. Верни короткий текстовый ответ по-русски. "
+                                            "Если данных не хватает, задай один уточняющий вопрос. "
+                                            "Не возвращай пустой content."
+                                        )
+                                    }
+                                ],
+                            }
+                        )
+                        empty_content_retry = True
+                        continue
+                    return self._empty_content_fallback_reply(message, mutation_requested)
+                raise
             function_calls = self.client.extract_function_calls(content)
 
             if function_calls:
@@ -654,6 +677,24 @@ class CRMAssistantService:
             raise GeminiRequestError("Gemini не вернул текстового ответа.")
 
         raise GeminiRequestError("Gemini не завершил tool-calling сценарий за разумное число шагов.")
+
+    @staticmethod
+    def _is_empty_content_error(exc):
+        message = normalize_text(exc)
+        return "не вернул content" in message or "не вернул кандидатов" in message
+
+    def _empty_content_fallback_reply(self, message, mutation_requested=False):
+        if mutation_requested:
+            return (
+                "Уточните, пожалуйста, команду: что именно нужно создать или изменить, "
+                "для какого проекта или клиента и какие основные данные указать?"
+            )
+
+        cached_reply = self._fast_crm_answer(message)
+        if cached_reply:
+            return cached_reply["reply"]
+
+        return "Не получил стабильный ответ от AI. Повторите вопрос чуть короче или уточните проект."
 
     def _fast_crm_answer(self, message):
         text = normalize_text(message)

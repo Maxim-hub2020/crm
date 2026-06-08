@@ -805,6 +805,15 @@ class TestAssistantApi(AuthenticatedApiMixin, APITestCase):
             ]
         }
 
+    def make_empty_content_response(self, finish_reason="STOP"):
+        return {
+            "candidates": [
+                {
+                    "finishReason": finish_reason,
+                }
+            ]
+        }
+
     def setUp(self):
         self.activate_subscription()
         self.admin = self.create_user("admin.user", role=User.Role.ADMIN)
@@ -1016,6 +1025,46 @@ class TestAssistantApi(AuthenticatedApiMixin, APITestCase):
             ).exists()
         )
         self.assertEqual(response.data["data"]["tool_calls"][0]["name"], "create_financial_operation")
+
+    @patch("crm_app.ai_assistant.GeminiClient.generate_content")
+    def test_assistant_retries_empty_gemini_content(self, mocked_generate_content):
+        os.environ["GEMINI_BACKEND"] = "google_ai"
+        os.environ["GEMINI_API_KEY"] = "test-key"
+        mocked_generate_content.side_effect = [
+            self.make_empty_content_response(),
+            self.make_text_response("По проекту всё в работе."),
+        ]
+        client = self.auth_client_for(self.admin)
+
+        response = client.post(
+            "/api/assistant/chat/",
+            {"message": "Расскажи кратко по текущему проекту"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["reply"], "По проекту всё в работе.")
+        self.assertEqual(mocked_generate_content.call_count, 2)
+
+    @patch("crm_app.ai_assistant.GeminiClient.generate_content")
+    def test_assistant_returns_safe_reply_when_empty_gemini_content_repeats(self, mocked_generate_content):
+        os.environ["GEMINI_BACKEND"] = "google_ai"
+        os.environ["GEMINI_API_KEY"] = "test-key"
+        mocked_generate_content.side_effect = [
+            self.make_empty_content_response(),
+            self.make_empty_content_response(),
+        ]
+        client = self.auth_client_for(self.admin)
+
+        response = client.post(
+            "/api/assistant/chat/",
+            {"message": "Поменяй статус тестового клиента на монтаж"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("Уточните", response.data["reply"])
+        self.assertEqual(mocked_generate_content.call_count, 2)
 
     @patch("crm_app.ai_assistant.GeminiClient.generate_content")
     def test_assistant_can_analyze_project_and_create_tasks(self, mocked_generate_content):
