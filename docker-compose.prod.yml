@@ -76,7 +76,7 @@ services:
       - media_volume:/app/media
       - ./backend/secrets:/app/secrets:ro
     command: >
-      sh -c "python manage.py refresh_crm_memory --force --interval $${CRM_AI_MEMORY_REFRESH_INTERVAL_SECONDS:-120}"
+      sh -c "python manage.py refresh_crm_memory --force --interval $${CRM_AI_MEMORY_REFRESH_INTERVAL_SECONDS:-60}"
 
   nginx:
     image: crm-nginx:latest

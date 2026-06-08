@@ -110,7 +110,7 @@ export default function Finances() {
   const [dateTo, setDateTo] = useState("");
   const [amountFrom, setAmountFrom] = useState("");
   const [amountTo, setAmountTo] = useState("");
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [editingPayment, setEditingPayment] = useState(null);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentForm, setPaymentForm] = useState(createPaymentForm());

@@ -528,6 +528,10 @@ class CRMAssistantService:
         if not clean_message:
             raise ValueError("Сообщение для AI-помощника не может быть пустым.")
 
+        fast_clarification = self._fast_mutation_clarification(clean_message)
+        if fast_clarification:
+            return fast_clarification
+
         fast_response = self._fast_crm_answer(clean_message)
         if fast_response:
             return fast_response
@@ -641,7 +645,10 @@ class CRMAssistantService:
                     forced_tool_retry = True
                     continue
                 if mutation_requested and not self.tool_events:
-                    return "Не создал запись. Повторите команду чуть конкретнее: что именно создать и для какого проекта или клиента."
+                    return (
+                        "Уточните, пожалуйста, что именно создать и для какого проекта или клиента. "
+                        "Например, для финансовой операции нужны проект, сумма и доход или расход."
+                    )
                 return reply
 
             raise GeminiRequestError("Gemini не вернул текстового ответа.")
@@ -748,15 +755,76 @@ class CRMAssistantService:
         ]
         return any(marker in text for marker in stuck_markers)
 
-    def _fast_response(self, reply, intent, data):
+    def _fast_response(self, reply, intent, data, needs_clarification=False):
         payload = {"tool_calls": [], "source": "crm_fast_path"}
         payload.update(data or {})
         return {
             "reply": reply,
             "intent": intent,
             "data": payload,
-            "needs_clarification": False,
+            "needs_clarification": needs_clarification,
         }
+
+    def _fast_mutation_clarification(self, message):
+        text = normalize_text(message)
+        create_markers = [
+            "созда",
+            "создай",
+            "создать",
+            "добав",
+            "добавь",
+            "заведи",
+            "внеси",
+            "запиши",
+            "оформи",
+            "сделай",
+        ]
+        if not any(marker in text for marker in create_markers):
+            return None
+
+        words = re.findall(r"[0-9a-zа-яё#]+", text, flags=re.IGNORECASE)
+        word_count = len(words)
+        has_amount_hint = bool(re.search(r"\d", text)) or any(marker in text for marker in ["руб", "₽", "тысяч"])
+        has_target_hint = any(marker in text for marker in ["проект", "клиент", "по ", "для ", "#"])
+
+        finance_terms = ["финанс", "операц", "платеж", "платёж", "оплат", "доход", "расход", "аванс"]
+        project_terms = ["проект", "заявк", "заказ"]
+        task_terms = ["задач", "дело", "напомин"]
+        client_terms = ["клиент", "контакт"]
+
+        if any(term in text for term in finance_terms) and (not has_amount_hint or (word_count <= 4 and not has_target_hint)):
+            return self._fast_response(
+                "Уточните финансовую операцию: по какому проекту, это доход или расход, какая сумма и какая категория?",
+                "clarify_create_financial_operation_fast",
+                {"command_kind": "finance_operation"},
+                needs_clarification=True,
+            )
+
+        if any(term in text for term in project_terms) and word_count <= 3:
+            return self._fast_response(
+                "Как назвать проект и кто клиент? Можно указать имя или телефон клиента.",
+                "clarify_create_project_fast",
+                {"command_kind": "project"},
+                needs_clarification=True,
+            )
+
+        if any(term in text for term in task_terms) and word_count <= 3:
+            return self._fast_response(
+                "Какую задачу создать? Укажите название, проект и срок, если он уже известен.",
+                "clarify_create_task_fast",
+                {"command_kind": "task"},
+                needs_clarification=True,
+            )
+
+        if any(term in text for term in client_terms) and word_count <= 3:
+            return self._fast_response(
+                "Как зовут клиента? Если есть телефон, продиктуйте его тоже.",
+                "clarify_create_client_fast",
+                {"command_kind": "client"},
+                needs_clarification=True,
+            )
+
+        return None
 
     def _fast_project_line(self, project, status_map, extra=None):
         status_name = status_map.get(project.status) or project.status or "\u0431\u0435\u0437 \u0441\u0442\u0430\u0442\u0443\u0441\u0430"
@@ -843,6 +911,8 @@ class CRMAssistantService:
             "постав",
             "сделай",
             "заведи",
+            "внес",
+            "оформ",
             "заплан",
             "запиш",
             "поручи",
@@ -863,9 +933,15 @@ class CRMAssistantService:
             "проект",
             "клиент",
             "операц",
+            "финанс",
             "платеж",
             "платёж",
             "оплат",
+            "доход",
+            "расход",
+            "аванс",
+            "счет",
+            "счёт",
             "комментар",
             "статус",
             "пользовател",
@@ -918,6 +994,8 @@ class CRMAssistantService:
             "постав",
             "сделай",
             "заведи",
+            "внес",
+            "оформ",
             "заплан",
             "запиш",
             "измени",
@@ -1069,11 +1147,20 @@ class CRMAssistantService:
             if accounts:
                 lines.append("Счета: " + ", ".join(account.get("name", "") for account in accounts[:10]) + ".")
             if categories:
-                lines.append("Категории финансов: " + ", ".join(category.get("name", "") for category in categories[:20]) + ".")
+                lines.append(
+                    "Категории финансов: "
+                    + ", ".join(
+                        f"{category.get('name', '')} ({'доход' if category.get('type') == FinanceCategory.Type.INCOME else 'расход'})"
+                        for category in categories[:20]
+                    )
+                    + "."
+                )
             if payments:
                 lines.append("Последние платежи:")
                 for payment in payments[:10]:
-                    lines.append(f"- #{payment.get('payment_id')} {payment.get('project')} | {format_money(payment.get('amount'))} ₽ | {payment.get('type')}")
+                    category = payment.get("category") or payment.get("type")
+                    account = f" | счёт: {payment.get('account')}" if payment.get("account") else ""
+                    lines.append(f"- #{payment.get('payment_id')} {payment.get('project')} | {format_money(payment.get('amount'))} ₽ | {category}{account}")
 
         return "\n".join(lines)
 
@@ -1101,6 +1188,9 @@ class CRMAssistantService:
             "Для вопросов про зависшие проекты используй список stuck_projects из кэш-снимка или функцию list_stuck_projects. "
             "Модуль клиентов сейчас строится по клиентским данным проектов; create_client создаёт клиентскую карточку в CRM как проект в первом/дефолтном статусе без суммы. "
             "Финансовая операция — это платёж по проекту; для создания операции используй create_financial_operation или create_payment. "
+            "Фразы-синонимы вроде «создай операцию», «добавь финансовую операцию», «внеси расход», «добавь доход», «создай проект», «добавь проект», «заведи клиента», «поставь задачу» понимай как команды CRM. "
+            "Если команда создания неполная, не говори «запись не создана» и не называй это ошибкой: задай один короткий наводящий вопрос. "
+            "Для финансовой операции уточняй проект, сумму, доход или расход, а затем категорию и счёт, если они нужны. "
             "Если пользователь просит проанализировать проект и сам создать по нему задачи, используй create_project_tasks_from_analysis: выбери понятные рабочие задачи по статусу, описанию, адресу, сумме, комментариям и финансам проекта. "
             "Для общих справочных вопросов используй кэш-снимок CRM ниже и не вызывай функции без необходимости. "
             "Все фактические ответы о проектах, задачах, финансах, комментариях, пользователях и статусах строй только на основании кэш-снимка CRM или результатов доступных функций. "
@@ -1356,12 +1446,16 @@ class CRMAssistantService:
                         "project_id": {"type": "integer"},
                         "project_query": {"type": "string"},
                         "amount": {"type": "number"},
+                        "operation_kind": {"type": "string", "enum": ["income", "expense"], "description": "Доход или расход."},
+                        "category_id": {"type": "integer"},
+                        "category_name": {"type": "string", "description": "Категория из системных настроек финансов."},
+                        "account_id": {"type": "integer"},
+                        "account_name": {"type": "string", "description": "Счёт из системных настроек."},
                         "payment_type": {"type": "string", "enum": ["advance", "additional", "refund", "correction"]},
                         "payment_method": {"type": "string", "enum": ["transfer", "cash", "card", "other"]},
                         "comment": {"type": "string"},
                         "paid_at": {"type": "string", "description": "Дата или дата-время платежа в ISO-формате."},
                     },
-                    "required": ["amount"],
                 },
             },
             {
@@ -1373,12 +1467,16 @@ class CRMAssistantService:
                         "project_id": {"type": "integer"},
                         "project_query": {"type": "string"},
                         "amount": {"type": "number"},
+                        "operation_kind": {"type": "string", "enum": ["income", "expense"], "description": "Доход или расход."},
+                        "category_id": {"type": "integer"},
+                        "category_name": {"type": "string", "description": "Категория из системных настроек финансов."},
+                        "account_id": {"type": "integer"},
+                        "account_name": {"type": "string", "description": "Счёт из системных настроек."},
                         "payment_type": {"type": "string", "enum": ["advance", "additional", "refund", "correction"]},
                         "payment_method": {"type": "string", "enum": ["transfer", "cash", "card", "other"]},
                         "comment": {"type": "string"},
                         "paid_at": {"type": "string", "description": "Дата или дата-время платежа в ISO-формате."},
                     },
-                    "required": ["amount"],
                 },
             },
             {
@@ -1562,6 +1660,8 @@ class CRMAssistantService:
 
     @staticmethod
     def _invalidate_memory_snapshots():
+        if not is_truthy(os.getenv("CRM_AI_MEMORY_INVALIDATE_ON_MUTATION")):
+            return
         CRMMemorySnapshot.objects.all().delete()
 
     def _memory_ttl_seconds(self):
@@ -1590,6 +1690,9 @@ class CRMAssistantService:
             and snapshot_schema == CRM_MEMORY_SCHEMA_VERSION
             and snapshot.refreshed_at >= now - timedelta(seconds=ttl_seconds)
         ):
+            return snapshot
+
+        if snapshot and snapshot_schema == CRM_MEMORY_SCHEMA_VERSION and not is_truthy(os.getenv("CRM_AI_MEMORY_SYNC_REFRESH")):
             return snapshot
 
         payload, summary_text = self._build_memory_snapshot(ttl_seconds=ttl_seconds, refreshed_at=now)
@@ -1720,6 +1823,9 @@ class CRMAssistantService:
                     "project": payment.project.client_name,
                     "amount": str(payment.amount),
                     "type": payment.type,
+                    "category": payment.category.name if payment.category else "",
+                    "category_type": payment.category.type if payment.category else "",
+                    "account": payment.account.name if payment.account else "",
                     "method": payment.method,
                     "paid_at": payment.paid_at.isoformat() if payment.paid_at else "",
                     "comment": truncate_text(payment.comment, 100),
@@ -1810,8 +1916,10 @@ class CRMAssistantService:
         if payment_rows:
             summary_lines.append("Последние платежи:")
             for payment in payment_rows[:10]:
+                category = payment["category"] or payment["type"]
+                account = f" | счёт: {payment['account']}" if payment["account"] else ""
                 summary_lines.append(
-                    f"- #{payment['payment_id']} {payment['project']} | {format_money(payment['amount'])} ₽ | {payment['type']} | {payment['paid_at'][:10]}"
+                    f"- #{payment['payment_id']} {payment['project']} | {format_money(payment['amount'])} ₽ | {category}{account} | {payment['paid_at'][:10]}"
                 )
 
         return payload, "\n".join(summary_lines)
@@ -1829,7 +1937,7 @@ class CRMAssistantService:
         return Client.objects.all().order_by("name", "id")
 
     def _visible_payments(self):
-        queryset = Payment.objects.select_related("project", "created_by").all().order_by("-paid_at", "-id")
+        queryset = Payment.objects.select_related("project", "created_by", "category", "account").all().order_by("-paid_at", "-id")
         if self.user.is_admin():
             return queryset
         return queryset.filter(project__manager=self.user)
@@ -1911,6 +2019,9 @@ class CRMAssistantService:
             "project_name": payment.project.client_name,
             "amount": str(payment.amount),
             "type": payment.type,
+            "category_name": payment.category.name if payment.category else "",
+            "category_type": payment.category.type if payment.category else "",
+            "account_name": payment.account.name if payment.account else "",
             "method": payment.method,
             "comment": payment.comment or "",
             "paid_at": payment.paid_at.isoformat() if payment.paid_at else "",
@@ -2053,6 +2164,42 @@ class CRMAssistantService:
             haystack = normalize_text(" ".join(filter(None, [person.first_name, person.last_name, person.username])))
             if wanted and wanted in haystack:
                 return person
+
+        return None
+
+    def _match_finance_category(self, identifier, operation_kind=None):
+        if not identifier:
+            return None
+
+        wanted = normalize_text(identifier)
+        queryset = FinanceCategory.objects.all().order_by("type", "name", "id")
+        if operation_kind in FinanceCategory.Type.values:
+            queryset = queryset.filter(type=operation_kind)
+
+        categories = list(queryset)
+        for category in categories:
+            if wanted in {normalize_text(category.name), str(category.id)}:
+                return category
+
+        for category in categories:
+            if wanted and wanted in normalize_text(category.name):
+                return category
+
+        return None
+
+    def _match_account(self, identifier):
+        if not identifier:
+            return None
+
+        wanted = normalize_text(identifier)
+        accounts = list(Account.objects.all().order_by("name", "id"))
+        for account in accounts:
+            if wanted in {normalize_text(account.name), str(account.id)}:
+                return account
+
+        for account in accounts:
+            if wanted and wanted in normalize_text(account.name):
+                return account
 
         return None
 
@@ -2912,32 +3059,95 @@ class CRMAssistantService:
         }
 
     def _tool_create_payment(self, arguments):
+        project_id = parse_int(arguments.get("project_id"))
+        project_query = str(arguments.get("project_query") or "").strip()
+        amount = parse_decimal(arguments.get("amount"))
+        operation_kind = normalize_text(arguments.get("operation_kind"))
+        operation_kind_aliases = {
+            "доход": FinanceCategory.Type.INCOME,
+            "приход": FinanceCategory.Type.INCOME,
+            "income": FinanceCategory.Type.INCOME,
+            "расход": FinanceCategory.Type.EXPENSE,
+            "expense": FinanceCategory.Type.EXPENSE,
+        }
+        operation_kind = operation_kind_aliases.get(operation_kind, operation_kind)
+        if operation_kind not in FinanceCategory.Type.values:
+            operation_kind = ""
+
+        category = None
+        category_id = parse_int(arguments.get("category_id"))
+        category_name = str(arguments.get("category_name") or "").strip()
+        if category_id:
+            category = FinanceCategory.objects.filter(id=category_id).first()
+            if not category:
+                return self._clarification("Не нашёл финансовую категорию с таким ID.", [])
+        elif category_name:
+            category = self._match_finance_category(category_name, operation_kind=operation_kind or None)
+            if not category:
+                options = [
+                    f"{item.id}: {item.name}"
+                    for item in FinanceCategory.objects.filter(type=operation_kind).order_by("name", "id")[:8]
+                ] if operation_kind else [
+                    f"{item.id}: {item.name} ({'доход' if item.type == FinanceCategory.Type.INCOME else 'расход'})"
+                    for item in FinanceCategory.objects.all().order_by("type", "name", "id")[:8]
+                ]
+                return self._clarification("Не нашёл такую финансовую категорию. Уточните категорию.", options)
+
+        if category and not operation_kind:
+            operation_kind = category.type
+
+        missing = []
+        if not project_id and not project_query:
+            missing.append("проект")
+        if amount is None or amount <= 0:
+            missing.append("сумму")
+        if not operation_kind and not arguments.get("payment_type"):
+            missing.append("доход или расход")
+        if missing:
+            return self._clarification(
+                "Уточните финансовую операцию: " + ", ".join(missing) + ".",
+                [],
+            )
+
         project, clarification = self._resolve_single_project(
-            project_id=parse_int(arguments.get("project_id")),
-            project_query=arguments.get("project_query"),
+            project_id=project_id,
+            project_query=project_query,
         )
         if clarification:
             return clarification
-
-        amount = parse_decimal(arguments.get("amount"))
-        if amount is None:
-            return self._clarification("Чтобы создать платёж, укажите корректную сумму.", [])
 
         paid_at = parse_iso_datetime(arguments.get("paid_at")) if "paid_at" in arguments else None
         if arguments.get("paid_at") and not paid_at:
             return self._clarification("Не смог разобрать дату платежа. Нужен ISO-формат.", [])
 
-        payment_type = arguments.get("payment_type") or Payment.Type.ADVANCE
+        payment_type = arguments.get("payment_type")
+        if not payment_type:
+            payment_type = Payment.Type.CORRECTION if operation_kind == FinanceCategory.Type.EXPENSE else Payment.Type.ADVANCE
         if payment_type not in Payment.Type.values:
-            payment_type = Payment.Type.ADVANCE
+            payment_type = Payment.Type.CORRECTION if operation_kind == FinanceCategory.Type.EXPENSE else Payment.Type.ADVANCE
 
         payment_method = arguments.get("payment_method") or Payment.Method.TRANSFER
         if payment_method not in Payment.Method.values:
             payment_method = Payment.Method.TRANSFER
 
+        account = None
+        account_id = parse_int(arguments.get("account_id"))
+        account_name = str(arguments.get("account_name") or "").strip()
+        if account_id:
+            account = Account.objects.filter(id=account_id).first()
+            if not account:
+                return self._clarification("Не нашёл счёт с таким ID.", [])
+        elif account_name:
+            account = self._match_account(account_name)
+            if not account:
+                options = [f"{item.id}: {item.name}" for item in Account.objects.all().order_by("name", "id")[:8]]
+                return self._clarification("Не нашёл такой счёт. Уточните счёт.", options)
+
         payment = Payment.objects.create(
             project=project,
             created_by=self.user,
+            category=category,
+            account=account,
             amount=amount,
             type=payment_type,
             method=payment_method,
@@ -2948,7 +3158,7 @@ class CRMAssistantService:
         return {
             "ok": True,
             "needs_clarification": False,
-            "summary": f"Добавлен платёж {format_money(payment.amount)} ₽ по проекту «{project.client_name}».",
+            "summary": f"Добавлена финансовая операция {format_money(payment.amount)} ₽ по проекту «{self._project_display_name(project)}».",
             "payment": self._serialize_payment(payment),
         }
 

@@ -114,7 +114,7 @@ def assistant_chat_view(request):
 
     try:
         fast_service = CRMAssistantService(request.user, init_gemini_client=False)
-        fast_result = fast_service._fast_crm_answer(message)
+        fast_result = fast_service._fast_mutation_clarification(message) or fast_service._fast_crm_answer(message)
         if fast_result:
             return Response(fast_result)
 
