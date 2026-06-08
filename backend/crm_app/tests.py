@@ -902,6 +902,24 @@ class TestAssistantApi(AuthenticatedApiMixin, APITestCase):
         mocked_generate_content.assert_not_called()
 
     @patch("crm_app.ai_assistant.GeminiClient.generate_content")
+    def test_assistant_clarifies_vague_project_creation_without_gemini_roundtrip(self, mocked_generate_content):
+        os.environ["GEMINI_BACKEND"] = "google_ai"
+        os.environ["GEMINI_API_KEY"] = "test-key"
+        client = self.auth_client_for(self.admin)
+
+        response = client.post(
+            "/api/assistant/chat/",
+            {"message": "Давай создадим проект"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["intent"], "clarify_create_project_fast")
+        self.assertTrue(response.data["needs_clarification"])
+        self.assertIn("клиент", response.data["reply"].lower())
+        mocked_generate_content.assert_not_called()
+
+    @patch("crm_app.ai_assistant.GeminiClient.generate_content")
     def test_assistant_can_create_task(self, mocked_generate_content):
         os.environ["GEMINI_BACKEND"] = "google_ai"
         os.environ["GEMINI_API_KEY"] = "test-key"

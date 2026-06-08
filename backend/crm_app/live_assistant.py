@@ -92,6 +92,11 @@ def _build_tool_declarations(service):
 
 
 @database_sync_to_async
+def _fast_mutation_clarification(service, text):
+    return service._fast_mutation_clarification(text)
+
+
+@database_sync_to_async
 def _execute_assistant_tool(service, tool_name, arguments):
     clean_arguments = arguments if isinstance(arguments, dict) else {}
     result = service._execute_tool(tool_name, clean_arguments)
@@ -267,7 +272,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 logger.info("Assistant Live connected: model=%s location=%s silence_ms=%s", model, location, silence_ms)
                 await asyncio.gather(
                     self._send_audio_to_gemini(session, types),
-                    self._send_text_to_gemini(session, types),
+                    self._send_text_to_gemini(session, types, service),
                     self._receive_from_gemini(session, types, service),
                 )
         except asyncio.CancelledError:
@@ -300,9 +305,22 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 audio=types.Blob(data=chunk, mimeType=f"audio/pcm;rate={self.input_sample_rate}")
             )
 
-    async def _send_text_to_gemini(self, session, types):
+    async def _send_text_to_gemini(self, session, types, service):
         while True:
             text = await self.text_input_queue.get()
+            fast_response = await _fast_mutation_clarification(service, text)
+            if fast_response:
+                await self._send_event(
+                    {
+                        "type": "tool_call",
+                        "name": fast_response.get("intent", "clarification"),
+                        "arguments": {"text": text},
+                        "result": {"ok": False, "needs_clarification": True, "summary": fast_response["reply"]},
+                        "reply": fast_response["reply"],
+                    }
+                )
+                await self._send_event({"type": "turn_complete"})
+                continue
             await session.send_realtime_input(text=text)
 
     async def _receive_from_gemini(self, session, types, service):

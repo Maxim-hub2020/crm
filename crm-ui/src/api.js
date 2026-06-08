@@ -71,12 +71,21 @@ export function isAdminUser(user) {
   return Boolean(user && (user.is_admin || user.role === "admin" || user.is_superuser || user.is_staff));
 }
 
+function normalizeErrorText(value, fallback) {
+  const text = String(value || "").trim();
+  if (!text) return fallback;
+  if (/<!doctype html|<html[\s>]|<body[\s>]|<h1[\s>]/i.test(text)) {
+    return "Сервер вернул HTML-страницу ошибки. Проверьте, что API-путь доступен, и повторите запрос.";
+  }
+  return text;
+}
+
 export function extractApiErrorMessage(error, fallback = "Ошибка запроса") {
   const data = error?.response?.data;
 
-  if (!data && error?.message) return error.message;
+  if (!data && error?.message) return normalizeErrorText(error.message, fallback);
   if (!data) return fallback;
-  if (typeof data === "string") return data;
+  if (typeof data === "string") return normalizeErrorText(data, fallback);
   if (Array.isArray(data)) return data.join(", ");
 
   if (typeof data === "object") {
@@ -86,7 +95,7 @@ export function extractApiErrorMessage(error, fallback = "Ошибка запр�
       if (Array.isArray(value)) {
         parts.push(`${key}: ${value.join(", ")}`);
       } else if (typeof value === "string") {
-        parts.push(`${key}: ${value}`);
+        parts.push(`${key}: ${normalizeErrorText(value, fallback)}`);
       }
     }
 
