@@ -11,6 +11,7 @@
 ## What the app does now
 - Stores projects and client cards
 - Stores payments linked to projects
+- Has a `Чаты` module for Chatwoot unified inbox integration
 - Supports `admin` and `manager` roles
 - Supports Gemini/Vertex voice assistant through backend endpoint `/api/assistant/voice/`
 - Does not calculate manager commissions in the current version
@@ -128,3 +129,6 @@ The production compose file builds the frontend into the Nginx image, runs Djang
 
 TimeWeb deployment guide:
 - [docs/timeweb-deploy.md](docs/timeweb-deploy.md)
+
+Chatwoot chats integration:
+- [docs/chatwoot-integration.md](docs/chatwoot-integration.md)

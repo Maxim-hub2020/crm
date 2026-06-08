@@ -9,6 +9,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!.env.chatwoot.example
 venv/
 .venv/
 backend/.venv_test/

@@ -1,0 +1,91 @@
+services:
+  chatwoot-postgres:
+    image: public.ecr.aws/docker/library/postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${CHATWOOT_POSTGRES_DB:-chatwoot}
+      POSTGRES_USER: ${CHATWOOT_POSTGRES_USER:-chatwoot}
+      POSTGRES_PASSWORD: ${CHATWOOT_POSTGRES_PASSWORD}
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - chatwoot_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CHATWOOT_POSTGRES_USER:-chatwoot} -d ${CHATWOOT_POSTGRES_DB:-chatwoot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chatwoot-redis:
+    image: public.ecr.aws/docker/library/redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - chatwoot_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chatwoot:
+    image: ${CHATWOOT_IMAGE:-chatwoot/chatwoot:latest-ce}
+    restart: unless-stopped
+    env_file:
+      - .env.chatwoot
+    depends_on:
+      chatwoot-postgres:
+        condition: service_healthy
+      chatwoot-redis:
+        condition: service_healthy
+    environment:
+      RAILS_ENV: production
+      NODE_ENV: production
+      INSTALLATION_ENV: docker
+      DATABASE_URL: postgres://${CHATWOOT_POSTGRES_USER:-chatwoot}:${CHATWOOT_POSTGRES_PASSWORD}@chatwoot-postgres:5432/${CHATWOOT_POSTGRES_DB:-chatwoot}
+      REDIS_URL: redis://chatwoot-redis:6379
+      FRONTEND_URL: ${CHATWOOT_FRONTEND_URL}
+      SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
+    volumes:
+      - chatwoot_storage:/app/storage
+    expose:
+      - "3000"
+    networks:
+      default:
+      crm_public:
+        aliases:
+          - chatwoot
+    command: >
+      sh -c "bundle exec rails db:chatwoot_prepare &&
+             bundle exec rails s -p 3000 -b 0.0.0.0"
+
+  chatwoot-sidekiq:
+    image: ${CHATWOOT_IMAGE:-chatwoot/chatwoot:latest-ce}
+    restart: unless-stopped
+    env_file:
+      - .env.chatwoot
+    depends_on:
+      chatwoot-postgres:
+        condition: service_healthy
+      chatwoot-redis:
+        condition: service_healthy
+    environment:
+      RAILS_ENV: production
+      NODE_ENV: production
+      INSTALLATION_ENV: docker
+      DATABASE_URL: postgres://${CHATWOOT_POSTGRES_USER:-chatwoot}:${CHATWOOT_POSTGRES_PASSWORD}@chatwoot-postgres:5432/${CHATWOOT_POSTGRES_DB:-chatwoot}
+      REDIS_URL: redis://chatwoot-redis:6379
+      FRONTEND_URL: ${CHATWOOT_FRONTEND_URL}
+      SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
+    volumes:
+      - chatwoot_storage:/app/storage
+    command: bundle exec sidekiq -C config/sidekiq.yml
+
+volumes:
+  chatwoot_postgres_data:
+  chatwoot_redis_data:
+  chatwoot_storage:
+
+networks:
+  crm_public:
+    external: true
+    name: crm_default

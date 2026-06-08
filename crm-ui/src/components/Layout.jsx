@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Briefcase, FolderKanban, Home, ListTodo, LogOut, Menu, Mic, Settings, ShieldQuestion, Users, Wallet } from "lucide-react";
+import { Briefcase, FolderKanban, Home, ListTodo, LogOut, Menu, MessageCircle, Mic, Settings, ShieldQuestion, Users, Wallet } from "lucide-react";
 import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
 
 import { clearToken, fetchMe, getUser, isAdminUser } from "../api";
@@ -9,6 +9,7 @@ const ROUTE_META = {
   "/": { title: "Дашборд", icon: Home },
   "/assistant": { title: "Ассистент", icon: Mic },
   "/projects": { title: "Проекты", icon: FolderKanban },
+  "/chats": { title: "Чаты", icon: MessageCircle },
   "/finances": { title: "Финансы", icon: Wallet },
   "/clients": { title: "Клиенты", icon: Users },
   "/tasks": { title: "Задачи", icon: ListTodo },
@@ -92,6 +93,7 @@ export default function Layout({ children }) {
         <nav className="mt-4 flex flex-1 flex-col px-3">
           <NavItem to="/" icon={Home} label="Дашборд" onClick={closeSidebar} />
           <NavItem to="/projects" icon={FolderKanban} label="Проекты" onClick={closeSidebar} />
+          <NavItem to="/chats" icon={MessageCircle} label="Чаты" onClick={closeSidebar} />
           {isAdmin && <NavItem to="/finances" icon={Wallet} label="Финансы" onClick={closeSidebar} />}
           <NavItem to="/tasks" icon={ListTodo} label="Задачи" onClick={closeSidebar} />
           <NavItem to="/clients" icon={Users} label="Клиенты" onClick={closeSidebar} />
