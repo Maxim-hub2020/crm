@@ -78,6 +78,41 @@ class TestAuthApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(me_response.data["full_name"], "Ivan Petrov")
         self.assertEqual(me_response.data["role"], User.Role.MANAGER)
 
+    def test_user_can_login_with_email(self):
+        user = self.create_user(
+            "manager.email",
+            email="manager@example.com",
+            first_name="Email",
+            last_name="User",
+        )
+
+        token_response = self.client.post(
+            "/api/auth/token/",
+            {"username": user.email, "password": self.default_password},
+            format="json",
+        )
+
+        self.assertEqual(token_response.status_code, status.HTTP_200_OK)
+        self.assertIn("access", token_response.data)
+
+    def test_token_refresh_endpoint_matches_frontend_path(self):
+        user = self.create_user("manager.refresh")
+        token_response = self.client.post(
+            "/api/auth/token/",
+            {"username": user.username, "password": self.default_password},
+            format="json",
+        )
+        self.assertEqual(token_response.status_code, status.HTTP_200_OK)
+
+        refresh_response = self.client.post(
+            "/api/auth/token/refresh/",
+            {"refresh": token_response.data["refresh"]},
+            format="json",
+        )
+
+        self.assertEqual(refresh_response.status_code, status.HTTP_200_OK)
+        self.assertIn("access", refresh_response.data)
+
     def test_superuser_profile_exposes_admin_access(self):
         user = User.objects.create_superuser(
             username="root.user",

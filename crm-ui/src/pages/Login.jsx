@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { fetchBillingSummary, fetchMe, isAdminUser, login } from "../api";
+import { extractApiErrorMessage, fetchBillingSummary, fetchMe, isAdminUser, login } from "../api";
 import { BrandLogo } from "../components/BrandLogo.jsx";
 import { Input } from "../components/ui.jsx";
 
@@ -27,8 +27,8 @@ export default function Login() {
 
       const billing = await fetchBillingSummary();
       nav(billing?.subscription?.is_active_now || billing?.trial?.can_use_trial ? "/" : "/billing");
-    } catch {
-      setErr("Неверный логин или пароль");
+    } catch (error) {
+      setErr(extractApiErrorMessage(error, "Неверный логин или пароль"));
     } finally {
       setLoading(false);
     }
