@@ -160,6 +160,20 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(created_project.manager_id, self.manager.id)
         self.assertEqual(created_project.title, "Kitchen Project")
         self.assertEqual(response.data["title"], "Kitchen Project")
+        self.assertEqual(response.data["order_number"], created_project.order_number)
+        self.assertEqual(response.data["order_number_label"], f"{created_project.order_number:04d}")
+
+    def test_projects_receive_sequential_order_numbers(self):
+        self.assertEqual(self.manager_project.order_number, 1)
+        self.assertEqual(self.other_project.order_number, 2)
+
+        created_project = Project.objects.create(
+            manager=self.manager,
+            client_name="Client Three",
+            client_phone="+70000000003",
+        )
+
+        self.assertEqual(created_project.order_number, 3)
 
     def test_project_create_creates_or_reuses_client_card(self):
         client = self.auth_client_for(self.manager)
@@ -280,6 +294,32 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(self.client_card.email, "updated@example.com")
         self.assertEqual(self.client_card.address, "Updated address")
         self.assertTrue(self.client_card.works_with_contract)
+
+    def test_client_update_does_not_overwrite_project_object_address(self):
+        project = Project.objects.create(
+            manager=self.manager,
+            client=self.client_card,
+            title="Kitchen",
+            client_name=self.client_card.name,
+            client_phone=self.client_card.phone,
+            object_address="Object address",
+        )
+        api_client = self.auth_client_for(self.manager)
+
+        response = api_client.patch(
+            f"/api/clients/{self.client_card.id}/",
+            {
+                "name": "Updated Client",
+                "phone": "+70000000001",
+                "address": "Client address",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        project.refresh_from_db()
+        self.assertEqual(project.client_name, "Updated Client")
+        self.assertEqual(project.object_address, "Object address")
 
 
 class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
@@ -1298,6 +1338,25 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
 
         self.assertEqual(sent_audio, [b"inline-audio"])
 
+    def test_live_context_keeps_last_project_from_tool_result(self):
+        consumer = AssistantLiveConsumer()
+        consumer.live_context = []
+        event = {
+            "name": "create_deal",
+            "result": {
+                "ok": True,
+                "project": {
+                    "project_id": 42,
+                    "title": "Зеркало в ванную",
+                },
+            },
+        }
+
+        consumer._append_live_context("assistant", consumer._tool_context_text(event, "Готово."))
+
+        self.assertIn("last_project_id=42", consumer.live_context[-1]["text"])
+        self.assertIn("last_project_title=Зеркало в ванную", consumer.live_context[-1]["text"])
+
     def test_live_tool_declarations_are_limited_to_low_latency_functions(self):
         service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
 
@@ -1493,6 +1552,54 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
         self.assertTrue(result["ok"])
         created_project = Project.objects.get(title="Зеркало в ванную", client_name="Иван")
         self.assertEqual(created_project.total_amount, Decimal("120000"))
+
+    @patch.dict(os.environ, {"DADATA_API_KEY": "", "VITE_DADATA_API_KEY": ""})
+    def test_create_project_rejects_sparse_ai_address_without_dadata(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._execute_tool(
+            "create_project",
+            {
+                "title": "Зеркало",
+                "client_name": "Иван",
+                "object_address": "Далмановский",
+                "skip_optional_details": True,
+            },
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["needs_clarification"])
+        self.assertIn("Адрес выглядит неполным", result["summary"])
+        self.assertFalse(Project.objects.filter(title="Зеркало", client_name="Иван").exists())
+
+    @patch.object(
+        CRMAssistantService,
+        "_suggest_dadata_address",
+        return_value=[
+            {
+                "value": "г Москва, ул Ленина, д 5",
+                "data": {"geo_lat": "55.755864", "geo_lon": "37.617698"},
+            }
+        ],
+    )
+    def test_create_project_normalizes_ai_address_with_dadata(self, _mocked_suggest):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._execute_tool(
+            "create_project",
+            {
+                "title": "Зеркало",
+                "client_name": "Иван",
+                "object_address": "Ленина 5",
+                "skip_optional_details": True,
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        created_project = Project.objects.get(title="Зеркало", client_name="Иван")
+        self.assertEqual(created_project.object_address, "г Москва, ул Ленина, д 5")
+        self.assertEqual(created_project.object_lat, "55.755864")
+        self.assertEqual(created_project.object_lon, "37.617698")
 
     def test_finance_operation_infers_income_advance_from_raw_text(self):
         project = Project.objects.create(

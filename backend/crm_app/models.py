@@ -67,6 +67,7 @@ class Client(models.Model):
 class Project(models.Model):
     manager = models.ForeignKey(User, on_delete=models.PROTECT, related_name="projects")
     client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="projects", blank=True, null=True)
+    order_number = models.PositiveIntegerField(blank=True, null=True, unique=True, db_index=True)
     title = models.CharField(max_length=200, blank=True, default="")
     client_name = models.CharField(max_length=200)
     client_phone = models.CharField(max_length=50, db_index=True)
@@ -91,6 +92,9 @@ class Project(models.Model):
     def save(self, *args, **kwargs):
         if not self.title:
             self.title = self.client_name or "Проект"
+        if not self.order_number:
+            max_number = Project.objects.aggregate(models.Max("order_number")).get("order_number__max") or 0
+            self.order_number = max_number + 1
         super().save(*args, **kwargs)
 
 

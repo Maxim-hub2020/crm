@@ -1482,6 +1482,8 @@ class CRMAssistantService:
             "Если название и клиент есть, но нет бюджета, адреса и статуса, перед созданием один раз спроси: указать бюджет, адрес или статус, либо создать без них. "
             "Телефон клиента при создании проекта необязателен: если пользователь говорит «без телефона» или «телефона нет», оставляй client_phone пустым и не жди номер. "
             "Если пользователь отвечает «нет», «не надо», «без бюджета», «без адреса», «без телефона» или «создавай так», вызывай create_project/create_deal со skip_optional_details=true и не подставляй выдуманные optional-данные. "
+            "Если пользователь называет адрес объекта, передавай его в object_address; backend проверит и нормализует адрес через Dadata. "
+            "Если функция просит уточнить адрес, спроси город, улицу и дом, не сохраняй сомнительный адрес сам. "
             "Для финансовой операции выводи тип и категорию из смысла фразы: «аванс» — доход и категория «Аванс», «оплата клиента» — доход, «доставка», «монтаж», «комплектующие», «аренда» — расход. "
             "Если не уверен, уточняй проект, сумму, доход или расход, а затем категорию и счёт, если они нужны. "
             "Если пользователь просит проанализировать проект и сам создать по нему задачи, используй create_project_tasks_from_analysis: выбери понятные рабочие задачи по статусу, описанию, адресу, сумме, комментариям и финансам проекта. "
@@ -2286,6 +2288,8 @@ class CRMAssistantService:
             stuck_after_days = self._project_stuck_after_days(project, status_obj)
             row = {
                 "project_id": project.id,
+                "order_number": project.order_number,
+                "order_number_label": self._project_order_label(project),
                 "title": self._project_display_name(project),
                 "client_name": (client.name if client else project.client_name) or "",
                 "status": status_map.get(project.status, project.status),
@@ -2348,6 +2352,8 @@ class CRMAssistantService:
                 {
                     "payment_id": payment.id,
                     "project_id": payment.project_id,
+                    "project_order_number": payment.project.order_number,
+                    "project_order_number_label": self._project_order_label(payment.project),
                     "project": payment.project.client_name,
                     "amount": str(payment.amount),
                     "type": payment.type,
@@ -2490,10 +2496,16 @@ class CRMAssistantService:
     def _project_display_name(self, project):
         return project.title or project.client_name or f"Проект #{project.id}"
 
+    @staticmethod
+    def _project_order_label(project):
+        return f"{project.order_number:04d}" if getattr(project, "order_number", None) else ""
+
     def _serialize_project(self, project, include_payments=False, include_comments=False):
         client = project.client
         payload = {
             "project_id": project.id,
+            "order_number": project.order_number,
+            "order_number_label": self._project_order_label(project),
             "title": self._project_display_name(project),
             "client_id": client.id if client else None,
             "client_name": (client.name if client else project.client_name) or "",
@@ -2528,6 +2540,8 @@ class CRMAssistantService:
         return {
             "task_id": task.id,
             "project_id": task.project_id,
+            "project_order_number": task.project.order_number if task.project else None,
+            "project_order_number_label": self._project_order_label(task.project) if task.project else "",
             "project_title": (task.project.title or task.project.client_name) if task.project else "",
             "title": task.title,
             "notes": truncate_text(task.notes, 300),
@@ -2544,6 +2558,8 @@ class CRMAssistantService:
         return {
             "payment_id": payment.id,
             "project_id": payment.project_id,
+            "project_order_number": payment.project.order_number,
+            "project_order_number_label": self._project_order_label(payment.project),
             "project_name": payment.project.client_name,
             "amount": str(payment.amount),
             "type": payment.type,
@@ -2862,6 +2878,98 @@ class CRMAssistantService:
 
         return None
 
+    @staticmethod
+    def _dadata_api_key():
+        return (os.getenv("DADATA_API_KEY") or os.getenv("VITE_DADATA_API_KEY") or "").strip()
+
+    @staticmethod
+    def _is_sparse_address_hint(address):
+        text = normalize_text(address)
+        if not text:
+            return False
+
+        words = re.findall(r"[a-zа-яё0-9]+", text, flags=re.IGNORECASE)
+        has_digit = any(char.isdigit() for char in text)
+        has_address_marker = any(
+            marker in text
+            for marker in [
+                "улиц",
+                "ул ",
+                "просп",
+                "пр-т",
+                "переул",
+                "пер ",
+                "дом",
+                "д ",
+                "шоссе",
+                "проезд",
+                "бульвар",
+                "наб ",
+                "набереж",
+                "москва",
+                "санкт",
+                "город",
+            ]
+        )
+        return len(words) <= 1 or (not has_digit and not has_address_marker and len(words) < 4)
+
+    @classmethod
+    def _suggest_dadata_address(cls, query):
+        api_key = cls._dadata_api_key()
+        if not api_key:
+            return []
+
+        payload = json.dumps({"query": query, "count": 1}, ensure_ascii=False).encode("utf-8")
+        request = urllib_request.Request(
+            "https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address",
+            data=payload,
+            headers={
+                "Authorization": f"Token {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=5) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except (OSError, ValueError, urllib_error.URLError):
+            return []
+
+        suggestions = data.get("suggestions") if isinstance(data, dict) else []
+        return suggestions if isinstance(suggestions, list) else []
+
+    def _normalize_ai_project_address(self, address):
+        raw_address = str(address or "").strip()
+        if not raw_address:
+            return {"ok": True, "address": "", "lat": "", "lon": ""}
+
+        suggestions = self._suggest_dadata_address(raw_address)
+        if suggestions:
+            suggestion = suggestions[0] or {}
+            data = suggestion.get("data") or {}
+            normalized_address = suggestion.get("value") or suggestion.get("unrestricted_value") or raw_address
+            return {
+                "ok": True,
+                "address": str(normalized_address or "").strip(),
+                "lat": str(data.get("geo_lat") or "").strip(),
+                "lon": str(data.get("geo_lon") or "").strip(),
+            }
+
+        if self._dadata_api_key():
+            return self._clarification(
+                "Не смог подтвердить адрес через Dadata. Уточните полный адрес: город, улица и дом.",
+                [],
+            )
+
+        if self._is_sparse_address_hint(raw_address):
+            return self._clarification(
+                "Адрес выглядит неполным. Уточните полный адрес: город, улица и дом.",
+                [],
+            )
+
+        return {"ok": True, "address": raw_address, "lat": "", "lon": ""}
+
     def _find_projects(self, query):
         if not query:
             return []
@@ -3163,7 +3271,7 @@ class CRMAssistantService:
     def _get_or_create_client_from_arguments(self, arguments, client_name):
         phone = str(arguments.get("client_phone") or "").strip()
         email = str(arguments.get("client_email") or "").strip() or None
-        address = str(arguments.get("object_address") or "").strip() or None
+        address = str(arguments.get("client_address") or "").strip() or None
 
         client = Client.objects.filter(phone=phone).first() if phone else None
         if client is None and client_name:
@@ -3200,6 +3308,7 @@ class CRMAssistantService:
         return client
 
     def _tool_create_project(self, arguments):
+        arguments = dict(arguments or {})
         client_name = str(arguments.get("client_name") or "").strip()
         project_title = str(arguments.get("title") or "").strip()
         if not client_name:
@@ -3242,6 +3351,14 @@ class CRMAssistantService:
         if arguments.get("total_amount") not in (None, "") and total_amount is None:
             return self._clarification("Не смог разобрать сумму проекта. Укажите её числом.", [])
 
+        if arguments.get("object_address"):
+            normalized_address = self._normalize_ai_project_address(arguments.get("object_address"))
+            if not normalized_address.get("ok"):
+                return normalized_address
+            arguments["object_address"] = normalized_address.get("address") or ""
+            arguments["object_lat"] = normalized_address.get("lat") or ""
+            arguments["object_lon"] = normalized_address.get("lon") or ""
+
         client = self._get_or_create_client_from_arguments(arguments, client_name)
         project = Project.objects.create(
             manager=manager,
@@ -3250,7 +3367,9 @@ class CRMAssistantService:
             client_name=client_name,
             client_phone=client.phone or "",
             client_email=client.email,
-            object_address=client.address,
+            object_address=str(arguments.get("object_address") or "").strip() or None,
+            object_lat=str(arguments.get("object_lat") or "").strip() or None,
+            object_lon=str(arguments.get("object_lon") or "").strip() or None,
             description=str(arguments.get("description") or "").strip(),
             total_amount=total_amount,
             status=status_code,
@@ -3321,6 +3440,7 @@ class CRMAssistantService:
         }
 
     def _tool_update_project(self, arguments):
+        arguments = dict(arguments or {})
         project, clarification = self._resolve_single_project(
             project_id=parse_int(arguments.get("project_id")),
             project_query=arguments.get("project_query"),
@@ -3334,7 +3454,6 @@ class CRMAssistantService:
             "client_name",
             "client_phone",
             "client_email",
-            "object_address",
             "description",
             "categories",
         ]
@@ -3345,6 +3464,14 @@ class CRMAssistantService:
                     updates[field] = value or None
                 else:
                     updates[field] = value
+
+        if "object_address" in arguments:
+            normalized_address = self._normalize_ai_project_address(arguments.get("object_address"))
+            if not normalized_address.get("ok"):
+                return normalized_address
+            updates["object_address"] = normalized_address.get("address") or None
+            updates["object_lat"] = normalized_address.get("lat") or None
+            updates["object_lon"] = normalized_address.get("lon") or None
 
         if "total_amount" in arguments:
             total_amount = parse_decimal(arguments.get("total_amount"))
@@ -3383,9 +3510,6 @@ class CRMAssistantService:
             if "client_email" in updates and project.client.email != updates["client_email"]:
                 project.client.email = updates["client_email"]
                 client_updates.append("email")
-            if "object_address" in updates and project.client.address != updates["object_address"]:
-                project.client.address = updates["object_address"]
-                client_updates.append("address")
             if "works_with_contract" in arguments:
                 next_contract = is_truthy(arguments.get("works_with_contract"))
                 if project.client.works_with_contract != next_contract:

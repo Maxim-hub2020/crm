@@ -78,6 +78,7 @@ class ClientSerializer(serializers.ModelSerializer):
 
 class ProjectSerializer(serializers.ModelSerializer):
     client_info = ClientSerializer(source="client", read_only=True)
+    order_number_label = serializers.SerializerMethodField()
 
     def _resolve_client(self, attrs):
         instance = self.instance
@@ -86,7 +87,6 @@ class ProjectSerializer(serializers.ModelSerializer):
         name = str(attrs.get("client_name", getattr(instance, "client_name", "")) or "").strip()
         phone = str(attrs.get("client_phone", getattr(instance, "client_phone", "")) or "").strip()
         email = attrs.get("client_email", getattr(instance, "client_email", None))
-        address = attrs.get("object_address", getattr(instance, "object_address", None))
 
         client = current_client
         if phone:
@@ -104,7 +104,6 @@ class ProjectSerializer(serializers.ModelSerializer):
                 name=name,
                 phone=phone,
                 email=email or None,
-                address=address or None,
             )
         else:
             if not name:
@@ -122,9 +121,6 @@ class ProjectSerializer(serializers.ModelSerializer):
             if "client_email" in attrs and client.email != (email or None):
                 client.email = email or None
                 changed_fields.append("email")
-            if "object_address" in attrs and client.address != (address or None):
-                client.address = address or None
-                changed_fields.append("address")
             if changed_fields:
                 changed_fields.append("updated_at")
                 client.save(update_fields=changed_fields)
@@ -133,7 +129,6 @@ class ProjectSerializer(serializers.ModelSerializer):
         attrs["client_name"] = name or client.name
         attrs["client_phone"] = phone or client.phone or ""
         attrs["client_email"] = email if "client_email" in attrs else client.email
-        attrs["object_address"] = address if "object_address" in attrs else client.address
 
         return attrs
 
@@ -163,10 +158,13 @@ class ProjectSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         return super().update(instance, self._resolve_client(validated_data))
 
+    def get_order_number_label(self, obj):
+        return f"{obj.order_number:04d}" if obj.order_number else ""
+
     class Meta:
         model = Project
         fields = "__all__"
-        read_only_fields = ["manager", "created_at", "updated_at", "client_info"]
+        read_only_fields = ["manager", "created_at", "updated_at", "client_info", "order_number", "order_number_label"]
         extra_kwargs = {
             "client": {"required": False, "allow_null": True},
             "title": {"required": False, "allow_blank": True},

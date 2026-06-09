@@ -194,10 +194,13 @@ def _build_low_latency_system_instruction(service, user, current_screen, recent_
         "function calling, не обещай создание или изменение без результата функции. Если данных не хватает, задай один "
         "короткий уточняющий вопрос и продолжай диалог. Не запрашивай и не анализируй всю CRM целиком: используй только "
         "текущего пользователя, текущий экран, последние 3-5 сообщений, список функций и кэш справочников ниже. "
+        "Если пользователь говорит «этот же проект», «туда же», «в него», «по нему» или похожую ссылку, используй "
+        "последний project_id из recent_messages или последнего результата функции. "
         "Фразы-синонимы команд бери из command_synonyms: пользователь может говорить «заведи сделку», «поставь задачу», "
         "«зафиксируй аванс», «оставь заметку», «перекинь проект» и похожие формулировки. "
         "Для финансовых команд вроде «создай аванс 30000», «внеси расход на доставку», «добавь оплату клиента» "
         "сам выводи operation_kind и category_name из finance_categories и всегда передавай raw_text с исходной фразой пользователя. "
+        "Адрес объекта передавай в object_address; backend проверит Dadata и попросит уточнение, если адрес неполный. "
         "client_phone необязателен: если пользователь говорит «без телефона» или «телефона нет», оставляй client_phone пустым и не жди номер. "
         "При создании проекта не спрашивай повторно уже названное название. Если названия хватает, но нет клиента, спроси "
         "только клиента и предложи сразу назвать бюджет, адрес или статус. Если клиент и название есть, но optional-данных "
@@ -246,6 +249,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         token = (query.get("token") or [""])[0]
         self.current_screen = str((query.get("screen") or ["/assistant"])[0] or "/assistant")[:120]
         self.recent_history = _parse_history_param((query.get("history") or [""])[0])
+        self.live_context = list(self.recent_history)
         self.user = await _authenticate_websocket_token(token)
 
         if not self.user:
@@ -420,7 +424,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
             service,
             self.user,
             self.current_screen,
-            self.recent_history,
+            self.live_context,
             reference_cache,
         )
         tool_declarations = await _build_tool_declarations(service)
@@ -530,6 +534,38 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 continue
             await session.send_realtime_input(text=text)
 
+    def _append_live_context(self, role, text):
+        clean_text = str(text or "").strip()
+        if not clean_text:
+            return
+        self.live_context.append({"role": role, "text": clean_text[:700]})
+        self.live_context = self.live_context[-8:]
+
+    @staticmethod
+    def _tool_context_text(event, reply=""):
+        result = event.get("result") or {}
+        tool_name = event.get("name") or ""
+        project = result.get("project") or {}
+        payment = result.get("payment") or {}
+        task = result.get("task") or {}
+
+        project_id = project.get("project_id") or payment.get("project_id") or task.get("project_id")
+        project_title = (
+            project.get("title")
+            or project.get("client_name")
+            or payment.get("project_name")
+            or task.get("project_title")
+            or ""
+        )
+        parts = [f"CRM tool result: {tool_name}"]
+        if project_id:
+            parts.append(f"last_project_id={project_id}")
+        if project_title:
+            parts.append(f"last_project_title={project_title}")
+        if reply:
+            parts.append(f"reply={reply}")
+        return "; ".join(parts)
+
     async def _receive_from_gemini(self, session, types, service):
         async for message in session.receive():
             server_content = getattr(message, "server_content", None)
@@ -605,6 +641,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                     "reply": payload["reply"],
                 }
             )
+            self._append_live_context("assistant", self._tool_context_text(payload["event"], payload["reply"]))
 
             function_responses.append(
                 types.FunctionResponse(

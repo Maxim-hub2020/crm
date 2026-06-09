@@ -268,6 +268,15 @@ class ClientViewSet(viewsets.ModelViewSet):
             )
         return qs.distinct()
 
+    def perform_update(self, serializer):
+        client = serializer.save()
+        Project.objects.filter(client=client).update(
+            client_name=client.name,
+            client_phone=client.phone or "",
+            client_email=client.email,
+            works_with_contract=client.works_with_contract,
+        )
+
 
 class PaymentViewSet(viewsets.ModelViewSet):
     serializer_class = PaymentSerializer

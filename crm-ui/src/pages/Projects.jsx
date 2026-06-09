@@ -38,6 +38,7 @@ import {
   fetchProjectStatuses,
   fetchTasks,
   hasDadataAddressSuggestions,
+  updateClient,
   updatePayment,
   updateTask,
   updateProject,
@@ -131,6 +132,16 @@ function createEmptyTaskForm() {
   };
 }
 
+function createClientEditForm(client = {}) {
+  return {
+    name: client.name || client.client_name || "",
+    phone: client.phone || client.client_phone || "",
+    email: client.email || client.client_email || "",
+    address: client.address || client.object_address || "",
+    works_with_contract: Boolean(client.works_with_contract ?? client.worksWithContract),
+  };
+}
+
 function buildProjectUpdatePayload(form) {
   return {
     title: form.title.trim(),
@@ -151,13 +162,14 @@ function buildProjectUpdatePayload(form) {
 }
 
 function normalizeProjectForm(project, fallbackStatus = "active") {
+  const clientInfo = project?.client_info || {};
   return {
     title: project?.title || "",
-    client: project?.client || project?.client_info?.id || "",
-    client_query: project?.client_name || "",
-    client_name: project?.client_name || "",
-    client_phone: project?.client_phone || "",
-    client_email: project?.client_email || "",
+    client: project?.client || clientInfo.id || "",
+    client_query: clientInfo.phone || project?.client_phone || clientInfo.name || project?.client_name || "",
+    client_name: clientInfo.name || project?.client_name || "",
+    client_phone: clientInfo.phone || project?.client_phone || "",
+    client_email: clientInfo.email ?? project?.client_email ?? "",
     object_address: project?.object_address || "",
     object_lat: project?.object_lat || "",
     object_lon: project?.object_lon || "",
@@ -181,6 +193,12 @@ function formatMoney(value) {
 
 function projectDisplayName(project) {
   return project?.title || project?.client_name || `Проект #${project?.id || ""}`;
+}
+
+function projectOrderLabel(project) {
+  if (project?.order_number_label) return project.order_number_label;
+  if (project?.order_number) return String(project.order_number).padStart(4, "0");
+  return "";
 }
 
 function normalizeSearchText(value) {
@@ -261,6 +279,8 @@ function projectSearchText(project, statusMap) {
   return normalizeSearchText(
     [
       project.title,
+      projectOrderLabel(project),
+      project.order_number,
       project.client_name,
       project.client_phone,
       project.client_email,
@@ -479,6 +499,8 @@ function ColumnHeader({ status, count, totalAmount }) {
 }
 
 function ProjectKanbanCard({ project, amount, ageDays, showAgeDays = true, isDragging = false, onClick }) {
+  const orderLabel = projectOrderLabel(project);
+
   return (
     <button
       type="button"
@@ -487,8 +509,15 @@ function ProjectKanbanCard({ project, amount, ageDays, showAgeDays = true, isDra
         isDragging ? "scale-[0.98] cursor-grabbing opacity-55 ring-2 ring-blue-500" : "cursor-grab"
       }`}
     >
-      <div className="line-clamp-2 text-[1.02rem] font-black leading-6 tracking-tight text-slate-800">
-        {projectDisplayName(project)}
+      <div className="flex items-start gap-2">
+        {orderLabel ? (
+          <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-black text-blue-600">
+            №{orderLabel}
+          </span>
+        ) : null}
+        <div className="line-clamp-2 text-[1.02rem] font-black leading-6 tracking-tight text-slate-800">
+          {projectDisplayName(project)}
+        </div>
       </div>
       <div className="mt-1.5 text-sm text-slate-500">{project.client_name || "Клиент не назначен"}</div>
       <div className="mt-4 flex items-end justify-between gap-3">
@@ -504,6 +533,8 @@ function ProjectKanbanCard({ project, amount, ageDays, showAgeDays = true, isDra
 }
 
 function ProjectDragGhost({ project, amount, ageDays, left, top, width }) {
+  const orderLabel = projectOrderLabel(project);
+
   return (
     <div
       className="pointer-events-none fixed z-[70] rounded-[22px] border border-blue-300 bg-white/85 px-4 py-4 text-left shadow-[0_24px_60px_rgba(37,99,235,0.28)] ring-4 ring-blue-500/15 backdrop-blur-md"
@@ -513,8 +544,15 @@ function ProjectDragGhost({ project, amount, ageDays, left, top, width }) {
         width,
       }}
     >
-      <div className="line-clamp-2 text-[1.02rem] font-black leading-6 tracking-tight text-slate-800">
-        {projectDisplayName(project)}
+      <div className="flex items-start gap-2">
+        {orderLabel ? (
+          <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-black text-blue-600">
+            №{orderLabel}
+          </span>
+        ) : null}
+        <div className="line-clamp-2 text-[1.02rem] font-black leading-6 tracking-tight text-slate-800">
+          {projectDisplayName(project)}
+        </div>
       </div>
       <div className="mt-1.5 text-sm text-slate-500">{project.client_name || "Клиент не назначен"}</div>
       <div className="mt-4 flex items-end justify-between gap-3">
@@ -570,6 +608,10 @@ export default function Projects() {
   const selectedAddressValueRef = useRef("");
   const [documentLoading, setDocumentLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [projectClientOpen, setProjectClientOpen] = useState(false);
+  const [projectClientForm, setProjectClientForm] = useState(createClientEditForm());
+  const [projectClientSaving, setProjectClientSaving] = useState(false);
+  const [projectClientError, setProjectClientError] = useState("");
 
   const [comments, setComments] = useState([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
@@ -797,6 +839,16 @@ export default function Projects() {
     [activeProjectId, projects]
   );
 
+  const activeProjectClient = useMemo(() => {
+    const clientId = activeProject?.client || activeProject?.client_info?.id || detailForm.client;
+    if (!clientId) return activeProject?.client_info || null;
+    return (
+      clients.find((client) => String(client.id) === String(clientId)) ||
+      activeProject?.client_info ||
+      null
+    );
+  }, [activeProject, clients, detailForm.client]);
+
   const draggedProject = useMemo(
     () => projects.find((project) => project.id === dragPreview?.projectId) || null,
     [dragPreview?.projectId, projects]
@@ -1018,9 +1070,86 @@ export default function Projects() {
     setAddressDetailsOpen(false);
     setAddressSuggestions([]);
     setAddressSuggestError("");
+    setProjectClientOpen(false);
+    setProjectClientError("");
+    setProjectClientForm(createClientEditForm());
     selectedAddressValueRef.current = "";
     detailSnapshotRef.current = "";
     window.clearTimeout(detailAutosaveTimerRef.current);
+  }
+
+  function openProjectClientCard() {
+    if (!activeProjectClient?.id) {
+      setDetailError("Карточка клиента пока не найдена. Проверьте, что клиент привязан к проекту.");
+      return;
+    }
+
+    setProjectClientForm(createClientEditForm(activeProjectClient));
+    setProjectClientError("");
+    setProjectClientOpen(true);
+  }
+
+  function closeProjectClientCard() {
+    if (projectClientSaving) return;
+    setProjectClientOpen(false);
+    setProjectClientError("");
+  }
+
+  async function submitProjectClient(event) {
+    event.preventDefault();
+    if (!activeProjectClient?.id) return;
+
+    setProjectClientSaving(true);
+    setProjectClientError("");
+
+    try {
+      if (!projectClientForm.name.trim()) {
+        setProjectClientError("Укажите имя клиента.");
+        return;
+      }
+
+      const updated = await updateClient(activeProjectClient.id, {
+        name: projectClientForm.name.trim(),
+        phone: projectClientForm.phone.trim(),
+        email: projectClientForm.email.trim() || null,
+        address: projectClientForm.address.trim() || null,
+        works_with_contract: Boolean(projectClientForm.works_with_contract),
+      });
+
+      setClients((prev) => prev.map((client) => (client.id === updated.id ? updated : client)));
+      setProjects((prev) =>
+        prev.map((project) => {
+          const projectClientId = project.client || project.client_info?.id;
+          if (String(projectClientId || "") !== String(updated.id)) {
+            return project;
+          }
+
+          return {
+            ...project,
+            client: updated.id,
+            client_info: updated,
+            client_name: updated.name || "",
+            client_phone: updated.phone || "",
+            client_email: updated.email || "",
+            works_with_contract: Boolean(updated.works_with_contract),
+          };
+        })
+      );
+      setDetailForm((prev) => ({
+        ...prev,
+        client: updated.id,
+        client_name: updated.name || "",
+        client_phone: updated.phone || "",
+        client_email: updated.email || "",
+        works_with_contract: Boolean(updated.works_with_contract),
+      }));
+      setProjectClientForm(createClientEditForm(updated));
+      setProjectClientOpen(false);
+    } catch (error) {
+      setProjectClientError(extractApiErrorMessage(error, "Не удалось сохранить карточку клиента."));
+    } finally {
+      setProjectClientSaving(false);
+    }
   }
 
   function applyAddressSuggestion(suggestion) {
@@ -1637,7 +1766,14 @@ export default function Projects() {
                     openProject(project);
                   }}
                 >
-                  <div className="font-black text-slate-900">{projectDisplayName(project)}</div>
+                  <div className="flex items-center gap-2">
+                    {projectOrderLabel(project) ? (
+                      <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-black text-blue-600">
+                        №{projectOrderLabel(project)}
+                      </span>
+                    ) : null}
+                    <div className="font-black text-slate-900">{projectDisplayName(project)}</div>
+                  </div>
                   <div className="mt-1 line-clamp-1 text-sm font-semibold text-slate-500">
                     {[project.client_name, project.object_address, statusMap.get(project.status)?.label].filter(Boolean).join(" · ")}
                   </div>
@@ -1750,6 +1886,11 @@ export default function Projects() {
                   <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
                     <div className="space-y-4">
                       <div className="flex flex-wrap items-center gap-3">
+                        {projectOrderLabel(project) ? (
+                          <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-600">
+                            №{projectOrderLabel(project)}
+                          </span>
+                        ) : null}
                         <div className="text-2xl font-black tracking-tight text-slate-900">{projectDisplayName(project)}</div>
                         <Badge className={statusBadgeClass(statusMeta?.color || project.status)}>
                           {labelFor(statusOptions, project.status)}
@@ -1949,7 +2090,11 @@ export default function Projects() {
 
       <Modal
         open={Boolean(activeProject)}
-        title={activeProject ? `Карточка проекта — ${projectDisplayName(activeProject)}` : "Карточка проекта"}
+        title={
+          activeProject
+            ? `Карточка проекта — ${projectOrderLabel(activeProject) ? `№${projectOrderLabel(activeProject)} · ` : ""}${projectDisplayName(activeProject)}`
+            : "Карточка проекта"
+        }
         onClose={closeProject}
         widthClassName="max-w-5xl"
         bodyClassName="min-h-0"
@@ -1968,21 +2113,37 @@ export default function Projects() {
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>Клиент</Label>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <button
+                      type="button"
+                      className="min-w-0 text-left"
+                      onClick={openProjectClientCard}
+                    >
+                      <div className="truncate text-base font-black text-slate-900 transition hover:text-blue-600">
+                        {detailForm.client_name || "Клиент не указан"}
+                      </div>
+                      <div className="mt-1 text-xs font-semibold text-slate-400">
+                        Открыть карточку клиента
+                      </div>
+                    </button>
                     {phoneHref(detailForm.client_phone) ? (
                       <a
-                        className="inline-flex items-center gap-2 text-base font-black text-slate-900 transition hover:text-blue-600"
+                        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
                         href={phoneHref(detailForm.client_phone)}
+                        title="Позвонить клиенту"
+                        aria-label="Позвонить клиенту"
                       >
-                        <Phone size={17} />
-                        {detailForm.client_name || "Клиент без имени"}
+                        <Phone size={18} />
                       </a>
                     ) : (
-                      <div className="text-base font-black text-slate-900">{detailForm.client_name || "Клиент не указан"}</div>
+                      <span
+                        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-slate-300 ring-1 ring-slate-200"
+                        title="Телефон клиента не указан"
+                        aria-label="Телефон клиента не указан"
+                      >
+                        <Phone size={18} />
+                      </span>
                     )}
-                    <div className="mt-1 text-xs font-semibold text-slate-400">
-                      {phoneHref(detailForm.client_phone) ? "Нажмите на имя, чтобы позвонить клиенту." : "Телефон клиента не указан."}
-                    </div>
                   </div>
                 </div>
                 <div className="space-y-2 md:col-span-2">
@@ -2488,6 +2649,82 @@ export default function Projects() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={projectClientOpen && Boolean(activeProjectClient)}
+        title="Карточка клиента"
+        onClose={closeProjectClientCard}
+        widthClassName="max-w-2xl"
+      >
+        <form className="space-y-5" onSubmit={submitProjectClient}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Имя клиента</Label>
+              <Input
+                value={projectClientForm.name}
+                onChange={(event) => setProjectClientForm((prev) => ({ ...prev, name: event.target.value }))}
+                placeholder="Иван Петров"
+                autoComplete="name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Телефон</Label>
+              <Input
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel"
+                pattern="[0-9+()\\-\\s]*"
+                value={projectClientForm.phone}
+                onChange={(event) => setProjectClientForm((prev) => ({ ...prev, phone: event.target.value }))}
+                placeholder="+7..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Email</Label>
+              <Input
+                type="email"
+                autoComplete="email"
+                value={projectClientForm.email}
+                onChange={(event) => setProjectClientForm((prev) => ({ ...prev, email: event.target.value }))}
+                placeholder="client@example.ru"
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Адрес клиента</Label>
+              <Input
+                value={projectClientForm.address}
+                onChange={(event) => setProjectClientForm((prev) => ({ ...prev, address: event.target.value }))}
+                placeholder="Адрес клиента, если нужен для документов"
+              />
+            </div>
+          </div>
+
+          <label className="flex items-start gap-3 rounded-[22px] bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600 ring-1 ring-slate-200/70">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600"
+              checked={projectClientForm.works_with_contract}
+              onChange={(event) =>
+                setProjectClientForm((prev) => ({ ...prev, works_with_contract: event.target.checked }))
+              }
+            />
+            <span>
+              Работает по договору. Если включено, в проекте можно сформировать договор по загруженному шаблону.
+            </span>
+          </label>
+
+          {projectClientError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{projectClientError}</div>}
+
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="secondary" onClick={closeProjectClientCard} disabled={projectClientSaving}>
+              Отмена
+            </Button>
+            <Button type="submit" disabled={projectClientSaving}>
+              {projectClientSaving ? "Сохраняем..." : "Сохранить клиента"}
+            </Button>
+          </div>
+        </form>
       </Modal>
 
       <Modal
