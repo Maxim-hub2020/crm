@@ -64,6 +64,12 @@ export default function Layout({ children }) {
   const isAdmin = isAdminUser(user);
   const isAssistantMode = location.pathname === "/assistant";
 
+  useEffect(() => {
+    if (!isAssistantMode) {
+      localStorage.setItem("crm_last_screen", location.pathname);
+    }
+  }, [isAssistantMode, location.pathname]);
+
   function logout() {
     clearToken();
     navigate("/login");

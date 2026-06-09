@@ -17,6 +17,18 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: public.ecr.aws/docker/library/redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build:
       context: ./backend
@@ -41,8 +53,12 @@ services:
       DJANGO_SECURE_HSTS_PRELOAD: ${DJANGO_SECURE_HSTS_PRELOAD}
       TIME_ZONE: ${TIME_ZONE}
       TZ: ${TZ}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - static_volume:/app/staticfiles
@@ -77,6 +93,31 @@ services:
       - ./backend/secrets:/app/secrets:ro
     command: >
       sh -c "python manage.py refresh_crm_memory --force --interval $${CRM_AI_MEMORY_REFRESH_INTERVAL_SECONDS:-60}"
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    image: crm-backend:prod
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      TIME_ZONE: ${TIME_ZONE}
+      TZ: ${TZ}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - media_volume:/app/media
+      - ./backend/secrets:/app/secrets:ro
+    command: >
+      celery -A crm_core.celery:app worker --loglevel=info --queues=assistant --concurrency=$${CELERY_WORKER_CONCURRENCY:-1}
 
   nginx:
     image: crm-nginx:latest
@@ -131,6 +172,7 @@ services:
 
 volumes:
   pgdata:
+  redisdata:
   static_volume:
   media_volume:
   caddy_data:

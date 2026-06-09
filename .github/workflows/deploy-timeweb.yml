@@ -131,7 +131,7 @@ jobs:
           ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" '
             set -eu
             cd /opt/crm
-            docker compose -p crm --env-file .env -f docker-compose.prod.yml up -d --no-build --force-recreate db backend ai-memory-worker nginx caddy
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml up -d --no-build --force-recreate db redis backend ai-memory-worker celery-worker nginx caddy
             checked=0
             for i in 1 2 3 4 5 6; do
               if docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T backend python manage.py check; then
@@ -177,6 +177,10 @@ jobs:
             docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=120 caddy
             echo "== ai-memory-worker logs =="
             docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=120 ai-memory-worker
+            echo "== celery-worker logs =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=120 celery-worker
+            echo "== redis logs =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=80 redis
           '
 
       - name: Notify Telegram

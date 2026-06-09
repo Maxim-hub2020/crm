@@ -15,7 +15,7 @@ export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-export function getAssistantLiveWebSocketUrl() {
+export function getAssistantLiveWebSocketUrl(options = {}) {
   const token = getToken();
   const configuredBase = import.meta.env.VITE_API_BASE || window.location.origin;
   const url = new URL(configuredBase, window.location.origin);
@@ -24,6 +24,12 @@ export function getAssistantLiveWebSocketUrl() {
   url.search = "";
   if (token) {
     url.searchParams.set("token", token);
+  }
+  if (options.screen) {
+    url.searchParams.set("screen", String(options.screen).slice(0, 120));
+  }
+  if (Array.isArray(options.history) && options.history.length) {
+    url.searchParams.set("history", JSON.stringify(options.history.slice(-5)));
   }
   return url.toString();
 }

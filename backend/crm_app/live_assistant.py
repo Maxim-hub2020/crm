@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
@@ -10,10 +11,15 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import AccessToken
 
 from .ai_assistant import CRMAssistantService, humanize_gemini_error
-from .models import User
+from .models import FinanceCategory, ProjectCustomField, ProjectStatus, User
 from .subscription import has_assistant_access
 
 logger = logging.getLogger(__name__)
+
+_REFERENCE_CACHE = {
+    "expires_at": 0.0,
+    "payload": None,
+}
 
 
 def _is_retryable_live_error(exc):
@@ -37,6 +43,39 @@ def _env_int(name, default):
 
 def _json_safe(value):
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def _split_env_csv(name, default=""):
+    raw_value = os.getenv(name, default)
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
+def _parse_history_param(raw_value):
+    if not raw_value:
+        return []
+    try:
+        payload = json.loads(raw_value)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    normalized = []
+    for item in payload[-5:]:
+        if not isinstance(item, dict):
+            continue
+        if item.get("user") or item.get("assistant"):
+            user_text = str(item.get("user") or "").strip()
+            assistant_text = str(item.get("assistant") or "").strip()
+            if user_text:
+                normalized.append({"role": "user", "text": user_text[:500]})
+            if assistant_text:
+                normalized.append({"role": "assistant", "text": assistant_text[:500]})
+            continue
+        role = str(item.get("role") or "").strip()[:30]
+        text = str(item.get("text") or item.get("content") or "").strip()
+        if role and text:
+            normalized.append({"role": role, "text": text[:500]})
+    return normalized[-5:]
 
 
 @database_sync_to_async
@@ -65,7 +104,7 @@ def _has_live_assistant_access(user):
 
 @database_sync_to_async
 def _build_assistant_service(user):
-    return CRMAssistantService(user, init_gemini_client=False)
+    return CRMAssistantService(user, init_gemini_client=False, init_memory=False)
 
 
 @database_sync_to_async
@@ -87,8 +126,91 @@ def _build_system_instruction(service):
 
 
 @database_sync_to_async
+def _build_reference_cache():
+    now = time.monotonic()
+    if _REFERENCE_CACHE["payload"] and _REFERENCE_CACHE["expires_at"] > now:
+        return _REFERENCE_CACHE["payload"]
+
+    ttl_seconds = max(30, min(_env_int("CRM_ASSISTANT_REFERENCE_CACHE_TTL_SECONDS", 300), 3600))
+    payload = {
+        "product_types": _split_env_csv(
+            "CRM_ASSISTANT_PRODUCT_TYPES",
+            "зеркала,мебель,душевые,стеклянные перегородки",
+        ),
+        "materials": _split_env_csv(
+            "CRM_ASSISTANT_MATERIALS",
+            "стекло,зеркало,фурнитура,профиль,ЛДСП,МДФ",
+        ),
+        "deal_statuses": [
+            {
+                "code": status.code,
+                "name": status.name,
+                "stuck_after_days": status.stuck_after_days,
+                "is_default": status.is_default,
+            }
+            for status in ProjectStatus.objects.order_by("sort_order", "id")
+        ],
+        "finance_categories": [
+            {"id": category.id, "name": category.name, "type": category.type}
+            for category in FinanceCategory.objects.order_by("type", "name", "id")
+        ],
+        "project_fields": [
+            {"name": field.name, "type": field.field_type}
+            for field in ProjectCustomField.objects.order_by("sort_order", "id")
+        ],
+        "response_templates": _split_env_csv(
+            "CRM_ASSISTANT_RESPONSE_TEMPLATES",
+            "Сделаю.,Уточните, пожалуйста.,Готово.,Нашел.",
+        ),
+    }
+    _REFERENCE_CACHE["payload"] = payload
+    _REFERENCE_CACHE["expires_at"] = now + ttl_seconds
+    return payload
+
+
+@database_sync_to_async
+def _build_low_latency_system_instruction(service, user, current_screen, recent_history, reference_cache):
+    role = "admin" if user and getattr(user, "is_admin", lambda: False)() else "manager"
+    current_user = {
+        "id": getattr(user, "id", None),
+        "username": getattr(user, "username", ""),
+        "name": (getattr(user, "get_full_name", lambda: "")() or getattr(user, "username", "")).strip(),
+        "role": role,
+    }
+
+    available_functions = [
+        "create_client",
+        "find_client",
+        "create_deal",
+        "update_deal",
+        "create_task",
+        "add_comment",
+        "get_today_tasks",
+        "enqueue_long_operation",
+    ]
+    compact_context = {
+        "current_user": current_user,
+        "current_screen": current_screen or "/assistant",
+        "recent_messages": recent_history[-5:],
+        "available_functions": available_functions,
+        "reference_cache": reference_cache,
+    }
+
+    return (
+        "Ты low-latency голосовой CRM-помощник. Отвечай по-русски коротко, естественно и без проговаривания "
+        "названий функций, JSON, аргументов или технических действий. Для любых действий в CRM обязательно вызывай "
+        "function calling, не обещай создание или изменение без результата функции. Если данных не хватает, задай один "
+        "короткий уточняющий вопрос и продолжай диалог. Не запрашивай и не анализируй всю CRM целиком: используй только "
+        "текущего пользователя, текущий экран, последние 3-5 сообщений, список функций и кэш справочников ниже. "
+        "Для длинных операций используй enqueue_long_operation и сразу отвечай, что задача запущена в фоне. "
+        "Если пользователь просит список или состояние, отвечай кратко; детали раскрывай только по уточнению.\n\n"
+        f"LOW_LATENCY_CONTEXT:\n{json.dumps(compact_context, ensure_ascii=False, default=str)}"
+    )
+
+
+@database_sync_to_async
 def _build_tool_declarations(service):
-    return service._tool_declarations()
+    return service._low_latency_tool_declarations()
 
 
 @database_sync_to_async
@@ -121,6 +243,8 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         query = parse_qs(self.scope.get("query_string", b"").decode("utf-8", errors="ignore"))
         token = (query.get("token") or [""])[0]
+        self.current_screen = str((query.get("screen") or ["/assistant"])[0] or "/assistant")[:120]
+        self.recent_history = _parse_history_param((query.get("history") or [""])[0])
         self.user = await _authenticate_websocket_token(token)
 
         if not self.user:
@@ -135,6 +259,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
 
         self.audio_input_queue = asyncio.Queue(maxsize=80)
         self.text_input_queue = asyncio.Queue(maxsize=20)
+        self.turn_metrics = self._new_turn_metrics()
         self.live_task = asyncio.create_task(self._run_live_session())
         await self._send_event(
             {
@@ -184,6 +309,72 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
     async def _send_event(self, payload):
         await self.send(text_data=json.dumps(payload, ensure_ascii=False))
 
+    @staticmethod
+    def _new_turn_metrics():
+        return {
+            "turn_started_at": 0.0,
+            "activity_end_at": 0.0,
+            "input_transcript_at": 0.0,
+            "first_model_at": 0.0,
+            "first_audio_at": 0.0,
+            "turn_complete_at": 0.0,
+            "crm_api_ms": 0,
+        }
+
+    def _mark_turn_start(self):
+        if not self.turn_metrics.get("turn_started_at"):
+            self.turn_metrics["turn_started_at"] = time.perf_counter()
+
+    def _mark_first_model_output(self):
+        self._mark_turn_start()
+        if not self.turn_metrics.get("first_model_at"):
+            self.turn_metrics["first_model_at"] = time.perf_counter()
+
+    def _mark_first_audio_output(self):
+        self._mark_first_model_output()
+        if not self.turn_metrics.get("first_audio_at"):
+            self.turn_metrics["first_audio_at"] = time.perf_counter()
+
+    async def _finish_turn_metrics(self, reason="turn_complete"):
+        metrics = self.turn_metrics
+        if not metrics.get("turn_started_at"):
+            self.turn_metrics = self._new_turn_metrics()
+            return
+
+        metrics["turn_complete_at"] = time.perf_counter()
+        started_at = metrics["turn_started_at"]
+        activity_end_at = metrics.get("activity_end_at") or started_at
+        input_transcript_at = metrics.get("input_transcript_at") or activity_end_at
+        first_model_at = metrics.get("first_model_at") or metrics["turn_complete_at"]
+        first_audio_at = metrics.get("first_audio_at") or first_model_at
+
+        result = {
+            "speech_to_text_ms": max(0, round((input_transcript_at - activity_end_at) * 1000)),
+            "gemini_ms": max(0, round((first_model_at - max(activity_end_at, input_transcript_at)) * 1000)),
+            "crm_api_ms": int(metrics.get("crm_api_ms") or 0),
+            "text_to_speech_ms": max(0, round((first_audio_at - first_model_at) * 1000)),
+            "total_ms": max(0, round((metrics["turn_complete_at"] - started_at) * 1000)),
+        }
+        log_extra = {"reason": reason, "metrics": result}
+        if result["total_ms"] > 3000:
+            slow_reason = self._slow_turn_reason(result)
+            logger.warning("Assistant Live slow turn: %s", {"slow_reason": slow_reason, **log_extra})
+        else:
+            logger.info("Assistant Live turn latency: %s", log_extra)
+
+        await self._send_event({"type": "latency", "metrics": result})
+        self.turn_metrics = self._new_turn_metrics()
+
+    @staticmethod
+    def _slow_turn_reason(metrics):
+        candidates = {
+            "speech_to_text": metrics.get("speech_to_text_ms", 0),
+            "gemini": metrics.get("gemini_ms", 0),
+            "crm_api": metrics.get("crm_api_ms", 0),
+            "text_to_speech": metrics.get("text_to_speech_ms", 0),
+        }
+        return max(candidates, key=candidates.get)
+
     async def _run_live_session(self):
         try:
             from google import genai
@@ -223,7 +414,14 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
             return
 
         service = await _build_assistant_service(self.user)
-        system_instruction = await _build_system_instruction(service)
+        reference_cache = await _build_reference_cache()
+        system_instruction = await _build_low_latency_system_instruction(
+            service,
+            self.user,
+            self.current_screen,
+            self.recent_history,
+            reference_cache,
+        )
         tool_declarations = await _build_tool_declarations(service)
         function_declarations = [
             types.FunctionDeclaration(
@@ -295,12 +493,17 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 event_type = chunk.get("type")
                 if event_type == "activity_start":
                     logger.info("Assistant Live send activity_start")
+                    self.turn_metrics = self._new_turn_metrics()
+                    self._mark_turn_start()
                     await session.send_realtime_input(activity_start=types.ActivityStart())
                 elif event_type in {"activity_end", "audio_stream_end"}:
                     logger.info("Assistant Live send activity_end")
+                    self._mark_turn_start()
+                    self.turn_metrics["activity_end_at"] = time.perf_counter()
                     await session.send_realtime_input(activity_end=types.ActivityEnd())
                 continue
 
+            self._mark_turn_start()
             await session.send_realtime_input(
                 audio=types.Blob(data=chunk, mimeType=f"audio/pcm;rate={self.input_sample_rate}")
             )
@@ -308,6 +511,9 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
     async def _send_text_to_gemini(self, session, types, service):
         while True:
             text = await self.text_input_queue.get()
+            self.turn_metrics = self._new_turn_metrics()
+            self._mark_turn_start()
+            self.turn_metrics["activity_end_at"] = time.perf_counter()
             fast_response = await _fast_mutation_clarification(service, text)
             if fast_response:
                 await self._send_event(
@@ -319,7 +525,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                         "reply": fast_response["reply"],
                     }
                 )
-                await self._send_event({"type": "turn_complete"})
+                await self._finish_turn_metrics(reason="fast_clarification")
                 continue
             await session.send_realtime_input(text=text)
 
@@ -332,9 +538,11 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 await self._handle_server_content(server_content)
             else:
                 if getattr(message, "data", None):
+                    self._mark_first_audio_output()
                     await self.send(bytes_data=message.data)
 
                 if getattr(message, "text", None):
+                    self._mark_first_model_output()
                     await self._send_event({"type": "output_text", "text": message.text})
 
             if tool_call:
@@ -346,16 +554,21 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
             for part in model_turn.parts:
                 inline_data = getattr(part, "inline_data", None)
                 if inline_data and getattr(inline_data, "data", None):
+                    self._mark_first_audio_output()
                     await self.send(bytes_data=inline_data.data)
                 if getattr(part, "text", None):
+                    self._mark_first_model_output()
                     await self._send_event({"type": "output_text", "text": part.text})
 
         input_transcription = getattr(server_content, "input_transcription", None)
         if input_transcription and getattr(input_transcription, "text", None):
+            if not self.turn_metrics.get("input_transcript_at"):
+                self.turn_metrics["input_transcript_at"] = time.perf_counter()
             await self._send_event({"type": "input_transcript", "text": input_transcription.text})
 
         output_transcription = getattr(server_content, "output_transcription", None)
         if output_transcription and getattr(output_transcription, "text", None):
+            self._mark_first_model_output()
             await self._send_event({"type": "output_text", "text": output_transcription.text})
 
         if getattr(server_content, "interrupted", False):
@@ -365,6 +578,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         if getattr(server_content, "turn_complete", False):
             logger.info("Assistant Live server turn_complete")
             await self._send_event({"type": "turn_complete"})
+            await self._finish_turn_metrics(reason="turn_complete")
 
     async def _handle_tool_call(self, session, types, service, tool_call):
         function_responses = []
@@ -372,7 +586,9 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
             tool_name = getattr(function_call, "name", "")
             arguments = dict(getattr(function_call, "args", {}) or {})
             call_id = getattr(function_call, "id", None)
+            tool_started_at = time.perf_counter()
             payload = await _execute_assistant_tool(service, tool_name, arguments)
+            self.turn_metrics["crm_api_ms"] += round((time.perf_counter() - tool_started_at) * 1000)
 
             await self._send_event(
                 {

@@ -196,6 +196,7 @@ class GeminiClient:
         default_tts_model = "gemini-2.5-flash-tts" if self.backend == "vertex_ai" else "gemini-3.1-flash-tts-preview"
 
         self.model = os.getenv("GEMINI_MODEL", default_model).strip() or default_model
+        self.fast_model = os.getenv("GEMINI_FAST_MODEL", self.model).strip() or self.model
         self.audio_model = os.getenv("GEMINI_AUDIO_MODEL", self.model).strip() or self.model
         self.tts_model = os.getenv("GEMINI_TTS_MODEL", default_tts_model).strip() or default_tts_model
         self.tts_voice = os.getenv("GEMINI_TTS_VOICE", "Kore").strip() or "Kore"
@@ -517,11 +518,11 @@ class GeminiClient:
 class CRMAssistantService:
     MAX_TOOL_ROUNDS = 4
 
-    def __init__(self, user, client=None, init_gemini_client=True):
+    def __init__(self, user, client=None, init_gemini_client=True, init_memory=True):
         self.user = user
         self.client = client if client is not None else (GeminiClient() if init_gemini_client else None)
         self.tool_events = []
-        self.memory_snapshot = self._get_memory_snapshot()
+        self.memory_snapshot = self._get_memory_snapshot() if init_memory else None
 
     def handle_message(self, message, history=None):
         clean_message = (message or "").strip()
@@ -589,6 +590,7 @@ class CRMAssistantService:
                 tools=tools,
                 temperature=0.1,
                 max_output_tokens=700,
+                model=self.client.fast_model if tools or mutation_requested else self.client.model,
             )
             try:
                 content = self.client.extract_candidate_content(response)
@@ -1644,7 +1646,182 @@ class CRMAssistantService:
             },
         ]
 
+    def _low_latency_tool_declarations(self):
+        return [
+            {
+                "name": "create_client",
+                "description": "Create a CRM client. Use when the user wants to add a client card.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "client_name": {"type": "string"},
+                        "client_phone": {"type": "string"},
+                        "client_email": {"type": "string"},
+                        "object_address": {"type": "string"},
+                        "works_with_contract": {"type": "boolean"},
+                        "comment": {"type": "string"},
+                    },
+                    "required": ["client_name"],
+                },
+            },
+            {
+                "name": "find_client",
+                "description": "Find clients by name, phone, email or address.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "client_query": {"type": "string"},
+                        "phone": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+            {
+                "name": "create_deal",
+                "description": "Create a CRM project/deal. Ask one short clarifying question if client or project name is missing.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "deal_name": {"type": "string"},
+                        "client_name": {"type": "string"},
+                        "client_phone": {"type": "string"},
+                        "object_address": {"type": "string"},
+                        "description": {"type": "string"},
+                        "total_amount": {"type": "number"},
+                        "status_name": {"type": "string"},
+                        "categories": {"type": "string"},
+                    },
+                },
+            },
+            {
+                "name": "update_deal",
+                "description": "Update a CRM project/deal, including status, amount, address or description.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "deal_id": {"type": "integer"},
+                        "deal_query": {"type": "string"},
+                        "project_id": {"type": "integer"},
+                        "project_query": {"type": "string"},
+                        "title": {"type": "string"},
+                        "client_name": {"type": "string"},
+                        "client_phone": {"type": "string"},
+                        "object_address": {"type": "string"},
+                        "description": {"type": "string"},
+                        "total_amount": {"type": "number"},
+                        "status_name": {"type": "string"},
+                        "categories": {"type": "string"},
+                    },
+                },
+            },
+            {
+                "name": "create_task",
+                "description": "Create a CRM task. Can be attached to a project/deal by id or search query.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "notes": {"type": "string"},
+                        "due_date": {"type": "string"},
+                        "priority": {"type": "string", "enum": ["low", "medium", "high"]},
+                        "assignee_name": {"type": "string"},
+                        "project_id": {"type": "integer"},
+                        "project_query": {"type": "string"},
+                        "deal_id": {"type": "integer"},
+                        "deal_query": {"type": "string"},
+                    },
+                    "required": ["title"],
+                },
+            },
+            {
+                "name": "add_comment",
+                "description": "Add a comment to a project/deal card.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "deal_id": {"type": "integer"},
+                        "deal_query": {"type": "string"},
+                        "project_id": {"type": "integer"},
+                        "project_query": {"type": "string"},
+                        "text": {"type": "string"},
+                        "comment": {"type": "string"},
+                    },
+                    "required": ["text"],
+                },
+            },
+            {
+                "name": "get_today_tasks",
+                "description": "Return today's open tasks for the current user or a named assignee.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "assignee_name": {"type": "string"},
+                        "include_done": {"type": "boolean"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+            {
+                "name": "enqueue_long_operation",
+                "description": "Start a long CRM operation in background: quote, deal analysis, report or mass update.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "operation": {
+                            "type": "string",
+                            "enum": ["create_quote", "analyze_deals", "generate_report", "mass_update"],
+                        },
+                        "prompt": {"type": "string"},
+                        "deal_id": {"type": "integer"},
+                        "deal_query": {"type": "string"},
+                        "project_id": {"type": "integer"},
+                        "project_query": {"type": "string"},
+                    },
+                    "required": ["operation"],
+                },
+            },
+        ]
+
+    @staticmethod
+    def _normalize_tool_alias(tool_name, arguments):
+        normalized = dict(arguments or {})
+
+        if "deal_id" in normalized and "project_id" not in normalized:
+            normalized["project_id"] = normalized.get("deal_id")
+        if "deal_query" in normalized and "project_query" not in normalized:
+            normalized["project_query"] = normalized.get("deal_query")
+        if "deal_name" in normalized and "title" not in normalized:
+            normalized["title"] = normalized.get("deal_name")
+        if "address" in normalized and "object_address" not in normalized:
+            normalized["object_address"] = normalized.get("address")
+
+        aliases = {
+            "find_client": "list_clients",
+            "create_deal": "create_project",
+            "update_deal": "update_project",
+            "add_comment": "add_project_comment",
+            "get_today_tasks": "list_tasks",
+        }
+        normalized_name = aliases.get(tool_name, tool_name)
+
+        if tool_name == "find_client":
+            query = normalized.get("client_query") or normalized.get("phone") or normalized.get("query")
+            normalized["client_query"] = query or ""
+        elif tool_name == "get_today_tasks":
+            normalized["date_scope"] = "today"
+        elif tool_name == "add_comment" and normalized.get("comment") and not normalized.get("text"):
+            normalized["text"] = normalized.get("comment")
+        elif tool_name == "create_task":
+            if normalized.get("deal_id") and not normalized.get("project_id"):
+                normalized["project_id"] = normalized.get("deal_id")
+            if normalized.get("deal_query") and not normalized.get("project_query"):
+                normalized["project_query"] = normalized.get("deal_query")
+
+        return normalized_name, normalized
+
     def _execute_tool(self, tool_name, arguments):
+        tool_name, arguments = self._normalize_tool_alias(tool_name, arguments)
         handlers = {
             "get_crm_overview": self._tool_get_crm_overview,
             "list_projects": self._tool_list_projects,
@@ -1673,6 +1850,7 @@ class CRMAssistantService:
             "list_users": self._tool_list_users,
             "create_user": self._tool_create_user,
             "update_user": self._tool_update_user,
+            "enqueue_long_operation": self._tool_enqueue_long_operation,
         }
 
         handler = handlers.get(tool_name)
@@ -2626,6 +2804,40 @@ class CRMAssistantService:
             "needs_clarification": False,
             "summary": f"Создан проект «{self._project_display_name(project)}» со статусом «{self._status_name(project.status)}».",
             "project": self._serialize_project(project, include_payments=True, include_comments=True),
+        }
+
+    def _tool_enqueue_long_operation(self, arguments):
+        operation = str(arguments.get("operation") or "").strip()
+        allowed_operations = {"create_quote", "analyze_deals", "generate_report", "mass_update"}
+        if operation not in allowed_operations:
+            return self._clarification(
+                "Для долгой операции нужно выбрать: КП, анализ сделок, отчет или массовое обновление.",
+                [],
+            )
+
+        payload = dict(arguments or {})
+        payload.pop("operation", None)
+        try:
+            from .tasks import enqueue_long_assistant_operation
+
+            task_id = enqueue_long_assistant_operation(
+                user_id=self.user.id if self.user else None,
+                operation=operation,
+                payload=payload,
+            )
+        except Exception as exc:  # pragma: no cover - queue safety net
+            return {
+                "ok": False,
+                "needs_clarification": True,
+                "summary": f"Не смог поставить долгую операцию в очередь: {exc}",
+            }
+
+        return {
+            "ok": True,
+            "needs_clarification": False,
+            "summary": "Запустил долгую операцию в фоне. Можно продолжать работу, я не буду держать голосовой диалог.",
+            "operation": operation,
+            "task_id": task_id,
         }
 
     def _tool_create_client(self, arguments):

@@ -9,8 +9,8 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
-from .ai_assistant import GeminiClient, GeminiRequestError, humanize_gemini_error
-from .live_assistant import _has_live_assistant_access
+from .ai_assistant import CRMAssistantService, GeminiClient, GeminiRequestError, humanize_gemini_error
+from .live_assistant import _build_low_latency_system_instruction, _build_reference_cache, _has_live_assistant_access
 from .models import Account, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectStatus, SubscriptionInvoice, Task, User
 from .subscription import activate_subscription_invoice, ensure_subscription_defaults, issue_subscription_invoice
 
@@ -1239,6 +1239,95 @@ class TestAssistantApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["audio_base64"], "")
         self.assertEqual(response.data["speech_error"], "")
         mocked_generate_speech.assert_not_called()
+
+
+class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
+    def setUp(self):
+        self.user = self.create_user("voice.manager")
+        ProjectStatus.objects.create(
+            code="design",
+            name="Проектирование",
+            short_name="Проект",
+            color="violet",
+            sort_order=10,
+            is_default=True,
+        )
+        FinanceCategory.objects.get_or_create(name="Аванс", type=FinanceCategory.Type.INCOME)
+        FinanceCategory.objects.get_or_create(name="Доставка", type=FinanceCategory.Type.EXPENSE)
+
+    def test_live_tool_declarations_are_limited_to_low_latency_functions(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        tool_names = {tool["name"] for tool in service._low_latency_tool_declarations()}
+
+        self.assertEqual(
+            tool_names,
+            {
+                "create_client",
+                "find_client",
+                "create_deal",
+                "update_deal",
+                "create_task",
+                "add_comment",
+                "get_today_tasks",
+                "enqueue_long_operation",
+            },
+        )
+        self.assertNotIn("list_projects", tool_names)
+        self.assertNotIn("get_crm_overview", tool_names)
+
+    def test_deal_aliases_reuse_project_tools(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._execute_tool(
+            "create_deal",
+            {
+                "deal_name": "Зеркало в ванную",
+                "client_name": "Иван",
+                "client_phone": "+70000000011",
+                "status_name": "Проектирование",
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        created_project = Project.objects.get(client_phone="+70000000011")
+        self.assertEqual(created_project.title, "Зеркало в ванную")
+        self.assertEqual(created_project.status, "design")
+
+    def test_low_latency_instruction_uses_compact_context(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+        reference_cache = async_to_sync(_build_reference_cache)()
+
+        instruction = async_to_sync(_build_low_latency_system_instruction)(
+            service,
+            self.user,
+            "/projects",
+            [{"role": "user", "text": "Какие задачи сегодня?"}],
+            reference_cache,
+        )
+
+        self.assertIn("LOW_LATENCY_CONTEXT", instruction)
+        self.assertIn("/projects", instruction)
+        self.assertIn("create_deal", instruction)
+        self.assertNotIn("КЭШ-СНИМОК CRM", instruction)
+
+    @patch("crm_app.tasks.run_long_assistant_operation")
+    def test_long_operation_is_queued(self, mocked_task):
+        class FakeAsyncResult:
+            id = "task-123"
+
+        mocked_task.delay.return_value = FakeAsyncResult()
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._execute_tool(
+            "enqueue_long_operation",
+            {"operation": "generate_report", "prompt": "Отчет за неделю"},
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["task_id"], "task-123")
+        mocked_task.delay.assert_called_once()
+
 
 class TestGeminiErrors(APITestCase):
     @patch.object(GeminiClient, "_vertex_access_token")

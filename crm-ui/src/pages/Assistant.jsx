@@ -8,7 +8,8 @@ import { Button } from "../components/ui.jsx";
 const STORAGE_KEY = "crm_voice_assistant_history_v4";
 const SESSION_STORAGE_KEY = "crm_voice_assistant_active_session_v1";
 const MAX_VISIBLE_TURNS = 40;
-const MAX_CONTEXT_MESSAGES = 60;
+const MAX_CONTEXT_MESSAGES = 5;
+const LIVE_AUDIO_PROCESSOR_SIZE = 1024;
 const BASE_SPEECH_THRESHOLD = 0.012;
 const SILENCE_MS = 3000;
 const MIN_RECORDING_MS = 1200;
@@ -1351,9 +1352,14 @@ export default function Assistant() {
       const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
       const audioContext = new AudioContextCtor();
       const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(2048, 1, 1);
+      const processor = audioContext.createScriptProcessor(LIVE_AUDIO_PROCESSOR_SIZE, 1, 1);
       const gainNode = audioContext.createGain();
-      const socket = new WebSocket(getAssistantLiveWebSocketUrl());
+      const socket = new WebSocket(
+        getAssistantLiveWebSocketUrl({
+          screen: localStorage.getItem("crm_last_screen") || "/",
+          history: activeConversationRef.current.slice(-MAX_CONTEXT_MESSAGES),
+        })
+      );
       let recoverHandled = false;
 
       const recoverLiveConnection = (message) => {
