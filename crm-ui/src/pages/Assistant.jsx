@@ -257,6 +257,7 @@ export default function Assistant() {
   const livePlaybackSourcesRef = useRef(new Set());
   const liveHeardBufferRef = useRef("");
   const liveReplyBufferRef = useRef("");
+  const liveToolReplyFallbackRef = useRef("");
   const liveReconnectTimerRef = useRef(null);
   const liveResponseWatchdogTimerRef = useRef(null);
   const liveRefreshAfterPlaybackRef = useRef(false);
@@ -624,6 +625,7 @@ export default function Assistant() {
     liveGainNodeRef.current = null;
     liveHeardBufferRef.current = "";
     liveReplyBufferRef.current = "";
+    liveToolReplyFallbackRef.current = "";
     liveNoiseFloorRef.current = 0.006;
     resetLiveTurnDetection();
   }
@@ -669,7 +671,7 @@ export default function Assistant() {
 
   function finalizeLiveTurn() {
     const userText = liveHeardBufferRef.current.trim();
-    const assistantText = liveReplyBufferRef.current.trim();
+    const assistantText = liveReplyBufferRef.current.trim() || liveToolReplyFallbackRef.current.trim();
 
     if (userText || assistantText) {
       const nextContext = [
@@ -693,6 +695,7 @@ export default function Assistant() {
 
     liveHeardBufferRef.current = "";
     liveReplyBufferRef.current = "";
+    liveToolReplyFallbackRef.current = "";
     resetLiveTurnDetection();
   }
 
@@ -765,6 +768,7 @@ export default function Assistant() {
 
     if (event.type === "output_text") {
       clearLiveResponseWatchdogTimer();
+      liveToolReplyFallbackRef.current = "";
       pendingRef.current = false;
       setPending(false);
       const text = appendLiveText(liveReplyBufferRef, event.text);
@@ -773,21 +777,11 @@ export default function Assistant() {
     }
 
     if (event.type === "tool_call" && event.reply) {
-      clearLiveResponseWatchdogTimer();
-      pendingRef.current = false;
-      setPending(false);
-      liveReplyBufferRef.current = event.reply;
+      liveToolReplyFallbackRef.current = event.reply;
+      pendingRef.current = true;
+      setPending(true);
       setReplyText(event.reply);
-      void speakBrowserReply(event.reply).finally(() => {
-        if (
-          liveRefreshAfterPlaybackRef.current &&
-          sessionActiveRef.current &&
-          !pendingRef.current &&
-          !livePlaybackSourcesRef.current.size
-        ) {
-          scheduleLiveSessionRefresh();
-        }
-      });
+      scheduleLiveResponseWatchdog();
       return;
     }
 
@@ -1329,6 +1323,7 @@ export default function Assistant() {
     }
     liveHeardBufferRef.current = "";
     liveReplyBufferRef.current = "";
+    liveToolReplyFallbackRef.current = "";
     liveNoiseFloorRef.current = 0.006;
     resetLiveTurnDetection();
 

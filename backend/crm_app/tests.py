@@ -1347,6 +1347,20 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
                 self.assertEqual(result["intent"], expected_intent)
                 self.assertTrue(result["needs_clarification"])
 
+    def test_fast_finance_clarification_keeps_inferred_advance_details(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._fast_mutation_clarification("создай аванс 30 000")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["intent"], "clarify_create_financial_operation_fast")
+        self.assertIn("по какому проекту", result["reply"])
+        self.assertNotIn("доход или расход", result["reply"])
+        self.assertNotIn("какая сумма", result["reply"])
+        self.assertEqual(result["data"]["operation_kind"], FinanceCategory.Type.INCOME)
+        self.assertEqual(result["data"]["category_name"], "Аванс")
+        self.assertEqual(result["data"]["amount"], "30000")
+
     def test_project_title_hint_clarifies_only_missing_client(self):
         service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
 
@@ -1417,6 +1431,72 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
         self.assertTrue(result["ok"])
         created_project = Project.objects.get(title="Зеркало в ванную", client_name="Иван")
         self.assertEqual(created_project.total_amount, Decimal("120000"))
+
+    def test_finance_operation_infers_income_advance_from_raw_text(self):
+        project = Project.objects.create(
+            manager=self.user,
+            title="Зеркало",
+            client_name="Иван",
+            client_phone="+70000000022",
+            status="design",
+        )
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._execute_tool(
+            "create_financial_operation",
+            {
+                "project_id": project.id,
+                "raw_text": "создай аванс 30 000",
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        payment = Payment.objects.get(project=project)
+        self.assertEqual(payment.amount, Decimal("30000"))
+        self.assertEqual(payment.type, Payment.Type.ADVANCE)
+        self.assertEqual(payment.category.name, "Аванс")
+        self.assertEqual(payment.category.type, FinanceCategory.Type.INCOME)
+
+    def test_finance_operation_infers_expense_category_from_raw_text(self):
+        project = Project.objects.create(
+            manager=self.user,
+            title="Зеркало",
+            client_name="Иван",
+            client_phone="+70000000023",
+            status="design",
+        )
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._execute_tool(
+            "create_financial_operation",
+            {
+                "project_id": project.id,
+                "raw_text": "проведи доставку 5000",
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        payment = Payment.objects.get(project=project)
+        self.assertEqual(payment.amount, Decimal("5000"))
+        self.assertEqual(payment.type, Payment.Type.CORRECTION)
+        self.assertEqual(payment.category.name, "Доставка")
+        self.assertEqual(payment.category.type, FinanceCategory.Type.EXPENSE)
+
+    def test_finance_operation_with_advance_text_asks_only_for_project(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._execute_tool(
+            "create_financial_operation",
+            {
+                "raw_text": "создай аванс 30 000",
+            },
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["needs_clarification"])
+        self.assertIn("проект", result["summary"])
+        self.assertNotIn("доход или расход", result["summary"])
+        self.assertNotIn("сумму", result["summary"])
 
     def test_synonym_commands_enable_tool_calling(self):
         service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)

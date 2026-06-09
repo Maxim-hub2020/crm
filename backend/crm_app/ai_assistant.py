@@ -1075,10 +1075,29 @@ class CRMAssistantService:
             )
 
         if self._matches_any(text, finance_terms) and (not has_amount_hint or (word_count <= 4 and not has_target_hint)):
+            inferred_operation_kind = self._infer_finance_operation_kind(text)
+            inferred_category = self._infer_finance_category(text, operation_kind=inferred_operation_kind or None)
+            inferred_amount = self._parse_finance_amount_from_text(text)
+            missing_finance_fields = []
+            if not has_target_hint:
+                missing_finance_fields.append("по какому проекту")
+            if not has_amount_hint and not inferred_amount:
+                missing_finance_fields.append("какая сумма")
+            if not inferred_operation_kind:
+                missing_finance_fields.append("это доход или расход")
+            if not inferred_category and inferred_operation_kind:
+                missing_finance_fields.append("какая категория")
+            if not missing_finance_fields:
+                return None
             return self._fast_response(
-                "Уточните финансовую операцию: по какому проекту, это доход или расход, какая сумма и какая категория?",
+                "Уточните финансовую операцию: " + ", ".join(missing_finance_fields) + ".",
                 "clarify_create_financial_operation_fast",
-                {"command_kind": "finance_operation"},
+                {
+                    "command_kind": "finance_operation",
+                    "operation_kind": inferred_operation_kind,
+                    "category_name": inferred_category.name if inferred_category else "",
+                    "amount": str(inferred_amount) if inferred_amount is not None else "",
+                },
                 needs_clarification=True,
             )
 
@@ -1450,7 +1469,8 @@ class CRMAssistantService:
             "При создании проекта не спрашивай повторно уже названное название проекта. Если название есть, а клиента нет, спроси только клиента и предложи сразу назвать бюджет, адрес или статус. "
             "Если название и клиент есть, но нет бюджета, адреса и статуса, перед созданием один раз спроси: указать бюджет, адрес или статус, либо создать без них. "
             "Если пользователь отвечает «нет», «не надо», «без бюджета», «без адреса» или «создавай так», вызывай create_project/create_deal со skip_optional_details=true и не подставляй выдуманные optional-данные. "
-            "Для финансовой операции уточняй проект, сумму, доход или расход, а затем категорию и счёт, если они нужны. "
+            "Для финансовой операции выводи тип и категорию из смысла фразы: «аванс» — доход и категория «Аванс», «оплата клиента» — доход, «доставка», «монтаж», «комплектующие», «аренда» — расход. "
+            "Если не уверен, уточняй проект, сумму, доход или расход, а затем категорию и счёт, если они нужны. "
             "Если пользователь просит проанализировать проект и сам создать по нему задачи, используй create_project_tasks_from_analysis: выбери понятные рабочие задачи по статусу, описанию, адресу, сумме, комментариям и финансам проекта. "
             "Для общих справочных вопросов используй кэш-снимок CRM ниже и не вызывай функции без необходимости. "
             "Все фактические ответы о проектах, задачах, финансах, комментариях, пользователях и статусах строй только на основании кэш-снимка CRM или результатов доступных функций. "
@@ -1719,6 +1739,7 @@ class CRMAssistantService:
                         "payment_type": {"type": "string", "enum": ["advance", "additional", "refund", "correction"]},
                         "payment_method": {"type": "string", "enum": ["transfer", "cash", "card", "other"]},
                         "comment": {"type": "string"},
+                        "raw_text": {"type": "string", "description": "Исходная фраза пользователя для вывода типа и категории, например «создай аванс 30000»."},
                         "paid_at": {"type": "string", "description": "Дата или дата-время платежа в ISO-формате."},
                     },
                 },
@@ -1740,6 +1761,7 @@ class CRMAssistantService:
                         "payment_type": {"type": "string", "enum": ["advance", "additional", "refund", "correction"]},
                         "payment_method": {"type": "string", "enum": ["transfer", "cash", "card", "other"]},
                         "comment": {"type": "string"},
+                        "raw_text": {"type": "string", "description": "Исходная фраза пользователя для вывода типа и категории, например «создай аванс 30000»."},
                         "paid_at": {"type": "string", "description": "Дата или дата-время платежа в ISO-формате."},
                     },
                 },
@@ -1976,8 +1998,10 @@ class CRMAssistantService:
                         "category_name": {"type": "string"},
                         "account_id": {"type": "integer"},
                         "account_name": {"type": "string"},
+                        "payment_type": {"type": "string", "enum": ["advance", "additional", "refund", "correction"]},
                         "payment_method": {"type": "string", "enum": ["transfer", "cash", "card", "other"]},
                         "comment": {"type": "string"},
+                        "raw_text": {"type": "string"},
                         "paid_at": {"type": "string"},
                     },
                 },
@@ -2657,6 +2681,137 @@ class CRMAssistantService:
                 return category
 
         return None
+
+    @staticmethod
+    def _finance_hint_text(arguments):
+        if not isinstance(arguments, dict):
+            return ""
+
+        prioritized_keys = [
+            "raw_text",
+            "user_phrase",
+            "message",
+            "query",
+            "operation_kind",
+            "category_name",
+            "payment_type",
+            "comment",
+            "description",
+            "title",
+        ]
+        parts = []
+        for key in prioritized_keys:
+            value = arguments.get(key)
+            if value not in (None, ""):
+                parts.append(str(value))
+
+        for key, value in arguments.items():
+            if key in prioritized_keys or value in (None, ""):
+                continue
+            if isinstance(value, (str, int, float, Decimal)):
+                parts.append(str(value))
+
+        return normalize_text(" ".join(parts))
+
+    @staticmethod
+    def _parse_finance_amount_from_text(text):
+        if not text:
+            return None
+
+        thousands_match = re.search(r"(?<!\d)(\d+(?:[,.]\d+)?)\s*(?:тыс|тысяч|тысячи|т)\b", text)
+        if thousands_match:
+            base_amount = parse_decimal(thousands_match.group(1))
+            if base_amount is not None:
+                return base_amount * Decimal("1000")
+
+        amount_match = re.search(r"(?<!\d)(\d{1,3}(?:[\s\u00a0]\d{3})+|\d{4,})(?:[,.]\d{1,2})?", text)
+        if amount_match:
+            return parse_decimal(amount_match.group(0))
+
+        return None
+
+    @staticmethod
+    def _infer_finance_operation_kind(text):
+        if not text:
+            return ""
+
+        income_markers = [
+            "аванс",
+            "предоплат",
+            "доход",
+            "приход",
+            "поступлен",
+            "поступление",
+            "оплата клиента",
+            "оплату клиента",
+            "получили",
+            "получил",
+            "зачисл",
+        ]
+        expense_markers = [
+            "расход",
+            "списан",
+            "списание",
+            "доставка",
+            "монтаж",
+            "комплект",
+            "материал",
+            "фурнитур",
+            "аренда",
+            "контрагент",
+            "подрядчик",
+            "поставщик",
+            "закуп",
+        ]
+
+        if any(marker in text for marker in income_markers):
+            return FinanceCategory.Type.INCOME
+        if any(marker in text for marker in expense_markers):
+            return FinanceCategory.Type.EXPENSE
+        return ""
+
+    def _infer_finance_category(self, text, operation_kind=None):
+        if not text:
+            return None
+
+        category_hints = [
+            ("Аванс", FinanceCategory.Type.INCOME, ["аванс", "предоплат"]),
+            ("Оплата клиента", FinanceCategory.Type.INCOME, ["оплата клиента", "оплату клиента", "поступлен", "поступление"]),
+            ("Доставка", FinanceCategory.Type.EXPENSE, ["доставка", "доставк"]),
+            ("Комплектующие", FinanceCategory.Type.EXPENSE, ["комплект", "материал", "фурнитур", "расходник"]),
+            ("Монтаж", FinanceCategory.Type.EXPENSE, ["монтаж", "сборк", "установ"]),
+            ("Оплата контрагентам", FinanceCategory.Type.EXPENSE, ["контрагент", "подрядчик", "подрядн", "поставщик"]),
+            ("Аренда", FinanceCategory.Type.EXPENSE, ["аренда", "аренд"]),
+        ]
+        for category_name, category_type, markers in category_hints:
+            if operation_kind and operation_kind != category_type:
+                continue
+            if any(marker in text for marker in markers):
+                category = self._match_finance_category(category_name, operation_kind=category_type)
+                if category:
+                    return category
+
+        queryset = FinanceCategory.objects.all().order_by("type", "name", "id")
+        if operation_kind in FinanceCategory.Type.values:
+            queryset = queryset.filter(type=operation_kind)
+        for category in queryset:
+            category_name = normalize_text(category.name)
+            if category_name and category_name in text:
+                return category
+
+        return None
+
+    @staticmethod
+    def _infer_payment_type(text, operation_kind):
+        if text:
+            if "возврат" in text:
+                return Payment.Type.REFUND
+            if "доплат" in text:
+                return Payment.Type.ADDITIONAL
+            if "аванс" in text or "предоплат" in text:
+                return Payment.Type.ADVANCE
+
+        return Payment.Type.CORRECTION if operation_kind == FinanceCategory.Type.EXPENSE else Payment.Type.ADVANCE
 
     def _match_account(self, identifier):
         if not identifier:
@@ -3583,9 +3738,13 @@ class CRMAssistantService:
         }
 
     def _tool_create_payment(self, arguments):
+        finance_hint_text = self._finance_hint_text(arguments)
         project_id = parse_int(arguments.get("project_id"))
         project_query = str(arguments.get("project_query") or "").strip()
         amount = parse_decimal(arguments.get("amount"))
+        if amount is None:
+            amount = self._parse_finance_amount_from_text(finance_hint_text)
+
         operation_kind = normalize_text(arguments.get("operation_kind"))
         operation_kind_aliases = {
             "доход": FinanceCategory.Type.INCOME,
@@ -3597,6 +3756,8 @@ class CRMAssistantService:
         operation_kind = operation_kind_aliases.get(operation_kind, operation_kind)
         if operation_kind not in FinanceCategory.Type.values:
             operation_kind = ""
+        if not operation_kind:
+            operation_kind = self._infer_finance_operation_kind(finance_hint_text)
 
         category = None
         category_id = parse_int(arguments.get("category_id"))
@@ -3616,9 +3777,13 @@ class CRMAssistantService:
                     for item in FinanceCategory.objects.all().order_by("type", "name", "id")[:8]
                 ]
                 return self._clarification("Не нашёл такую финансовую категорию. Уточните категорию.", options)
+        else:
+            category = self._infer_finance_category(finance_hint_text, operation_kind=operation_kind or None)
 
         if category and not operation_kind:
             operation_kind = category.type
+        if not operation_kind:
+            operation_kind = self._infer_finance_operation_kind(finance_hint_text)
 
         missing = []
         if not project_id and not project_query:
@@ -3646,9 +3811,9 @@ class CRMAssistantService:
 
         payment_type = arguments.get("payment_type")
         if not payment_type:
-            payment_type = Payment.Type.CORRECTION if operation_kind == FinanceCategory.Type.EXPENSE else Payment.Type.ADVANCE
+            payment_type = self._infer_payment_type(finance_hint_text, operation_kind)
         if payment_type not in Payment.Type.values:
-            payment_type = Payment.Type.CORRECTION if operation_kind == FinanceCategory.Type.EXPENSE else Payment.Type.ADVANCE
+            payment_type = self._infer_payment_type(finance_hint_text, operation_kind)
 
         payment_method = arguments.get("payment_method") or Payment.Method.TRANSFER
         if payment_method not in Payment.Method.values:
