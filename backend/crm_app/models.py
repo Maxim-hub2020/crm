@@ -1,6 +1,26 @@
+from django.utils import timezone
 from django.db import models
 from django.contrib.auth.models import AbstractUser
-from django.utils import timezone
+
+
+class Workspace(models.Model):
+    name = models.CharField(max_length=160)
+    slug = models.SlugField(max_length=80, unique=True, allow_unicode=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+
+    def __str__(self):
+        return self.name
+
+
+def default_workspace():
+    workspace = Workspace.objects.order_by("id").first()
+    if workspace:
+        return workspace
+    return Workspace.objects.create(name="Основная компания", slug="default")
 
 class User(AbstractUser):
     class Role(models.TextChoices):
@@ -8,9 +28,22 @@ class User(AbstractUser):
         MANAGER = "manager", "Manager"
 
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.MANAGER)
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.PROTECT,
+        related_name="users",
+        blank=True,
+        null=True,
+        db_index=True,
+    )
 
     def is_admin(self):
         return self.role == self.Role.ADMIN or self.is_superuser
+
+    def save(self, *args, **kwargs):
+        if not self.workspace_id:
+            self.workspace = default_workspace()
+        super().save(*args, **kwargs)
 
 
 class ProjectStatus(models.Model):
@@ -22,7 +55,15 @@ class ProjectStatus(models.Model):
         VIOLET = "violet", "Violet"
         SLATE = "slate", "Slate"
 
-    code = models.SlugField(max_length=50, unique=True, allow_unicode=True)
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="project_statuses",
+        blank=True,
+        null=True,
+        db_index=True,
+    )
+    code = models.SlugField(max_length=50, allow_unicode=True)
     name = models.CharField(max_length=100)
     short_name = models.CharField(max_length=40, blank=True, default="")
     color = models.CharField(max_length=20, choices=Color.choices, default=Color.SKY)
@@ -34,14 +75,27 @@ class ProjectStatus(models.Model):
 
     class Meta:
         ordering = ["sort_order", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "code"], name="unique_workspace_project_status_code"),
+        ]
 
     def save(self, *args, **kwargs):
+        if not self.workspace_id:
+            self.workspace = default_workspace()
         super().save(*args, **kwargs)
         if self.is_default:
-            ProjectStatus.objects.exclude(pk=self.pk).filter(is_default=True).update(is_default=False)
+            ProjectStatus.objects.exclude(pk=self.pk).filter(workspace=self.workspace, is_default=True).update(is_default=False)
 
 
 class Client(models.Model):
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="clients",
+        blank=True,
+        null=True,
+        db_index=True,
+    )
     name = models.CharField(max_length=200)
     phone = models.CharField(max_length=50, blank=True, default="", db_index=True)
     email = models.EmailField(blank=True, null=True)
@@ -54,20 +108,33 @@ class Client(models.Model):
         ordering = ["name", "id"]
         constraints = [
             models.UniqueConstraint(
-                fields=["phone"],
+                fields=["workspace", "phone"],
                 condition=~models.Q(phone=""),
-                name="unique_client_phone_non_empty",
+                name="unique_workspace_client_phone_non_empty",
             ),
         ]
 
     def __str__(self):
         return self.name
 
+    def save(self, *args, **kwargs):
+        if not self.workspace_id:
+            self.workspace = default_workspace()
+        super().save(*args, **kwargs)
+
 
 class Project(models.Model):
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="projects",
+        blank=True,
+        null=True,
+        db_index=True,
+    )
     manager = models.ForeignKey(User, on_delete=models.PROTECT, related_name="projects")
     client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="projects", blank=True, null=True)
-    order_number = models.PositiveIntegerField(blank=True, null=True, unique=True, db_index=True)
+    order_number = models.PositiveIntegerField(blank=True, null=True, db_index=True)
     title = models.CharField(max_length=200, blank=True, default="")
     client_name = models.CharField(max_length=200)
     client_phone = models.CharField(max_length=50, db_index=True)
@@ -89,11 +156,21 @@ class Project(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "order_number"], name="unique_workspace_project_order_number"),
+        ]
+
     def save(self, *args, **kwargs):
+        if not self.workspace_id and self.manager_id:
+            self.workspace = self.manager.workspace
+        if not self.workspace_id:
+            self.workspace = default_workspace()
         if not self.title:
             self.title = self.client_name or "Проект"
         if not self.order_number:
-            max_number = Project.objects.aggregate(models.Max("order_number")).get("order_number__max") or 0
+            queryset = Project.objects.filter(workspace=self.workspace) if self.workspace_id else Project.objects.all()
+            max_number = queryset.aggregate(models.Max("order_number")).get("order_number__max") or 0
             self.order_number = max_number + 1
         super().save(*args, **kwargs)
 
@@ -103,6 +180,14 @@ class FinanceCategory(models.Model):
         EXPENSE = "expense", "Expense"
         INCOME = "income", "Income"
 
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="finance_categories",
+        blank=True,
+        null=True,
+        db_index=True,
+    )
     name = models.CharField(max_length=120)
     type = models.CharField(max_length=20, choices=Type.choices, default=Type.EXPENSE, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -110,16 +195,37 @@ class FinanceCategory(models.Model):
     class Meta:
         ordering = ["type", "name", "id"]
         constraints = [
-            models.UniqueConstraint(fields=["name", "type"], name="unique_finance_category_name_type"),
+            models.UniqueConstraint(fields=["workspace", "name", "type"], name="unique_workspace_finance_category_name_type"),
         ]
+
+    def save(self, *args, **kwargs):
+        if not self.workspace_id:
+            self.workspace = default_workspace()
+        super().save(*args, **kwargs)
 
 
 class Account(models.Model):
-    name = models.CharField(max_length=120, unique=True)
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="accounts",
+        blank=True,
+        null=True,
+        db_index=True,
+    )
+    name = models.CharField(max_length=120)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["name", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "name"], name="unique_workspace_account_name"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.workspace_id:
+            self.workspace = default_workspace()
+        super().save(*args, **kwargs)
 
 
 class ProjectCustomField(models.Model):
@@ -129,6 +235,14 @@ class ProjectCustomField(models.Model):
         DATE = "date", "Date"
         FILE = "file", "File"
 
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="project_custom_fields",
+        blank=True,
+        null=True,
+        db_index=True,
+    )
     name = models.CharField(max_length=120)
     field_type = models.CharField(max_length=20, choices=FieldType.choices, default=FieldType.TEXT)
     sort_order = models.PositiveIntegerField(default=0)
@@ -136,6 +250,11 @@ class ProjectCustomField(models.Model):
 
     class Meta:
         ordering = ["sort_order", "id"]
+
+    def save(self, *args, **kwargs):
+        if not self.workspace_id:
+            self.workspace = default_workspace()
+        super().save(*args, **kwargs)
 
 
 def document_template_upload_to(instance, filename):
@@ -147,7 +266,15 @@ class DocumentTemplate(models.Model):
         CONTRACT = "contract", "Contract"
         ACT = "act", "Act"
 
-    type = models.CharField(max_length=20, choices=Type.choices, unique=True)
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="document_templates",
+        blank=True,
+        null=True,
+        db_index=True,
+    )
+    type = models.CharField(max_length=20, choices=Type.choices)
     file = models.FileField(upload_to=document_template_upload_to)
     original_name = models.CharField(max_length=255, blank=True, default="")
     uploaded_by = models.ForeignKey(
@@ -162,12 +289,27 @@ class DocumentTemplate(models.Model):
 
     class Meta:
         ordering = ["type"]
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "type"], name="unique_workspace_document_template_type"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.workspace_id:
+            self.workspace = default_workspace()
+        super().save(*args, **kwargs)
 
 
 class ChatIntegrationSettings(models.Model):
     class Provider(models.TextChoices):
         CHATWOOT = "chatwoot", "Chatwoot"
 
+    workspace = models.OneToOneField(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="chat_settings",
+        blank=True,
+        null=True,
+    )
     provider = models.CharField(max_length=30, choices=Provider.choices, default=Provider.CHATWOOT)
     enabled = models.BooleanField(default=False)
     base_url = models.URLField(blank=True, default="")
@@ -190,6 +332,11 @@ class ChatIntegrationSettings(models.Model):
 
     def __str__(self):
         return self.inbox_name or self.base_url or self.get_provider_display()
+
+    def save(self, *args, **kwargs):
+        if not self.workspace_id:
+            self.workspace = default_workspace()
+        super().save(*args, **kwargs)
 
 
 class CRMMemorySnapshot(models.Model):
@@ -293,6 +440,13 @@ class WorkspaceSubscription(models.Model):
         PAST_DUE = "past_due", "Past due"
         CANCELED = "canceled", "Canceled"
 
+    workspace = models.OneToOneField(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="subscription",
+        blank=True,
+        null=True,
+    )
     plan = models.ForeignKey(SubscriptionPlan, on_delete=models.PROTECT, related_name="subscriptions")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.INACTIVE, db_index=True)
     started_at = models.DateTimeField(blank=True, null=True)
@@ -314,6 +468,11 @@ class WorkspaceSubscription(models.Model):
             and bool(self.current_period_end)
             and self.current_period_end >= today
         )
+
+    def save(self, *args, **kwargs):
+        if not self.workspace_id:
+            self.workspace = default_workspace()
+        super().save(*args, **kwargs)
 
 
 class SubscriptionInvoice(models.Model):
@@ -382,6 +541,14 @@ class Payout(models.Model):
 
 
 class AuditLog(models.Model):
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="audit_logs",
+        blank=True,
+        null=True,
+        db_index=True,
+    )
     actor = models.ForeignKey(User, on_delete=models.PROTECT, related_name="audit_logs")
     entity_type = models.CharField(max_length=50)
     entity_id = models.CharField(max_length=50)
@@ -389,3 +556,10 @@ class AuditLog(models.Model):
     before_json = models.JSONField(null=True, blank=True)
     after_json = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self.workspace_id and self.actor_id:
+            self.workspace = self.actor.workspace
+        if not self.workspace_id:
+            self.workspace = default_workspace()
+        super().save(*args, **kwargs)

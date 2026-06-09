@@ -999,10 +999,10 @@ export default function Projects() {
           setAddressSuggestions(suggestions);
           setAddressSuggestError("");
         }
-      } catch {
+      } catch (requestError) {
         if (!cancelled) {
           setAddressSuggestions([]);
-          setAddressSuggestError("Не удалось загрузить подсказки Dadata.");
+          setAddressSuggestError(requestError?.message || "Не удалось загрузить подсказки Dadata.");
         }
       } finally {
         if (!cancelled) {
@@ -2196,7 +2196,7 @@ export default function Projects() {
                         </div>
                       ) : (
                         <div className="rounded-2xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-700">
-                          Для подсказок Dadata добавьте `VITE_DADATA_API_KEY` в frontend env.
+                          Для подсказок Dadata добавьте `DADATA_API_KEY` в backend `.env`.
                         </div>
                       )}
 

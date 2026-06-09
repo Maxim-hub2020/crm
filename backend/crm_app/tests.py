@@ -12,7 +12,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from .ai_assistant import CRMAssistantService, GeminiClient, GeminiRequestError, humanize_gemini_error
 from .live_assistant import AssistantLiveConsumer, _build_low_latency_system_instruction, _build_reference_cache, _has_live_assistant_access
-from .models import Account, ChatIntegrationSettings, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectStatus, SubscriptionInvoice, Task, User
+from .models import Account, ChatIntegrationSettings, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectStatus, SubscriptionInvoice, Task, User, Workspace
 from .subscription import activate_subscription_invoice, ensure_subscription_defaults, issue_subscription_invoice
 
 
@@ -97,6 +97,81 @@ class TestAuthApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(me_response.status_code, status.HTTP_200_OK)
         self.assertTrue(me_response.data["is_admin"])
         self.assertTrue(me_response.data["is_superuser"])
+
+
+class TestWorkspaceIsolation(AuthenticatedApiMixin, APITestCase):
+    def setUp(self):
+        self.workspace_a = Workspace.objects.create(name="Цех Ростов", slug="ceh-rostov")
+        self.workspace_b = Workspace.objects.create(name="Другая компания", slug="other-company")
+        self.admin_a = self.create_user("admin.a", role=User.Role.ADMIN, workspace=self.workspace_a)
+        self.admin_b = self.create_user("admin.b", role=User.Role.ADMIN, workspace=self.workspace_b)
+        self.manager_a = self.create_user("manager.a", workspace=self.workspace_a)
+        self.manager_b = self.create_user("manager.b", workspace=self.workspace_b)
+
+        ProjectStatus.objects.create(workspace=self.workspace_a, code="active", name="В работе", is_default=True)
+        ProjectStatus.objects.create(workspace=self.workspace_b, code="active", name="В работе", is_default=True)
+        Client.objects.create(workspace=self.workspace_a, name="Клиент A", phone="+70000000111")
+        Client.objects.create(workspace=self.workspace_b, name="Клиент B", phone="+70000000222")
+        Project.objects.create(workspace=self.workspace_a, manager=self.manager_a, client_name="Клиент A", client_phone="+70000000111")
+        Project.objects.create(workspace=self.workspace_b, manager=self.manager_b, client_name="Клиент B", client_phone="+70000000222")
+
+    def test_admin_sees_only_own_workspace_data(self):
+        api_client = self.auth_client_for(self.admin_a)
+
+        projects_response = api_client.get("/api/projects/")
+        clients_response = api_client.get("/api/clients/")
+
+        self.assertEqual(projects_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(clients_response.status_code, status.HTTP_200_OK)
+        self.assertEqual([item["client_name"] for item in projects_response.data], ["Клиент A"])
+        self.assertEqual([item["name"] for item in clients_response.data], ["Клиент A"])
+
+    def test_chat_settings_are_per_workspace(self):
+        api_a = self.auth_client_for(self.admin_a)
+        api_b = self.auth_client_for(self.admin_b)
+
+        response_a = api_a.patch("/api/chat-settings/", {"enabled": True, "base_url": "https://a.example.ru"}, format="json")
+        response_b = api_b.patch("/api/chat-settings/", {"enabled": True, "base_url": "https://b.example.ru"}, format="json")
+        read_a = api_a.get("/api/chat-settings/")
+        read_b = api_b.get("/api/chat-settings/")
+
+        self.assertEqual(response_a.status_code, status.HTTP_200_OK)
+        self.assertEqual(response_b.status_code, status.HTTP_200_OK)
+        self.assertEqual(read_a.data["app_url"], "https://a.example.ru/app")
+        self.assertEqual(read_b.data["app_url"], "https://b.example.ru/app")
+
+
+class TestDadataAddressApi(AuthenticatedApiMixin, APITestCase):
+    def setUp(self):
+        self.activate_subscription()
+        self.user = self.create_user("address.user")
+
+    @patch.dict(os.environ, {"DADATA_DEFAULT_REGION": "Ростовская область", "DADATA_DEFAULT_CITY": "Ростов-на-Дону"})
+    def test_dadata_query_defaults_to_rostov_region(self):
+        self.assertEqual(
+            CRMAssistantService._dadata_query("Далмановский"),
+            "Ростовская область, Ростов-на-Дону, Далмановский",
+        )
+
+    @patch.dict(os.environ, {"DADATA_API_KEY": "test-token"})
+    @patch("crm_app.views.CRMAssistantService._suggest_dadata_address")
+    def test_address_suggestions_use_backend_dadata_proxy(self, mocked_suggest):
+        mocked_suggest.return_value = [
+            {
+                "value": "Ростовская обл, г Ростов-на-Дону, ул Ленина, д 5",
+                "unrestricted_value": "Ростовская обл, г Ростов-на-Дону, ул Ленина, д 5",
+                "data": {"geo_lat": "47.222", "geo_lon": "39.72"},
+            }
+        ]
+        api_client = self.auth_client_for(self.user)
+
+        response = api_client.get("/api/address-suggestions/", {"q": "Ленина 5"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["configured"])
+        self.assertEqual(response.data["default_region"], "Ростовская область")
+        self.assertEqual(response.data["suggestions"][0]["lat"], "47.222")
+        mocked_suggest.assert_called_once_with("Ленина 5", count=6)
 
 
 class TestProjectApi(AuthenticatedApiMixin, APITestCase):

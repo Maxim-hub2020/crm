@@ -19,9 +19,10 @@ class HasActiveSubscription(BasePermission):
         if getattr(request.user, "is_superuser", False) or getattr(request.user, "is_admin", lambda: False)():
             return True
 
-        from .subscription import has_trial_access, is_subscription_active
+        from .subscription import get_workspace_subscription, has_trial_access, is_subscription_active
 
-        return is_subscription_active() or has_trial_access()
+        subscription = get_workspace_subscription(request.user)
+        return is_subscription_active(subscription) or has_trial_access(subscription)
 
 
 class HasAssistantSubscription(BasePermission):
@@ -34,6 +35,6 @@ class HasAssistantSubscription(BasePermission):
         if getattr(request.user, "is_superuser", False) or getattr(request.user, "is_admin", lambda: False)():
             return True
 
-        from .subscription import has_assistant_access
+        from .subscription import get_workspace_subscription, has_assistant_access
 
-        return has_assistant_access()
+        return has_assistant_access(get_workspace_subscription(request.user))

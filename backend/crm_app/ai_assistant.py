@@ -8,11 +8,12 @@ from decimal import Decimal, InvalidOperation
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.utils import timezone
 
 from .models import Account, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectStatus, Task, User
 from .models import CRMMemorySnapshot
+from .tenancy import current_workspace
 
 
 def normalize_text(value):
@@ -731,6 +732,7 @@ class CRMAssistantService:
 
     def __init__(self, user, client=None, init_gemini_client=True, init_memory=True):
         self.user = user
+        self.workspace = current_workspace(user)
         self.client = client if client is not None else (GeminiClient() if init_gemini_client else None)
         self.tool_events = []
         self.memory_snapshot = self._get_memory_snapshot() if init_memory else None
@@ -1455,7 +1457,7 @@ class CRMAssistantService:
     def _system_instruction(self, message="", tools_enabled=False):
         today = timezone.localdate().isoformat()
         visible_statuses = ", ".join(
-            f"{status.name} ({status.code})" for status in ProjectStatus.objects.all().order_by("sort_order", "id")[:20]
+            f"{status.name} ({status.code})" for status in self._status_rows()[:20]
         )
         visible_users = ", ".join(
             (person.get_full_name() or person.username)
@@ -1482,8 +1484,9 @@ class CRMAssistantService:
             "Если название и клиент есть, но нет бюджета, адреса и статуса, перед созданием один раз спроси: указать бюджет, адрес или статус, либо создать без них. "
             "Телефон клиента при создании проекта необязателен: если пользователь говорит «без телефона» или «телефона нет», оставляй client_phone пустым и не жди номер. "
             "Если пользователь отвечает «нет», «не надо», «без бюджета», «без адреса», «без телефона» или «создавай так», вызывай create_project/create_deal со skip_optional_details=true и не подставляй выдуманные optional-данные. "
+            "По умолчанию география адресов: Ростов-на-Дону и Ростовская область. "
             "Если пользователь называет адрес объекта, передавай его в object_address; backend проверит и нормализует адрес через Dadata. "
-            "Если функция просит уточнить адрес, спроси город, улицу и дом, не сохраняй сомнительный адрес сам. "
+            "Если функция просит уточнить адрес или нашла только похожий вариант, спроси, этот ли адрес имелся в виду; не сохраняй сомнительный адрес сам. "
             "Для финансовой операции выводи тип и категорию из смысла фразы: «аванс» — доход и категория «Аванс», «оплата клиента» — доход, «доставка», «монтаж», «комплектующие», «аренда» — расход. "
             "Если не уверен, уточняй проект, сумму, доход или расход, а затем категорию и счёт, если они нужны. "
             "Если пользователь просит проанализировать проект и сам создать по нему задачи, используй create_project_tasks_from_analysis: выбери понятные рабочие задачи по статусу, описанию, адресу, сумме, комментариям и финансам проекта. "
@@ -2251,8 +2254,8 @@ class CRMAssistantService:
         payments = list(self._visible_payments())
         tasks = list(self._visible_tasks()[:task_limit])
         recent_payments = payments[:payment_limit]
-        accounts = list(Account.objects.all().order_by("name", "id"))
-        finance_categories = list(FinanceCategory.objects.all().order_by("type", "name", "id"))
+        accounts = list(Account.objects.filter(workspace=self.workspace).order_by("name", "id"))
+        finance_categories = list(FinanceCategory.objects.filter(workspace=self.workspace).order_by("type", "name", "id"))
 
         paid_by_project = {}
         payment_count_by_project = {}
@@ -2459,38 +2462,39 @@ class CRMAssistantService:
         return payload, "\n".join(summary_lines)
 
     def _status_rows(self):
-        return list(ProjectStatus.objects.all().order_by("sort_order", "id"))
+        return list(ProjectStatus.objects.filter(workspace=self.workspace).order_by("sort_order", "id"))
 
     def _visible_projects(self):
-        queryset = Project.objects.select_related("client", "manager").all().order_by("-created_at")
+        queryset = Project.objects.select_related("client", "manager").filter(workspace=self.workspace).order_by("-created_at")
         if self.user.is_admin():
             return queryset
         return queryset.filter(manager=self.user)
 
     def _visible_clients(self):
-        return Client.objects.all().order_by("name", "id")
+        return Client.objects.filter(workspace=self.workspace).order_by("name", "id")
 
     def _visible_payments(self):
-        queryset = Payment.objects.select_related("project", "created_by", "category", "account").all().order_by("-paid_at", "-id")
+        queryset = Payment.objects.select_related("project", "created_by", "category", "account").filter(project__workspace=self.workspace).order_by("-paid_at", "-id")
         if self.user.is_admin():
             return queryset
         return queryset.filter(project__manager=self.user)
 
     def _visible_tasks(self):
-        queryset = Task.objects.select_related("assignee", "created_by").all().order_by("status", "due_date", "-created_at")
+        queryset = Task.objects.select_related("assignee", "created_by", "project").filter(assignee__workspace=self.workspace).order_by("status", "due_date", "-created_at")
+        queryset = queryset.filter(Q(project__isnull=True) | Q(project__workspace=self.workspace))
         if self.user.is_admin():
             return queryset
         return queryset.filter(assignee=self.user)
 
     def _visible_comments(self):
-        queryset = ProjectComment.objects.select_related("project", "author").all().order_by("-created_at")
+        queryset = ProjectComment.objects.select_related("project", "author").filter(project__workspace=self.workspace).order_by("-created_at")
         if self.user.is_admin():
             return queryset
         return queryset.filter(project__manager=self.user)
 
     def _visible_users(self):
         if self.user.is_admin():
-            return list(User.objects.filter(is_active=True).order_by("first_name", "last_name", "username"))
+            return list(User.objects.filter(workspace=self.workspace, is_active=True).order_by("first_name", "last_name", "username"))
         return [self.user]
 
     def _project_display_name(self, project):
@@ -2590,7 +2594,7 @@ class CRMAssistantService:
             "color": status.color,
             "sort_order": status.sort_order,
             "is_default": status.is_default,
-            "project_count": Project.objects.filter(status=status.code).count(),
+            "project_count": Project.objects.filter(workspace=self.workspace, status=status.code).count(),
         }
 
     def _project_age_days(self, project):
@@ -2603,7 +2607,7 @@ class CRMAssistantService:
         return int(getattr(status, "stuck_after_days", None) or 5)
 
     def _terminal_status_code(self):
-        status = ProjectStatus.objects.all().order_by("sort_order", "id").last()
+        status = ProjectStatus.objects.filter(workspace=self.workspace).order_by("sort_order", "id").last()
         return status.code if status else ""
 
     def _is_terminal_status(self, status_code, status=None):
@@ -2663,7 +2667,7 @@ class CRMAssistantService:
         }
 
     def _status_name(self, status_code):
-        status = ProjectStatus.objects.filter(code=status_code).first()
+        status = ProjectStatus.objects.filter(workspace=self.workspace, code=status_code).first()
         return status.name if status else status_code
 
     def _match_status(self, identifier):
@@ -2716,7 +2720,7 @@ class CRMAssistantService:
             return None
 
         wanted = normalize_text(identifier)
-        queryset = FinanceCategory.objects.all().order_by("type", "name", "id")
+        queryset = FinanceCategory.objects.filter(workspace=self.workspace).order_by("type", "name", "id")
         if operation_kind in FinanceCategory.Type.values:
             queryset = queryset.filter(type=operation_kind)
 
@@ -2840,7 +2844,7 @@ class CRMAssistantService:
                 if category:
                     return category
 
-        queryset = FinanceCategory.objects.all().order_by("type", "name", "id")
+        queryset = FinanceCategory.objects.filter(workspace=self.workspace).order_by("type", "name", "id")
         if operation_kind in FinanceCategory.Type.values:
             queryset = queryset.filter(type=operation_kind)
         for category in queryset:
@@ -2867,7 +2871,7 @@ class CRMAssistantService:
             return None
 
         wanted = normalize_text(identifier)
-        accounts = list(Account.objects.all().order_by("name", "id"))
+        accounts = list(Account.objects.filter(workspace=self.workspace).order_by("name", "id"))
         for account in accounts:
             if wanted in {normalize_text(account.name), str(account.id)}:
                 return account
@@ -2881,6 +2885,28 @@ class CRMAssistantService:
     @staticmethod
     def _dadata_api_key():
         return (os.getenv("DADATA_API_KEY") or os.getenv("VITE_DADATA_API_KEY") or "").strip()
+
+    @staticmethod
+    def _dadata_default_region():
+        return os.getenv("DADATA_DEFAULT_REGION", "Ростовская область").strip() or "Ростовская область"
+
+    @staticmethod
+    def _dadata_default_city():
+        return os.getenv("DADATA_DEFAULT_CITY", "Ростов-на-Дону").strip() or "Ростов-на-Дону"
+
+    @classmethod
+    def _dadata_query(cls, query):
+        clean_query = str(query or "").strip()
+        if not clean_query:
+            return ""
+
+        normalized = normalize_text(clean_query)
+        region = cls._dadata_default_region()
+        city = cls._dadata_default_city()
+        region_markers = [normalize_text(region), "ростовск", "ростов-на-дону", "ростов на дону"]
+        if any(marker and marker in normalized for marker in region_markers):
+            return clean_query
+        return f"{region}, {city}, {clean_query}" if city else f"{region}, {clean_query}"
 
     @staticmethod
     def _is_sparse_address_hint(address):
@@ -2914,12 +2940,19 @@ class CRMAssistantService:
         return len(words) <= 1 or (not has_digit and not has_address_marker and len(words) < 4)
 
     @classmethod
-    def _suggest_dadata_address(cls, query):
+    def _suggest_dadata_address(cls, query, count=1):
         api_key = cls._dadata_api_key()
         if not api_key:
             return []
 
-        payload = json.dumps({"query": query, "count": 1}, ensure_ascii=False).encode("utf-8")
+        payload = json.dumps(
+            {
+                "query": cls._dadata_query(query),
+                "count": max(1, min(int(count or 1), 10)),
+                "locations_boost": [{"region": cls._dadata_default_region()}],
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
         request = urllib_request.Request(
             "https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address",
             data=payload,
@@ -3055,7 +3088,7 @@ class CRMAssistantService:
     def _resolve_single_status(self, status_id=None, status_name=None):
         status = None
         if status_id:
-            status = ProjectStatus.objects.filter(id=status_id).first()
+            status = ProjectStatus.objects.filter(workspace=self.workspace, id=status_id).first()
         elif status_name:
             status = self._match_status(status_name)
 
@@ -3273,12 +3306,13 @@ class CRMAssistantService:
         email = str(arguments.get("client_email") or "").strip() or None
         address = str(arguments.get("client_address") or "").strip() or None
 
-        client = Client.objects.filter(phone=phone).first() if phone else None
+        client = Client.objects.filter(workspace=self.workspace, phone=phone).first() if phone else None
         if client is None and client_name:
-            client = Client.objects.filter(name__iexact=client_name, phone="").first()
+            client = Client.objects.filter(workspace=self.workspace, name__iexact=client_name, phone="").first()
 
         if client is None:
             client = Client.objects.create(
+                workspace=self.workspace,
                 name=client_name,
                 phone=phone,
                 email=email,
@@ -3344,7 +3378,7 @@ class CRMAssistantService:
         if arguments.get("status_name") and not matched_status:
             return self._clarification("Не нашёл такой статус проекта. Уточните его название.", [])
 
-        default_status = ProjectStatus.objects.filter(is_default=True).first() or ProjectStatus.objects.first()
+        default_status = ProjectStatus.objects.filter(workspace=self.workspace, is_default=True).first() or ProjectStatus.objects.filter(workspace=self.workspace).first()
         status_code = matched_status.code if matched_status else (default_status.code if default_status else "active")
 
         total_amount = parse_decimal(arguments.get("total_amount"))
@@ -3361,6 +3395,7 @@ class CRMAssistantService:
 
         client = self._get_or_create_client_from_arguments(arguments, client_name)
         project = Project.objects.create(
+            workspace=self.workspace,
             manager=manager,
             client=client,
             title=project_title,
@@ -3504,7 +3539,7 @@ class CRMAssistantService:
                 project.client.name = updates["client_name"]
                 client_updates.append("name")
             if "client_phone" in updates and updates["client_phone"] and project.client.phone != updates["client_phone"]:
-                if not Client.objects.exclude(pk=project.client_id).filter(phone=updates["client_phone"]).exists():
+                if not Client.objects.exclude(pk=project.client_id).filter(workspace=self.workspace, phone=updates["client_phone"]).exists():
                     project.client.phone = updates["client_phone"]
                     client_updates.append("phone")
             if "client_email" in updates and project.client.email != updates["client_email"]:
@@ -3920,7 +3955,7 @@ class CRMAssistantService:
         category_id = parse_int(arguments.get("category_id"))
         category_name = str(arguments.get("category_name") or "").strip()
         if category_id:
-            category = FinanceCategory.objects.filter(id=category_id).first()
+            category = FinanceCategory.objects.filter(workspace=self.workspace, id=category_id).first()
             if not category:
                 return self._clarification("Не нашёл финансовую категорию с таким ID.", [])
         elif category_name:
@@ -3928,10 +3963,10 @@ class CRMAssistantService:
             if not category:
                 options = [
                     f"{item.id}: {item.name}"
-                    for item in FinanceCategory.objects.filter(type=operation_kind).order_by("name", "id")[:8]
+                    for item in FinanceCategory.objects.filter(workspace=self.workspace, type=operation_kind).order_by("name", "id")[:8]
                 ] if operation_kind else [
                     f"{item.id}: {item.name} ({'доход' if item.type == FinanceCategory.Type.INCOME else 'расход'})"
-                    for item in FinanceCategory.objects.all().order_by("type", "name", "id")[:8]
+                    for item in FinanceCategory.objects.filter(workspace=self.workspace).order_by("type", "name", "id")[:8]
                 ]
                 return self._clarification("Не нашёл такую финансовую категорию. Уточните категорию.", options)
         else:
@@ -3980,13 +4015,13 @@ class CRMAssistantService:
         account_id = parse_int(arguments.get("account_id"))
         account_name = str(arguments.get("account_name") or "").strip()
         if account_id:
-            account = Account.objects.filter(id=account_id).first()
+            account = Account.objects.filter(workspace=self.workspace, id=account_id).first()
             if not account:
                 return self._clarification("Не нашёл счёт с таким ID.", [])
         elif account_name:
             account = self._match_account(account_name)
             if not account:
-                options = [f"{item.id}: {item.name}" for item in Account.objects.all().order_by("name", "id")[:8]]
+                options = [f"{item.id}: {item.name}" for item in Account.objects.filter(workspace=self.workspace).order_by("name", "id")[:8]]
                 return self._clarification("Не нашёл такой счёт. Уточните счёт.", options)
 
         payment = Payment.objects.create(
@@ -4091,9 +4126,11 @@ class CRMAssistantService:
             color = ProjectStatus.Color.SKY
 
         short_name = str(arguments.get("short_name") or "").strip() or name[:40]
-        sort_order = (ProjectStatus.objects.order_by("-sort_order").first().sort_order + 10) if ProjectStatus.objects.exists() else 10
+        latest_status = ProjectStatus.objects.filter(workspace=self.workspace).order_by("-sort_order").first()
+        sort_order = (latest_status.sort_order + 10) if latest_status else 10
 
         status = ProjectStatus.objects.create(
+            workspace=self.workspace,
             name=name,
             short_name=short_name,
             color=color,
@@ -4147,7 +4184,7 @@ class CRMAssistantService:
         status_obj.save()
 
         if old_code != status_obj.code:
-            Project.objects.filter(status=old_code).update(status=status_obj.code)
+            Project.objects.filter(workspace=self.workspace, status=old_code).update(status=status_obj.code)
 
         return {
             "ok": True,
@@ -4171,7 +4208,7 @@ class CRMAssistantService:
         if clarification:
             return clarification
 
-        if Project.objects.filter(status=status_obj.code).exists():
+        if Project.objects.filter(workspace=self.workspace, status=status_obj.code).exists():
             return self._clarification("Этот статус используется в проектах, его нельзя удалить.", [])
 
         was_default = status_obj.is_default
@@ -4179,7 +4216,7 @@ class CRMAssistantService:
         status_obj.delete()
 
         if was_default:
-            fallback = ProjectStatus.objects.order_by("sort_order", "id").first()
+            fallback = ProjectStatus.objects.filter(workspace=self.workspace).order_by("sort_order", "id").first()
             if fallback and not fallback.is_default:
                 fallback.is_default = True
                 fallback.save(update_fields=["is_default"])
@@ -4219,6 +4256,7 @@ class CRMAssistantService:
         user = User.objects.create_user(
             username=username,
             password=password,
+            workspace=self.workspace,
             role=role,
             first_name=str(arguments.get("first_name") or "").strip(),
             last_name=str(arguments.get("last_name") or "").strip(),
@@ -4241,7 +4279,7 @@ class CRMAssistantService:
         if not user_id:
             return self._clarification("Для изменения пользователя нужен его ID.", [])
 
-        user = User.objects.filter(id=user_id).first()
+        user = User.objects.filter(workspace=self.workspace, id=user_id).first()
         if not user:
             return self._clarification("Не нашёл пользователя с таким ID.", [])
 

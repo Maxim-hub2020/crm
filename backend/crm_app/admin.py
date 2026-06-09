@@ -14,9 +14,11 @@ from .models import (
     ProjectStatus,
     Task,
     User,
+    Workspace,
 )
 
 admin.site.register(User)
+admin.site.register(Workspace)
 admin.site.register(Client)
 admin.site.register(ProjectStatus)
 admin.site.register(Project)

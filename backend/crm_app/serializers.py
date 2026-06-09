@@ -16,11 +16,13 @@ from .models import (
     User,
 )
 from .subscription import has_trial_access, is_subscription_active
+from .tenancy import current_workspace
 
 class MeSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     is_admin = serializers.SerializerMethodField()
     subscription_active = serializers.SerializerMethodField()
+    workspace = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -34,6 +36,7 @@ class MeSerializer(serializers.ModelSerializer):
             "is_superuser",
             "is_admin",
             "subscription_active",
+            "workspace",
         ]
 
     def get_full_name(self, obj):
@@ -46,7 +49,18 @@ class MeSerializer(serializers.ModelSerializer):
     def get_subscription_active(self, obj):
         if obj.is_admin():
             return True
-        return is_subscription_active() or has_trial_access()
+        from .subscription import get_workspace_subscription
+
+        subscription = get_workspace_subscription(obj)
+        return is_subscription_active(subscription) or has_trial_access(subscription)
+
+    def get_workspace(self, obj):
+        workspace = current_workspace(obj)
+        return {
+            "id": workspace.id if workspace else None,
+            "name": workspace.name if workspace else "",
+            "slug": workspace.slug if workspace else "",
+        }
 
 
 class ClientSerializer(serializers.ModelSerializer):
@@ -81,9 +95,15 @@ class ProjectSerializer(serializers.ModelSerializer):
     client_info = ClientSerializer(source="client", read_only=True)
     order_number_label = serializers.SerializerMethodField()
 
+    def _workspace(self):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return current_workspace(user) if user and user.is_authenticated else None
+
     def _resolve_client(self, attrs):
         instance = self.instance
         current_client = attrs.get("client") or getattr(instance, "client", None)
+        workspace = self._workspace() or getattr(current_client, "workspace", None) or getattr(instance, "workspace", None)
 
         name = str(attrs.get("client_name", getattr(instance, "client_name", "")) or "").strip()
         phone = str(attrs.get("client_phone", getattr(instance, "client_phone", "")) or "").strip()
@@ -91,17 +111,18 @@ class ProjectSerializer(serializers.ModelSerializer):
 
         client = current_client
         if phone:
-            phone_match = Client.objects.filter(phone=phone).first()
+            phone_match = Client.objects.filter(workspace=workspace, phone=phone).first()
             if phone_match:
                 client = phone_match
 
         if client is None and name:
-            client = Client.objects.filter(name__iexact=name, phone="").first()
+            client = Client.objects.filter(workspace=workspace, name__iexact=name, phone="").first()
 
         if client is None:
             if not name:
                 raise serializers.ValidationError({"client_name": "Укажите клиента."})
             client = Client.objects.create(
+                workspace=workspace,
                 name=name,
                 phone=phone,
                 email=email or None,
@@ -116,7 +137,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             if name and client.name != name:
                 client.name = name
                 changed_fields.append("name")
-            if phone and client.phone != phone and not Client.objects.exclude(pk=client.pk).filter(phone=phone).exists():
+            if phone and client.phone != phone and not Client.objects.exclude(pk=client.pk).filter(workspace=workspace, phone=phone).exists():
                 client.phone = phone
                 changed_fields.append("phone")
             if "client_email" in attrs and client.email != (email or None):
@@ -134,7 +155,8 @@ class ProjectSerializer(serializers.ModelSerializer):
         return attrs
 
     def validate_status(self, value):
-        if value and not ProjectStatus.objects.filter(code=value).exists():
+        workspace = self._workspace()
+        if value and not ProjectStatus.objects.filter(workspace=workspace, code=value).exists():
             raise serializers.ValidationError("Укажите существующий статус канбана.")
         return value
 
@@ -148,7 +170,8 @@ class ProjectSerializer(serializers.ModelSerializer):
         if self.instance is None and not title:
             attrs["title"] = has_name or "Новый проект"
         if self.instance is None and not attrs.get("status"):
-            default_status = ProjectStatus.objects.filter(is_default=True).first() or ProjectStatus.objects.first()
+            workspace = self._workspace()
+            default_status = ProjectStatus.objects.filter(workspace=workspace, is_default=True).first() or ProjectStatus.objects.filter(workspace=workspace).first()
             if default_status:
                 attrs["status"] = default_status.code
         return attrs
@@ -165,7 +188,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     class Meta:
         model = Project
         fields = "__all__"
-        read_only_fields = ["manager", "created_at", "updated_at", "client_info", "order_number", "order_number_label"]
+        read_only_fields = ["workspace", "manager", "created_at", "updated_at", "client_info", "order_number", "order_number_label"]
         extra_kwargs = {
             "client": {"required": False, "allow_null": True},
             "title": {"required": False, "allow_blank": True},
@@ -212,7 +235,7 @@ class ProjectStatusSerializer(serializers.ModelSerializer):
         }
 
     def get_project_count(self, obj):
-        return Project.objects.filter(status=obj.code).count()
+        return Project.objects.filter(workspace=obj.workspace, status=obj.code).count()
 
     def validate(self, attrs):
         name = attrs.get("name", getattr(self.instance, "name", ""))
@@ -242,7 +265,7 @@ class ProjectStatusSerializer(serializers.ModelSerializer):
         instance.save()
 
         if old_code != instance.code:
-            Project.objects.filter(status=old_code).update(status=instance.code)
+            Project.objects.filter(workspace=instance.workspace, status=old_code).update(status=instance.code)
 
         return instance
 
@@ -353,11 +376,29 @@ class PaymentSerializer(serializers.ModelSerializer):
     def validate_project(self, project):
         request = self.context.get("request")
         user = getattr(request, "user", None)
+        workspace = current_workspace(user) if user and user.is_authenticated else None
+
+        if user and user.is_authenticated and project.workspace_id != getattr(workspace, "id", None):
+            raise serializers.ValidationError("Проект относится к другой компании.")
 
         if user and user.is_authenticated and not user.is_admin() and project.manager_id != user.id:
             raise serializers.ValidationError("You can create payments only for your own projects.")
 
         return project
+
+    def validate_category(self, category):
+        request = self.context.get("request")
+        workspace = current_workspace(getattr(request, "user", None))
+        if category and category.workspace_id != getattr(workspace, "id", None):
+            raise serializers.ValidationError("Категория относится к другой компании.")
+        return category
+
+    def validate_account(self, account):
+        request = self.context.get("request")
+        workspace = current_workspace(getattr(request, "user", None))
+        if account and account.workspace_id != getattr(workspace, "id", None):
+            raise serializers.ValidationError("Счет относится к другой компании.")
+        return account
 
     class Meta:
         model = Payment
@@ -395,6 +436,10 @@ class ProjectCommentSerializer(serializers.ModelSerializer):
     def validate_project(self, project):
         request = self.context.get("request")
         user = getattr(request, "user", None)
+        workspace = current_workspace(user) if user and user.is_authenticated else None
+
+        if user and user.is_authenticated and project.workspace_id != getattr(workspace, "id", None):
+            raise serializers.ValidationError("Проект относится к другой компании.")
 
         if user and user.is_authenticated and not user.is_admin() and project.manager_id != user.id:
             raise serializers.ValidationError("You can comment only on your own projects.")
@@ -460,6 +505,10 @@ class TaskSerializer(serializers.ModelSerializer):
     def validate_project(self, project):
         request = self.context.get("request")
         user = getattr(request, "user", None)
+        workspace = current_workspace(user) if user and user.is_authenticated else None
+
+        if user and user.is_authenticated and project and project.workspace_id != getattr(workspace, "id", None):
+            raise serializers.ValidationError("Проект относится к другой компании.")
 
         if user and user.is_authenticated and project and not user.is_admin() and project.manager_id != user.id:
             raise serializers.ValidationError("You can create tasks only for your own projects.")
@@ -469,6 +518,10 @@ class TaskSerializer(serializers.ModelSerializer):
     def validate_assignee(self, assignee):
         request = self.context.get("request")
         user = getattr(request, "user", None)
+        workspace = current_workspace(user) if user and user.is_authenticated else None
+
+        if user and user.is_authenticated and assignee and assignee.workspace_id != getattr(workspace, "id", None):
+            raise serializers.ValidationError("Пользователь относится к другой компании.")
 
         if user and user.is_authenticated and not user.is_admin() and assignee and assignee.id != user.id:
             raise serializers.ValidationError("You can assign tasks only to yourself.")
@@ -479,6 +532,7 @@ class TaskSerializer(serializers.ModelSerializer):
 class AdminUserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     is_admin = serializers.SerializerMethodField()
+    workspace_name = serializers.SerializerMethodField()
     password = serializers.CharField(write_only=True, required=False)
 
     class Meta:
@@ -495,10 +549,12 @@ class AdminUserSerializer(serializers.ModelSerializer):
             "is_staff",
             "is_superuser",
             "is_admin",
+            "workspace",
+            "workspace_name",
             "date_joined",
             "password",
         ]
-        read_only_fields = ["is_staff", "is_superuser", "is_admin", "full_name", "date_joined"]
+        read_only_fields = ["workspace", "workspace_name", "is_staff", "is_superuser", "is_admin", "full_name", "date_joined"]
         extra_kwargs = {
             "email": {"required": False, "allow_blank": True},
             "first_name": {"required": False, "allow_blank": True},
@@ -511,6 +567,9 @@ class AdminUserSerializer(serializers.ModelSerializer):
 
     def get_is_admin(self, obj):
         return obj.is_admin()
+
+    def get_workspace_name(self, obj):
+        return obj.workspace.name if obj.workspace_id else ""
 
     def validate(self, attrs):
         if self.instance is None and not attrs.get("password"):

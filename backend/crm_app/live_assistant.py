@@ -14,13 +14,11 @@ from rest_framework_simplejwt.tokens import AccessToken
 from .ai_assistant import CRMAssistantService, GeminiClient, humanize_gemini_error
 from .models import FinanceCategory, ProjectCustomField, ProjectStatus, User
 from .subscription import has_assistant_access
+from .tenancy import current_workspace
 
 logger = logging.getLogger(__name__)
 
-_REFERENCE_CACHE = {
-    "expires_at": 0.0,
-    "payload": None,
-}
+_REFERENCE_CACHE = {}
 
 
 def _is_retryable_live_error(exc):
@@ -127,10 +125,13 @@ def _build_system_instruction(service):
 
 
 @database_sync_to_async
-def _build_reference_cache():
+def _build_reference_cache(user=None):
     now = time.monotonic()
-    if _REFERENCE_CACHE["payload"] and _REFERENCE_CACHE["expires_at"] > now:
-        return _REFERENCE_CACHE["payload"]
+    workspace = current_workspace(user)
+    cache_key = getattr(workspace, "id", None) or "default"
+    cached = _REFERENCE_CACHE.get(cache_key)
+    if cached and cached["payload"] and cached["expires_at"] > now:
+        return cached["payload"]
 
     ttl_seconds = max(30, min(_env_int("CRM_ASSISTANT_REFERENCE_CACHE_TTL_SECONDS", 300), 3600))
     payload = {
@@ -149,23 +150,22 @@ def _build_reference_cache():
                 "stuck_after_days": status.stuck_after_days,
                 "is_default": status.is_default,
             }
-            for status in ProjectStatus.objects.order_by("sort_order", "id")
+            for status in ProjectStatus.objects.filter(workspace=workspace).order_by("sort_order", "id")
         ],
         "finance_categories": [
             {"id": category.id, "name": category.name, "type": category.type}
-            for category in FinanceCategory.objects.order_by("type", "name", "id")
+            for category in FinanceCategory.objects.filter(workspace=workspace).order_by("type", "name", "id")
         ],
         "project_fields": [
             {"name": field.name, "type": field.field_type}
-            for field in ProjectCustomField.objects.order_by("sort_order", "id")
+            for field in ProjectCustomField.objects.filter(workspace=workspace).order_by("sort_order", "id")
         ],
         "response_templates": _split_env_csv(
             "CRM_ASSISTANT_RESPONSE_TEMPLATES",
             "Сделаю.,Уточните, пожалуйста.,Готово.,Нашел.",
         ),
     }
-    _REFERENCE_CACHE["payload"] = payload
-    _REFERENCE_CACHE["expires_at"] = now + ttl_seconds
+    _REFERENCE_CACHE[cache_key] = {"payload": payload, "expires_at": now + ttl_seconds}
     return payload
 
 
@@ -201,7 +201,8 @@ def _build_low_latency_system_instruction(service, user, current_screen, recent_
         "«зафиксируй аванс», «оставь заметку», «перекинь проект» и похожие формулировки. "
         "Для финансовых команд вроде «создай аванс 30000», «внеси расход на доставку», «добавь оплату клиента» "
         "сам выводи operation_kind и category_name из finance_categories и всегда передавай raw_text с исходной фразой пользователя. "
-        "Адрес объекта передавай в object_address; backend проверит Dadata и попросит уточнение, если адрес неполный. "
+        "Адреса по умолчанию ищи в Ростове-на-Дону и Ростовской области. "
+        "Адрес объекта передавай в object_address; backend проверит Dadata и попросит уточнение, если адрес неполный или похожий. "
         "client_phone необязателен: если пользователь говорит «без телефона» или «телефона нет», оставляй client_phone пустым и не жди номер. "
         "При создании проекта не спрашивай повторно уже названное название. Если названия хватает, но нет клиента, спроси "
         "только клиента и предложи сразу назвать бюджет, адрес или статус. Если клиент и название есть, но optional-данных "
@@ -440,7 +441,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
             return
 
         service = await _build_assistant_service(self.user)
-        reference_cache = await _build_reference_cache()
+        reference_cache = await _build_reference_cache(self.user)
         system_instruction = await _build_low_latency_system_instruction(
             service,
             self.user,

@@ -52,6 +52,7 @@ from .subscription import (
     issue_subscription_invoice,
     record_project_created,
 )
+from .tenancy import current_workspace
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticatedAny])
@@ -108,7 +109,8 @@ def billing_activate_invoice_view(request):
 @api_view(["GET", "PATCH"])
 @permission_classes([IsAuthenticatedAny, HasActiveSubscription])
 def chat_settings_view(request):
-    settings, _created = ChatIntegrationSettings.objects.get_or_create(pk=1)
+    workspace = current_workspace(request.user)
+    settings, _created = ChatIntegrationSettings.objects.get_or_create(workspace=workspace)
 
     if request.method == "GET":
         return Response(ChatIntegrationSettingsSerializer(settings).data)
@@ -120,6 +122,41 @@ def chat_settings_view(request):
     serializer.is_valid(raise_exception=True)
     serializer.save(updated_by=request.user)
     return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+def address_suggestions_view(request):
+    query = (request.query_params.get("q") or "").strip()
+    if len(query) < 3:
+        return Response({"suggestions": [], "configured": bool(CRMAssistantService._dadata_api_key())})
+
+    if not CRMAssistantService._dadata_api_key():
+        return Response(
+            {
+                "suggestions": [],
+                "configured": False,
+                "detail": "DADATA_API_KEY не настроен в backend .env.",
+            }
+        )
+
+    suggestions = CRMAssistantService._suggest_dadata_address(query, count=6)
+    return Response(
+        {
+            "configured": bool(CRMAssistantService._dadata_api_key()),
+            "default_region": CRMAssistantService._dadata_default_region(),
+            "suggestions": [
+                {
+                    "value": item.get("value") or "",
+                    "unrestricted_value": item.get("unrestricted_value") or item.get("value") or "",
+                    "lat": (item.get("data") or {}).get("geo_lat") or "",
+                    "lon": (item.get("data") or {}).get("geo_lon") or "",
+                }
+                for item in suggestions
+                if isinstance(item, dict)
+            ],
+        }
+    )
 
 
 @api_view(["POST"])
@@ -186,13 +223,15 @@ class ProjectViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
 
     def get_queryset(self):
-        qs = Project.objects.select_related("client").all().order_by("-created_at")
+        workspace = current_workspace(self.request.user)
+        qs = Project.objects.select_related("client").filter(workspace=workspace).order_by("-created_at")
         if self.request.user.is_admin():
             return qs
         return qs.filter(manager=self.request.user)
 
     def perform_create(self, serializer):
-        subscription = get_workspace_subscription()
+        workspace = current_workspace(self.request.user)
+        subscription = get_workspace_subscription(workspace=workspace)
         user = self.request.user
         if not user.is_admin() and not is_subscription_active(subscription) and not can_create_trial_project(subscription):
             raise ValidationError(
@@ -204,7 +243,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 }
             )
 
-        serializer.save(manager=user)
+        serializer.save(manager=user, workspace=workspace)
         record_project_created(subscription)
 
     @action(detail=True, methods=["get"], url_path=r"documents/(?P<document_type>contract|act)")
@@ -219,7 +258,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 status=drf_status.HTTP_400_BAD_REQUEST,
             )
 
-        template = DocumentTemplate.objects.filter(type=document_type).first()
+        template = DocumentTemplate.objects.filter(workspace=current_workspace(request.user), type=document_type).first()
         if not template or not template.file:
             return Response({"detail": "Шаблон документа не загружен."}, status=drf_status.HTTP_404_NOT_FOUND)
 
@@ -276,7 +315,8 @@ class ClientViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
 
     def get_queryset(self):
-        qs = Client.objects.all().order_by("name", "id")
+        workspace = current_workspace(self.request.user)
+        qs = Client.objects.filter(workspace=workspace).order_by("name", "id")
         query = (self.request.query_params.get("q") or "").strip()
         if query:
             qs = qs.filter(
@@ -287,9 +327,12 @@ class ClientViewSet(viewsets.ModelViewSet):
             )
         return qs.distinct()
 
+    def perform_create(self, serializer):
+        serializer.save(workspace=current_workspace(self.request.user))
+
     def perform_update(self, serializer):
         client = serializer.save()
-        Project.objects.filter(client=client).update(
+        Project.objects.filter(workspace=client.workspace, client=client).update(
             client_name=client.name,
             client_phone=client.phone or "",
             client_email=client.email,
@@ -302,7 +345,8 @@ class PaymentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
 
     def get_queryset(self):
-        qs = Payment.objects.select_related("project", "created_by", "category", "account").all().order_by("-paid_at")
+        workspace = current_workspace(self.request.user)
+        qs = Payment.objects.select_related("project", "created_by", "category", "account").filter(project__workspace=workspace).order_by("-paid_at")
         if self.request.user.is_admin():
             return qs
         return qs.filter(project__manager=self.request.user)
@@ -316,7 +360,8 @@ class ProjectCommentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
 
     def get_queryset(self):
-        qs = ProjectComment.objects.select_related("project", "author").all().order_by("-created_at")
+        workspace = current_workspace(self.request.user)
+        qs = ProjectComment.objects.select_related("project", "author").filter(project__workspace=workspace).order_by("-created_at")
         if not self.request.user.is_admin():
             qs = qs.filter(project__manager=self.request.user)
 
@@ -332,8 +377,10 @@ class ProjectCommentViewSet(viewsets.ModelViewSet):
 
 class ProjectStatusViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectStatusSerializer
-    queryset = ProjectStatus.objects.all().order_by("sort_order", "id")
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return ProjectStatus.objects.filter(workspace=current_workspace(self.request.user)).order_by("sort_order", "id")
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
@@ -341,59 +388,79 @@ class ProjectStatusViewSet(viewsets.ModelViewSet):
         return [IsAdmin(), HasActiveSubscription()]
 
     def perform_destroy(self, instance):
-        if Project.objects.filter(status=instance.code).exists():
+        if Project.objects.filter(workspace=instance.workspace, status=instance.code).exists():
             raise ValidationError({"status": "Нельзя удалить статус, который используется в проектах."})
 
         was_default = instance.is_default
         instance.delete()
 
         if was_default:
-            fallback = ProjectStatus.objects.order_by("sort_order", "id").first()
+            fallback = ProjectStatus.objects.filter(workspace=instance.workspace).order_by("sort_order", "id").first()
             if fallback and not fallback.is_default:
                 fallback.is_default = True
                 fallback.save(update_fields=["is_default"])
 
+    def perform_create(self, serializer):
+        serializer.save(workspace=current_workspace(self.request.user))
+
 
 class FinanceCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = FinanceCategorySerializer
-    queryset = FinanceCategory.objects.all()
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return FinanceCategory.objects.filter(workspace=current_workspace(self.request.user)).order_by("type", "name", "id")
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
             return [IsAuthenticatedAny(), HasActiveSubscription()]
         return [IsAdmin(), HasActiveSubscription()]
+
+    def perform_create(self, serializer):
+        serializer.save(workspace=current_workspace(self.request.user))
 
 
 class AccountViewSet(viewsets.ModelViewSet):
     serializer_class = AccountSerializer
-    queryset = Account.objects.all()
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return Account.objects.filter(workspace=current_workspace(self.request.user)).order_by("name", "id")
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
             return [IsAuthenticatedAny(), HasActiveSubscription()]
         return [IsAdmin(), HasActiveSubscription()]
+
+    def perform_create(self, serializer):
+        serializer.save(workspace=current_workspace(self.request.user))
 
 
 class ProjectCustomFieldViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectCustomFieldSerializer
     permission_classes = [IsAdmin, HasActiveSubscription]
-    queryset = ProjectCustomField.objects.all()
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return ProjectCustomField.objects.filter(workspace=current_workspace(self.request.user)).order_by("sort_order", "id")
+
+    def perform_create(self, serializer):
+        serializer.save(workspace=current_workspace(self.request.user))
 
 
 class DocumentTemplateViewSet(viewsets.ModelViewSet):
     serializer_class = DocumentTemplateSerializer
     permission_classes = [IsAdmin, HasActiveSubscription]
-    queryset = DocumentTemplate.objects.all()
     parser_classes = [MultiPartParser, FormParser]
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return DocumentTemplate.objects.filter(workspace=current_workspace(self.request.user)).order_by("type")
 
     def perform_create(self, serializer):
         uploaded_file = serializer.validated_data.get("file")
         original_name = serializer.validated_data.get("original_name") or getattr(uploaded_file, "name", "")
-        serializer.save(uploaded_by=self.request.user, original_name=original_name)
+        serializer.save(workspace=current_workspace(self.request.user), uploaded_by=self.request.user, original_name=original_name)
 
     def perform_update(self, serializer):
         uploaded_file = serializer.validated_data.get("file")
@@ -406,7 +473,9 @@ class TaskViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
 
     def get_queryset(self):
-        qs = Task.objects.select_related("assignee", "created_by", "project").all().order_by("status", "due_date", "-created_at")
+        workspace = current_workspace(self.request.user)
+        qs = Task.objects.select_related("assignee", "created_by", "project").filter(assignee__workspace=workspace).order_by("status", "due_date", "-created_at")
+        qs = qs.filter(Q(project__isnull=True) | Q(project__workspace=workspace))
         if not self.request.user.is_admin():
             qs = qs.filter(assignee=self.request.user)
 
@@ -424,5 +493,10 @@ class TaskViewSet(viewsets.ModelViewSet):
 class UserViewSet(viewsets.ModelViewSet):
     serializer_class = AdminUserSerializer
     permission_classes = [IsAdmin, HasActiveSubscription]
-    queryset = User.objects.all().order_by("date_joined", "id")
     http_method_names = ["get", "post", "patch", "put", "head", "options"]
+
+    def get_queryset(self):
+        return User.objects.filter(workspace=current_workspace(self.request.user)).order_by("date_joined", "id")
+
+    def perform_create(self, serializer):
+        serializer.save(workspace=current_workspace(self.request.user))

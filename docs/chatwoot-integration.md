@@ -169,4 +169,4 @@ After webhook sync, include latest client messages in the CRM memory snapshot so
 - Keep Chatwoot backups separate from CRM backups.
 - Use a separate subdomain for Chatwoot.
 - Keep the CRM chat settings disabled until Chatwoot is reachable over HTTPS.
-- For SaaS mode with several independent companies, add a workspace/tenant model and attach users, clients, projects, finances and chat settings to that workspace. The current setting is one CRM workspace/inbox per deployment.
+- The CRM has a workspace/tenant layer: users, clients, projects, finances, project settings and chat settings are scoped to the current workspace. For a full SaaS control panel, the next step is a super-admin UI for creating and managing workspaces.

@@ -5,6 +5,7 @@ from decimal import Decimal
 from django.utils import timezone
 
 from .models import Project, SubscriptionInvoice, SubscriptionPlan, WorkspaceSubscription
+from .tenancy import current_workspace, ensure_default_workspace
 
 
 TRIAL_PROJECT_LIMIT = 10
@@ -42,7 +43,8 @@ def add_months(source_date, months):
     return date(year, month, day)
 
 
-def ensure_subscription_defaults():
+def ensure_subscription_defaults(workspace=None):
+    workspace = workspace or ensure_default_workspace()
     plans_by_code = {}
     for plan_data in SUBSCRIPTION_PLANS:
         plan, _ = SubscriptionPlan.objects.update_or_create(
@@ -53,11 +55,12 @@ def ensure_subscription_defaults():
     SubscriptionPlan.objects.filter(code="procrm-monthly").update(is_active=False)
 
     assistant_plan = plans_by_code[ASSISTANT_PLAN_CODE]
-    subscription = WorkspaceSubscription.objects.select_related("plan").first()
+    subscription = WorkspaceSubscription.objects.select_related("plan").filter(workspace=workspace).first()
     if not subscription:
         subscription = WorkspaceSubscription.objects.create(
+            workspace=workspace,
             plan=assistant_plan,
-            project_creations_count=Project.objects.count(),
+            project_creations_count=Project.objects.filter(workspace=workspace).count(),
         )
     elif not subscription.plan_id or subscription.plan.code == "procrm-monthly":
         subscription.plan = assistant_plan
@@ -65,8 +68,9 @@ def ensure_subscription_defaults():
     return assistant_plan, subscription
 
 
-def get_workspace_subscription():
-    _, subscription = ensure_subscription_defaults()
+def get_workspace_subscription(user=None, workspace=None):
+    active_workspace = workspace or (current_workspace(user) if user is not None else None)
+    _, subscription = ensure_subscription_defaults(active_workspace)
     return WorkspaceSubscription.objects.select_related("plan").prefetch_related("invoices").get(pk=subscription.pk)
 
 
@@ -102,15 +106,16 @@ def record_project_created(subscription=None):
     return active_subscription
 
 
-def get_subscription_plan(plan_code=None):
-    ensure_subscription_defaults()
+def get_subscription_plan(plan_code=None, workspace=None):
+    ensure_subscription_defaults(workspace)
     code = plan_code or ASSISTANT_PLAN_CODE
     return SubscriptionPlan.objects.filter(code=code, is_active=True).first() or SubscriptionPlan.objects.get(code=ASSISTANT_PLAN_CODE)
 
 
 def issue_subscription_invoice(actor=None, plan_code=None):
-    subscription = get_workspace_subscription()
-    plan = get_subscription_plan(plan_code)
+    workspace = current_workspace(actor)
+    subscription = get_workspace_subscription(workspace=workspace)
+    plan = get_subscription_plan(plan_code, workspace=workspace)
     latest_pending = subscription.invoices.filter(status=SubscriptionInvoice.Status.PENDING, plan=plan).first()
     if latest_pending:
         return latest_pending
@@ -168,7 +173,8 @@ def activate_subscription_invoice(invoice):
 
 
 def billing_summary_payload(user):
-    subscription = get_workspace_subscription()
+    workspace = current_workspace(user)
+    subscription = get_workspace_subscription(workspace=workspace)
     latest_invoice = get_latest_invoice(subscription)
     today = timezone.localdate()
     days_left = (
@@ -181,6 +187,11 @@ def billing_summary_payload(user):
 
     return {
         "can_manage": bool(user and user.is_authenticated and user.is_admin()),
+        "workspace": {
+            "id": workspace.id if workspace else None,
+            "name": workspace.name if workspace else "",
+            "slug": workspace.slug if workspace else "",
+        },
         "plan": {
             "id": subscription.plan.id,
             "code": subscription.plan.code,

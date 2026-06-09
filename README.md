@@ -12,6 +12,7 @@
 - Stores projects and client cards
 - Stores payments linked to projects
 - Has a `Чаты` module for Chatwoot unified inbox integration
+- Separates company data through a workspace/tenant layer
 - Supports `admin` and `manager` roles
 - Supports Gemini/Vertex voice assistant through backend endpoint `/api/assistant/voice/`
 - Does not calculate manager commissions in the current version
@@ -89,12 +90,13 @@ GEMINI_LIVE_LOCATION=europe-west1
 GEMINI_LIVE_MODEL=gemini-live-2.5-flash-native-audio
 GEMINI_LIVE_SILENCE_MS=2000
 DADATA_API_KEY=
+DADATA_DEFAULT_REGION=Ростовская область
+DADATA_DEFAULT_CITY=Ростов-на-Дону
 ```
 
 Frontend `.env` values live in `crm-ui/.env`:
 
 ```env
-VITE_DADATA_API_KEY=
 VITE_ASSISTANT_LIVE=0
 VITE_ASSISTANT_CLIENT_SILENCE_MS=1600
 VITE_ASSISTANT_LIVE_RESPONSE_WATCHDOG_MS=14000
@@ -104,6 +106,8 @@ VITE_ASSISTANT_STABLE_MAX_UTTERANCE_MS=30000
 ```
 
 For production, run ASGI, not WSGI. The Docker production entrypoint uses `daphne crm_core.asgi:application`. Gemini Live WebSocket support is still available behind `VITE_ASSISTANT_LIVE=1`, but the default production voice mode is the stable backend voice endpoint.
+
+Dadata address suggestions are proxied through Django at `/api/address-suggestions/`, so the Dadata token must stay in backend `.env` as `DADATA_API_KEY`; it is no longer a frontend `VITE_*` key.
 
 For faster overview answers, keep CRM snapshots warm with a scheduler:
 
