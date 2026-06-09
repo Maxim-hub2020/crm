@@ -1038,6 +1038,18 @@ class CRMAssistantService:
             arguments.get("optional_details_confirmed")
         )
 
+    @staticmethod
+    def _is_empty_phone_hint(value):
+        return normalize_text(value) in {
+            "без телефона",
+            "телефона нет",
+            "нет телефона",
+            "не указан",
+            "не указывать",
+            "не надо",
+            "нет",
+        }
+
     def _fast_mutation_clarification(self, message):
         text = normalize_text(message)
         action_tool_names = self._action_tool_names()
@@ -1067,7 +1079,7 @@ class CRMAssistantService:
                 (
                     f"Проект назову «{project_title_hint}». Кто клиент? "
                     "Если хотите, сразу назовите бюджет, адрес или статус. "
-                    "Если не нужно, скажите: без бюджета и адреса."
+                    "Если не нужно, скажите: без бюджета, адреса и телефона."
                 ),
                 "clarify_create_project_fast",
                 {"command_kind": "project", "project_title": project_title_hint},
@@ -1468,7 +1480,8 @@ class CRMAssistantService:
             "Если команда создания неполная, не говори «запись не создана» и не называй это ошибкой: задай один короткий наводящий вопрос. "
             "При создании проекта не спрашивай повторно уже названное название проекта. Если название есть, а клиента нет, спроси только клиента и предложи сразу назвать бюджет, адрес или статус. "
             "Если название и клиент есть, но нет бюджета, адреса и статуса, перед созданием один раз спроси: указать бюджет, адрес или статус, либо создать без них. "
-            "Если пользователь отвечает «нет», «не надо», «без бюджета», «без адреса» или «создавай так», вызывай create_project/create_deal со skip_optional_details=true и не подставляй выдуманные optional-данные. "
+            "Телефон клиента при создании проекта необязателен: если пользователь говорит «без телефона» или «телефона нет», оставляй client_phone пустым и не жди номер. "
+            "Если пользователь отвечает «нет», «не надо», «без бюджета», «без адреса», «без телефона» или «создавай так», вызывай create_project/create_deal со skip_optional_details=true и не подставляй выдуманные optional-данные. "
             "Для финансовой операции выводи тип и категорию из смысла фразы: «аванс» — доход и категория «Аванс», «оплата клиента» — доход, «доставка», «монтаж», «комплектующие», «аренда» — расход. "
             "Если не уверен, уточняй проект, сумму, доход или расход, а затем категорию и счёт, если они нужны. "
             "Если пользователь просит проанализировать проект и сам создать по нему задачи, используй create_project_tasks_from_analysis: выбери понятные рабочие задачи по статусу, описанию, адресу, сумме, комментариям и финансам проекта. "
@@ -1543,7 +1556,7 @@ class CRMAssistantService:
                     "properties": {
                         "client_name": {"type": "string"},
                         "title": {"type": "string", "description": "Наименование проекта, если отличается от имени клиента."},
-                        "client_phone": {"type": "string"},
+                        "client_phone": {"type": "string", "description": "Необязательный телефон клиента. Если пользователь сказал «без телефона», оставьте пустым."},
                         "client_email": {"type": "string"},
                         "object_address": {"type": "string"},
                         "works_with_contract": {"type": "boolean"},
@@ -1578,10 +1591,13 @@ class CRMAssistantService:
                         "status_name": {"type": "string"},
                         "categories": {"type": "string"},
                         "works_with_contract": {"type": "boolean"},
+                        "without_budget": {"type": "boolean", "description": "true, если пользователь сказал создать без бюджета."},
+                        "without_address": {"type": "boolean", "description": "true, если пользователь сказал создать без адреса."},
+                        "without_phone": {"type": "boolean", "description": "true, если пользователь сказал, что телефона нет или проект без телефона."},
                         "manager_name": {"type": "string", "description": "Имя или логин менеджера, только для администратора."},
                         "skip_optional_details": {
                             "type": "boolean",
-                            "description": "Передать true, если пользователь сказал создать проект без бюджета, адреса и дополнительных полей.",
+                            "description": "Передать true, если пользователь сказал создать проект без бюджета, адреса, телефона или дополнительных полей.",
                         },
                     },
                     "required": ["client_name"],
@@ -1900,7 +1916,7 @@ class CRMAssistantService:
                     "properties": {
                         "title": {"type": "string", "description": "Наименование проекта."},
                         "client_name": {"type": "string"},
-                        "client_phone": {"type": "string"},
+                        "client_phone": {"type": "string", "description": "Необязательный телефон клиента. Если пользователь сказал «без телефона», оставьте пустым."},
                         "client_email": {"type": "string"},
                         "object_address": {"type": "string"},
                         "works_with_contract": {"type": "boolean"},
@@ -1935,9 +1951,12 @@ class CRMAssistantService:
                         "total_amount": {"type": "number"},
                         "status_name": {"type": "string"},
                         "categories": {"type": "string"},
+                        "without_budget": {"type": "boolean", "description": "true, если пользователь сказал создать без бюджета."},
+                        "without_address": {"type": "boolean", "description": "true, если пользователь сказал создать без адреса."},
+                        "without_phone": {"type": "boolean", "description": "true, если пользователь сказал, что телефона нет или проект без телефона."},
                         "skip_optional_details": {
                             "type": "boolean",
-                            "description": "true, если пользователь подтвердил создание без бюджета, адреса и дополнительных полей.",
+                            "description": "true, если пользователь подтвердил создание без бюджета, адреса, телефона или дополнительных полей.",
                         },
                     },
                 },
@@ -2071,6 +2090,20 @@ class CRMAssistantService:
             normalized["skip_optional_details"] = normalized.get("create_without_optional_details")
         if "without_optional_details" in normalized and "skip_optional_details" not in normalized:
             normalized["skip_optional_details"] = normalized.get("without_optional_details")
+        if any(
+            is_truthy(normalized.get(key))
+            for key in ("without_budget", "no_budget", "without_address", "no_address")
+        ) and "skip_optional_details" not in normalized:
+            normalized["skip_optional_details"] = True
+        if any(
+            is_truthy(normalized.get(key))
+            for key in ("without_phone", "no_phone", "no_client_phone", "skip_phone")
+        ):
+            normalized["client_phone"] = ""
+            if "skip_optional_details" not in normalized:
+                normalized["skip_optional_details"] = True
+        if "client_phone" in normalized and CRMAssistantService._is_empty_phone_hint(normalized.get("client_phone")):
+            normalized["client_phone"] = ""
 
         aliases = {
             "find_client": "list_clients",
@@ -3175,7 +3208,7 @@ class CRMAssistantService:
                     (
                         f"Проект назову «{project_title}». Кто клиент? "
                         "Если хотите, сразу назовите бюджет, адрес или статус. "
-                        "Если не нужно, скажите: без бюджета и адреса."
+                        "Если не нужно, скажите: без бюджета, адреса и телефона."
                     ),
                     [],
                 )
@@ -3186,7 +3219,7 @@ class CRMAssistantService:
             return self._clarification(
                 (
                     f"Проект «{project_title}» для клиента «{client_name}». "
-                    "Указать бюджет, адрес или статус? Если не нужно, скажите: создать без бюджета и адреса."
+                    "Указать бюджет, адрес или статус? Если не нужно, скажите: создать без бюджета, адреса и телефона."
                 ),
                 [],
             )

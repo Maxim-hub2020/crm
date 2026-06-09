@@ -264,6 +264,7 @@ export default function Assistant() {
   const liveReconnectAttemptsRef = useRef(0);
   const liveStartedAtRef = useRef(0);
   const liveLastVoiceAtRef = useRef(0);
+  const liveLastStrongVoiceAtRef = useRef(0);
   const liveHasSpeechRef = useRef(false);
   const liveSpeechMsRef = useRef(0);
   const liveNoiseFloorRef = useRef(0.006);
@@ -523,6 +524,7 @@ export default function Assistant() {
     liveActivityOpenRef.current = false;
     liveStartedAtRef.current = now;
     liveLastVoiceAtRef.current = now;
+    liveLastStrongVoiceAtRef.current = now;
   }
 
   function sendLiveJson(socket, payload) {
@@ -767,10 +769,7 @@ export default function Assistant() {
     }
 
     if (event.type === "output_text") {
-      clearLiveResponseWatchdogTimer();
       liveToolReplyFallbackRef.current = "";
-      pendingRef.current = false;
-      setPending(false);
       const text = appendLiveText(liveReplyBufferRef, event.text);
       setReplyText(text);
       return;
@@ -1409,9 +1408,10 @@ export default function Assistant() {
 
             liveHasSpeechRef.current = true;
             liveSpeechMsRef.current += chunkDurationMs;
-            liveLastVoiceAtRef.current = now;
 
             if (isSpeech) {
+              liveLastVoiceAtRef.current = now;
+              liveLastStrongVoiceAtRef.current = now;
               liveSpeechPeakRef.current = Math.max(previousPeak * 0.995, rms);
             }
           }
@@ -1425,7 +1425,7 @@ export default function Assistant() {
             liveHasSpeechRef.current &&
             liveSpeechMsRef.current >= LIVE_MIN_SPEECH_MS &&
             now - liveStartedAtRef.current >= LIVE_MIN_RECORDING_MS &&
-            now - liveLastVoiceAtRef.current >= LIVE_CLIENT_SILENCE_MS;
+            now - liveLastStrongVoiceAtRef.current >= LIVE_CLIENT_SILENCE_MS;
           const maxUtteranceReached =
             liveActivityOpenRef.current && now - liveStartedAtRef.current >= LIVE_MAX_UTTERANCE_MS;
 

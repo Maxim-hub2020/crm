@@ -1313,6 +1313,7 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
         self.assertIn("create_deal", instruction)
         self.assertIn("command_synonyms", instruction)
         self.assertIn("create_financial_operation", instruction)
+        self.assertIn("без телефона", instruction)
         self.assertNotIn("КЭШ-СНИМОК CRM", instruction)
 
     def test_command_synonyms_cover_available_tools(self):
@@ -1415,6 +1416,25 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
         created_project = Project.objects.get(title="Зеркало в ванную", client_name="Иван")
         self.assertIsNone(created_project.total_amount)
         self.assertEqual(created_project.object_address, None)
+
+    def test_create_deal_without_budget_and_phone_aliases_do_not_block_creation(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._execute_tool(
+            "create_deal",
+            {
+                "title": "Зеркало в ванную",
+                "client_name": "Иван",
+                "without_budget": True,
+                "without_phone": True,
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        created_project = Project.objects.get(title="Зеркало в ванную", client_name="Иван")
+        self.assertEqual(created_project.client_phone, "")
+        self.assertEqual(created_project.client.phone, "")
+        self.assertIsNone(created_project.total_amount)
 
     def test_create_project_with_budget_does_not_ask_optional_details(self):
         service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)

@@ -198,10 +198,11 @@ def _build_low_latency_system_instruction(service, user, current_screen, recent_
         "«зафиксируй аванс», «оставь заметку», «перекинь проект» и похожие формулировки. "
         "Для финансовых команд вроде «создай аванс 30000», «внеси расход на доставку», «добавь оплату клиента» "
         "сам выводи operation_kind и category_name из finance_categories и всегда передавай raw_text с исходной фразой пользователя. "
+        "client_phone необязателен: если пользователь говорит «без телефона» или «телефона нет», оставляй client_phone пустым и не жди номер. "
         "При создании проекта не спрашивай повторно уже названное название. Если названия хватает, но нет клиента, спроси "
         "только клиента и предложи сразу назвать бюджет, адрес или статус. Если клиент и название есть, но optional-данных "
         "нет, один раз спроси, указать ли бюджет, адрес или статус; если пользователь говорит «нет», «не надо», "
-        "«без бюджета», «создавай так», вызывай create_deal со skip_optional_details=true. "
+        "«без бюджета», «без телефона», «создавай так», вызывай create_deal со skip_optional_details=true. "
         "Для длинных операций используй enqueue_long_operation и сразу отвечай, что задача запущена в фоне. "
         "Если пользователь просит список или состояние, отвечай кратко; детали раскрывай только по уточнению.\n\n"
         f"LOW_LATENCY_CONTEXT:\n{json.dumps(compact_context, ensure_ascii=False, default=str)}"
@@ -536,14 +537,14 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
 
             if server_content:
                 await self._handle_server_content(server_content)
-            else:
-                if getattr(message, "data", None):
-                    self._mark_first_audio_output()
-                    await self.send(bytes_data=message.data)
 
-                if getattr(message, "text", None):
-                    self._mark_first_model_output()
-                    await self._send_event({"type": "output_text", "text": message.text})
+            if getattr(message, "data", None):
+                self._mark_first_audio_output()
+                await self.send(bytes_data=message.data)
+
+            if getattr(message, "text", None):
+                self._mark_first_model_output()
+                await self._send_event({"type": "output_text", "text": message.text})
 
             if tool_call:
                 await self._handle_tool_call(session, types, service, tool_call)
