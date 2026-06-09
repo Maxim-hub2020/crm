@@ -517,6 +517,217 @@ class GeminiClient:
 
 class CRMAssistantService:
     MAX_TOOL_ROUNDS = 4
+    COMMAND_SYNONYMS = {
+        "get_crm_overview": {
+            "verbs": ["покажи", "дай", "расскажи", "сводка", "итоги", "что у нас", "обзор"],
+            "objects": ["crm", "система", "дашборд", "обзор", "сводка", "статистика", "состояние"],
+            "examples": ["дай сводку по CRM", "что у нас в системе"],
+        },
+        "list_projects": {
+            "verbs": ["покажи", "выведи", "перечисли", "найди", "открой", "посмотри", "дай список"],
+            "objects": ["проект", "сделк", "заказ", "заявк", "объект", "канбан", "работ"],
+            "examples": ["покажи проекты", "какие сделки в работе"],
+        },
+        "list_stuck_projects": {
+            "verbs": ["покажи", "найди", "выведи", "проверь", "посмотри"],
+            "objects": ["завис", "просроч", "застрял", "стоят", "долго без движения", "не двигаются"],
+            "examples": ["какие проекты зависли", "найди просроченные сделки"],
+        },
+        "list_clients": {
+            "verbs": ["найди", "покажи", "выведи", "посмотри", "отыщи", "проверь"],
+            "objects": ["клиент", "контакт", "заказчик", "покупател", "телефон", "карточк клиент"],
+            "examples": ["найди клиента по телефону", "покажи заказчика"],
+        },
+        "create_client": {
+            "verbs": ["создай", "добавь", "заведи", "внеси", "запиши", "оформи", "зарегистрируй", "созда"],
+            "objects": ["клиент", "контакт", "заказчик", "покупател", "карточк клиент"],
+            "examples": ["заведи клиента", "добавь карточку заказчика"],
+        },
+        "get_project_details": {
+            "verbs": ["открой", "покажи", "расскажи", "посмотри", "дай детали", "разбери"],
+            "objects": ["карточк проект", "карточк сделк", "детал", "подроб", "проект", "сделк"],
+            "examples": ["открой карточку проекта", "расскажи подробнее по сделке"],
+        },
+        "create_project": {
+            "verbs": ["создай", "добавь", "заведи", "оформи", "запусти", "зарегистрируй", "сделай", "созда"],
+            "objects": ["проект", "сделк", "заказ", "заявк", "объект", "лид"],
+            "examples": ["заведи сделку", "добавь проект", "создай заказ"],
+        },
+        "update_project": {
+            "verbs": ["измени", "обнови", "поменяй", "перенеси", "перекинь", "переставь", "исправь", "сохрани"],
+            "objects": ["проект", "сделк", "заказ", "статус", "этап", "сумм", "адрес", "клиент"],
+            "examples": ["перенеси проект в монтаж", "поменяй статус сделки"],
+        },
+        "delete_project": {
+            "verbs": ["удали", "убери", "сотри", "закрой", "архивируй"],
+            "objects": ["проект", "сделк", "заказ", "заявк"],
+            "examples": ["удали проект", "закрой сделку"],
+        },
+        "list_tasks": {
+            "verbs": ["покажи", "найди", "выведи", "посмотри", "дай список", "что по"],
+            "objects": ["задач", "дела", "напомин", "поручен", "сегодня", "завтра", "срок"],
+            "examples": ["какие задачи на сегодня", "покажи поручения"],
+        },
+        "create_task": {
+            "verbs": ["создай", "добавь", "поставь", "запланируй", "запиши", "поручи", "назначь", "сделай"],
+            "objects": ["задач", "дело", "напомин", "поручен", "срок", "звонок"],
+            "examples": ["поставь задачу", "создай напоминание"],
+        },
+        "create_project_tasks_from_analysis": {
+            "verbs": ["проанализируй", "разложи", "составь", "подготовь", "создай", "сформируй"],
+            "objects": ["задач", "план", "шаги", "проект", "сделк", "что делать"],
+            "examples": ["проанализируй проект и создай задачи", "разложи сделку на шаги"],
+        },
+        "update_task": {
+            "verbs": ["измени", "обнови", "поменяй", "перенеси", "закрой", "отметь", "исправь"],
+            "objects": ["задач", "дело", "напомин", "срок", "исполнитель", "статус"],
+            "examples": ["перенеси задачу на завтра", "отметь задачу выполненной"],
+        },
+        "delete_task": {
+            "verbs": ["удали", "убери", "сотри", "отмени"],
+            "objects": ["задач", "дело", "напомин", "поручен"],
+            "examples": ["удали задачу", "отмени напоминание"],
+        },
+        "list_payments": {
+            "verbs": ["покажи", "найди", "выведи", "посмотри", "дай список", "сверь"],
+            "objects": ["финанс", "операц", "платеж", "платёж", "оплат", "доход", "расход", "аванс", "счет", "счёт"],
+            "examples": ["покажи финансы", "сверь оплаты по проекту"],
+        },
+        "create_payment": {
+            "verbs": ["создай", "добавь", "внеси", "зафиксируй", "запиши", "проведи", "начисли", "оформи"],
+            "objects": ["платеж", "платёж", "оплат", "доход", "расход", "аванс", "финанс", "операц", "поступлен", "списан"],
+            "examples": ["добавь оплату", "внеси расход", "зафиксируй аванс"],
+        },
+        "create_financial_operation": {
+            "verbs": ["создай", "добавь", "внеси", "зафиксируй", "запиши", "проведи", "начисли", "оформи"],
+            "objects": ["финансов", "операц", "платеж", "платёж", "оплат", "доход", "расход", "аванс", "поступлен", "списан"],
+            "examples": ["создай финансовую операцию", "проведи расход"],
+        },
+        "delete_payment": {
+            "verbs": ["удали", "убери", "сотри", "отмени"],
+            "objects": ["платеж", "платёж", "оплат", "операц", "доход", "расход", "аванс"],
+            "examples": ["удали платеж", "отмени финансовую операцию"],
+        },
+        "list_project_comments": {
+            "verbs": ["покажи", "прочитай", "выведи", "посмотри", "найди"],
+            "objects": ["комментар", "заметк", "сообщен", "чат проект", "история"],
+            "examples": ["покажи комментарии", "прочитай заметки по проекту"],
+        },
+        "add_project_comment": {
+            "verbs": ["добавь", "оставь", "напиши", "запиши", "зафиксируй", "внеси"],
+            "objects": ["комментар", "заметк", "сообщен", "примечан", "чат проект"],
+            "examples": ["оставь комментарий", "добавь заметку по сделке"],
+        },
+        "list_project_statuses": {
+            "verbs": ["покажи", "выведи", "перечисли", "посмотри"],
+            "objects": ["статус", "этап", "канбан", "воронк"],
+            "examples": ["покажи статусы канбана", "какие этапы есть"],
+        },
+        "create_project_status": {
+            "verbs": ["создай", "добавь", "заведи", "оформи"],
+            "objects": ["статус", "этап", "колонк", "канбан", "воронк"],
+            "examples": ["добавь статус", "создай этап канбана"],
+        },
+        "update_project_status": {
+            "verbs": ["измени", "обнови", "поменяй", "переименуй", "исправь", "настрой"],
+            "objects": ["статус", "этап", "колонк", "канбан", "воронк", "дни зависан"],
+            "examples": ["переименуй статус", "настрой этап"],
+        },
+        "delete_project_status": {
+            "verbs": ["удали", "убери", "сотри"],
+            "objects": ["статус", "этап", "колонк", "канбан", "воронк"],
+            "examples": ["удали статус", "убери этап канбана"],
+        },
+        "list_users": {
+            "verbs": ["покажи", "выведи", "перечисли", "посмотри", "найди"],
+            "objects": ["пользовател", "сотрудник", "менеджер", "команд"],
+            "examples": ["покажи менеджеров", "кто в команде"],
+        },
+        "create_user": {
+            "verbs": ["создай", "добавь", "заведи", "зарегистрируй", "оформи"],
+            "objects": ["пользовател", "сотрудник", "менеджер", "аккаунт"],
+            "examples": ["создай менеджера", "добавь пользователя"],
+        },
+        "update_user": {
+            "verbs": ["измени", "обнови", "поменяй", "исправь", "отключи", "активируй"],
+            "objects": ["пользовател", "сотрудник", "менеджер", "аккаунт", "роль", "пароль"],
+            "examples": ["измени роль пользователя", "отключи менеджера"],
+        },
+        "enqueue_long_operation": {
+            "verbs": ["запусти", "сформируй", "подготовь", "сделай", "посчитай", "проанализируй", "создай"],
+            "objects": ["кп", "коммерческ", "предложен", "отчет", "отчёт", "анализ", "массов", "обновлен", "обновление"],
+            "examples": ["сформируй КП", "запусти отчет", "проанализируй сделки"],
+        },
+    }
+    LOW_LATENCY_TOOL_NAMES = [
+        "create_client",
+        "find_client",
+        "create_deal",
+        "update_deal",
+        "create_task",
+        "create_financial_operation",
+        "add_comment",
+        "get_today_tasks",
+        "enqueue_long_operation",
+    ]
+    COMMAND_SYNONYM_ALIASES = {
+        "find_client": "list_clients",
+        "create_deal": "create_project",
+        "update_deal": "update_project",
+        "add_comment": "add_project_comment",
+        "get_today_tasks": "list_tasks",
+    }
+
+    @classmethod
+    def _command_synonyms_for(cls, tool_name):
+        source_name = cls.COMMAND_SYNONYM_ALIASES.get(tool_name, tool_name)
+        return cls.COMMAND_SYNONYMS.get(source_name, {"verbs": [], "objects": [], "examples": []})
+
+    @classmethod
+    def _command_synonym_rows(cls, tool_names=None):
+        names = tool_names or cls.COMMAND_SYNONYMS.keys()
+        rows = []
+        for name in names:
+            synonyms = cls._command_synonyms_for(name)
+            rows.append(
+                {
+                    "function": name,
+                    "verbs": synonyms.get("verbs", []),
+                    "objects": synonyms.get("objects", []),
+                    "examples": synonyms.get("examples", []),
+                }
+            )
+        return rows
+
+    @classmethod
+    def _command_synonym_prompt(cls, tool_names=None):
+        rows = cls._command_synonym_rows(tool_names)
+        lines = []
+        for row in rows:
+            verbs = ", ".join(row["verbs"])
+            objects = ", ".join(row["objects"])
+            examples = "; ".join(row["examples"])
+            lines.append(f"- {row['function']}: действия: {verbs}; объекты: {objects}; примеры: {examples}")
+        return "\n".join(lines)
+
+    @classmethod
+    def _command_markers(cls, tool_names=None, key="verbs"):
+        markers = set()
+        for row in cls._command_synonym_rows(tool_names):
+            markers.update(row.get(key, []))
+        return sorted(markers, key=len, reverse=True)
+
+    @classmethod
+    def _action_tool_names(cls):
+        return [
+            name
+            for name in cls.COMMAND_SYNONYMS
+            if name.startswith(("create_", "update_", "delete_", "add_")) or name == "enqueue_long_operation"
+        ]
+
+    @classmethod
+    def _matches_any(cls, text, markers):
+        return any(marker and marker in text for marker in markers)
 
     def __init__(self, user, client=None, init_gemini_client=True, init_memory=True):
         self.user = user
@@ -735,28 +946,7 @@ class CRMAssistantService:
         if self._requires_mutating_tool(text):
             return True
 
-        mutation_markers = [
-            "\u0441\u043e\u0437\u0434",
-            "\u0434\u043e\u0431\u0430\u0432",
-            "\u043f\u043e\u0441\u0442\u0430\u0432",
-            "\u0441\u0434\u0435\u043b\u0430",
-            "\u0437\u0430\u0432\u0435\u0434",
-            "\u0437\u0430\u043f\u043b\u0430\u043d",
-            "\u0437\u0430\u043f\u0438\u0448",
-            "\u043f\u043e\u0440\u0443\u0447",
-            "\u043d\u0430\u0437\u043d\u0430\u0447",
-            "\u0441\u043e\u0445\u0440\u0430\u043d",
-            "\u0438\u0437\u043c\u0435\u043d",
-            "\u043e\u0431\u043d\u043e\u0432",
-            "\u043f\u043e\u043c\u0435\u043d\u044f",
-            "\u043f\u0435\u0440\u0435\u043d\u0435\u0441",
-            "\u0443\u0434\u0430\u043b",
-            "\u0437\u0430\u043a\u0440\u043e",
-            "\u043e\u0442\u043c\u0435\u0442",
-            "\u0441\u0444\u043e\u0440\u043c\u0438\u0440",
-            "\u0437\u0430\u0433\u0440\u0443\u0437",
-        ]
-        return any(marker in text for marker in mutation_markers)
+        return self._matches_any(text, self._command_markers(self._action_tool_names(), key="verbs"))
 
     def _is_fast_project_list_question(self, text):
         if "\u043f\u0440\u043e\u0435\u043a\u0442" not in text:
@@ -810,19 +1000,8 @@ class CRMAssistantService:
 
     def _fast_mutation_clarification(self, message):
         text = normalize_text(message)
-        create_markers = [
-            "созда",
-            "создай",
-            "создать",
-            "добав",
-            "добавь",
-            "заведи",
-            "внеси",
-            "запиши",
-            "оформи",
-            "сделай",
-        ]
-        if not any(marker in text for marker in create_markers):
+        action_tool_names = self._action_tool_names()
+        if not self._matches_any(text, self._command_markers(action_tool_names, key="verbs")):
             return None
 
         words = re.findall(r"[0-9a-zа-яё#]+", text, flags=re.IGNORECASE)
@@ -830,12 +1009,16 @@ class CRMAssistantService:
         has_amount_hint = bool(re.search(r"\d", text)) or any(marker in text for marker in ["руб", "₽", "тысяч"])
         has_target_hint = any(marker in text for marker in ["проект", "клиент", "по ", "для ", "#"])
 
-        finance_terms = ["финанс", "операц", "платеж", "платёж", "оплат", "доход", "расход", "аванс"]
-        project_terms = ["проект", "заявк", "заказ"]
-        task_terms = ["задач", "дело", "напомин"]
-        client_terms = ["клиент", "контакт"]
+        finance_terms = self._command_markers(["create_payment", "create_financial_operation", "delete_payment"], key="objects")
+        project_terms = self._command_markers(["create_project", "update_project", "delete_project"], key="objects")
+        task_terms = self._command_markers(["create_task", "update_task", "delete_task"], key="objects")
+        client_terms = self._command_markers(["create_client"], key="objects")
+        comment_terms = self._command_markers(["add_project_comment"], key="objects")
+        status_terms = self._command_markers(["create_project_status", "update_project_status", "delete_project_status"], key="objects")
+        user_terms = self._command_markers(["create_user", "update_user"], key="objects")
+        long_operation_terms = self._command_markers(["enqueue_long_operation"], key="objects")
 
-        if any(term in text for term in finance_terms) and (not has_amount_hint or (word_count <= 4 and not has_target_hint)):
+        if self._matches_any(text, finance_terms) and (not has_amount_hint or (word_count <= 4 and not has_target_hint)):
             return self._fast_response(
                 "Уточните финансовую операцию: по какому проекту, это доход или расход, какая сумма и какая категория?",
                 "clarify_create_financial_operation_fast",
@@ -843,7 +1026,7 @@ class CRMAssistantService:
                 needs_clarification=True,
             )
 
-        if any(term in text for term in project_terms) and word_count <= 3:
+        if self._matches_any(text, project_terms) and word_count <= 3:
             return self._fast_response(
                 "Как назвать проект и кто клиент? Можно указать имя или телефон клиента.",
                 "clarify_create_project_fast",
@@ -851,7 +1034,7 @@ class CRMAssistantService:
                 needs_clarification=True,
             )
 
-        if any(term in text for term in task_terms) and word_count <= 3:
+        if self._matches_any(text, task_terms) and word_count <= 3:
             return self._fast_response(
                 "Какую задачу создать? Укажите название, проект и срок, если он уже известен.",
                 "clarify_create_task_fast",
@@ -859,11 +1042,43 @@ class CRMAssistantService:
                 needs_clarification=True,
             )
 
-        if any(term in text for term in client_terms) and word_count <= 3:
+        if self._matches_any(text, client_terms) and word_count <= 3:
             return self._fast_response(
                 "Как зовут клиента? Если есть телефон, продиктуйте его тоже.",
                 "clarify_create_client_fast",
                 {"command_kind": "client"},
+                needs_clarification=True,
+            )
+
+        if self._matches_any(text, comment_terms) and word_count <= 4:
+            return self._fast_response(
+                "По какому проекту оставить комментарий и какой текст записать?",
+                "clarify_add_comment_fast",
+                {"command_kind": "comment"},
+                needs_clarification=True,
+            )
+
+        if self._matches_any(text, status_terms) and word_count <= 4:
+            return self._fast_response(
+                "Уточните статус: его нужно создать, изменить или удалить, и как он называется?",
+                "clarify_status_fast",
+                {"command_kind": "project_status"},
+                needs_clarification=True,
+            )
+
+        if self._matches_any(text, user_terms) and word_count <= 4:
+            return self._fast_response(
+                "Уточните пользователя: кого добавить или изменить и какая роль нужна?",
+                "clarify_user_fast",
+                {"command_kind": "user"},
+                needs_clarification=True,
+            )
+
+        if self._matches_any(text, long_operation_terms) and word_count <= 4:
+            return self._fast_response(
+                "Что именно подготовить в фоне: КП, отчёт, анализ сделок или массовое обновление?",
+                "clarify_long_operation_fast",
+                {"command_kind": "long_operation"},
                 needs_clarification=True,
             )
 
@@ -946,50 +1161,11 @@ class CRMAssistantService:
 
     def _requires_mutating_tool(self, message):
         text = normalize_text(message)
-        mutation_markers = [
-            "созда",
-            "создай",
-            "создать",
-            "добав",
-            "постав",
-            "сделай",
-            "заведи",
-            "внес",
-            "оформ",
-            "заплан",
-            "запиш",
-            "поручи",
-            "назнач",
-            "сохрани",
-            "измени",
-            "обнов",
-            "поменя",
-            "перенеси",
-            "удали",
-            "закрой",
-            "отмет",
-            "сформир",
-            "загру",
-        ]
-        mutation_objects = [
-            "задач",
-            "проект",
-            "клиент",
-            "операц",
-            "финанс",
-            "платеж",
-            "платёж",
-            "оплат",
-            "доход",
-            "расход",
-            "аванс",
-            "счет",
-            "счёт",
-            "комментар",
-            "статус",
-            "пользовател",
-        ]
-        return any(marker in text for marker in mutation_markers) and any(obj in text for obj in mutation_objects)
+        action_tool_names = self._action_tool_names()
+        return self._matches_any(text, self._command_markers(action_tool_names, key="verbs")) and self._matches_any(
+            text,
+            self._command_markers(action_tool_names, key="objects"),
+        )
 
     def _format_mutation_reply(self, events):
         failed_events = [event for event in events if not event.get("result", {}).get("ok")]
@@ -1031,27 +1207,6 @@ class CRMAssistantService:
         if self._requires_mutating_tool(message):
             return True
 
-        mutation_markers = [
-            "созда",
-            "добав",
-            "постав",
-            "сделай",
-            "заведи",
-            "внес",
-            "оформ",
-            "заплан",
-            "запиш",
-            "измени",
-            "обнов",
-            "поменя",
-            "перенеси",
-            "назнач",
-            "удали",
-            "закрой",
-            "отмет",
-            "сформир",
-            "загру",
-        ]
         detail_markers = [
             "подроб",
             "детал",
@@ -1071,7 +1226,10 @@ class CRMAssistantService:
             "обнови данные",
         ]
 
-        if any(marker in text for marker in mutation_markers):
+        if self._matches_any(text, self._command_markers(key="verbs")) and self._matches_any(
+            text,
+            self._command_markers(key="objects"),
+        ):
             return True
 
         if any(marker in text for marker in detail_markers):
@@ -1249,6 +1407,7 @@ class CRMAssistantService:
             "Если пользователь спрашивает про один проект, используй get_project_details. Если про список проектов, используй list_projects. "
             "Если спрашивают про финансы, используй list_payments. Если про задачи, используй list_tasks. "
             "Если в вопросе назван статус проекта, передавай его в list_projects.status_name. "
+            f"\n\nСИНОНИМЫ CRM-КОМАНД:\n{self._command_synonym_prompt()}\n"
             f"Сегодняшняя дата: {today}. "
             f"Доступные статусы канбана: {visible_statuses or 'пока не заданы'}. "
             f"Доступные пользователи: {visible_users or 'только текущий пользователь'}. "
@@ -1732,6 +1891,28 @@ class CRMAssistantService:
                         "deal_query": {"type": "string"},
                     },
                     "required": ["title"],
+                },
+            },
+            {
+                "name": "create_financial_operation",
+                "description": "Create a CRM financial operation. Synonyms: add payment, record income, add expense, fix advance.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "integer"},
+                        "project_query": {"type": "string"},
+                        "deal_id": {"type": "integer"},
+                        "deal_query": {"type": "string"},
+                        "amount": {"type": "number"},
+                        "operation_kind": {"type": "string", "enum": ["income", "expense"]},
+                        "category_id": {"type": "integer"},
+                        "category_name": {"type": "string"},
+                        "account_id": {"type": "integer"},
+                        "account_name": {"type": "string"},
+                        "payment_method": {"type": "string", "enum": ["transfer", "cash", "card", "other"]},
+                        "comment": {"type": "string"},
+                        "paid_at": {"type": "string"},
+                    },
                 },
             },
             {

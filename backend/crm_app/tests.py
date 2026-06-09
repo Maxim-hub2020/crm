@@ -1268,6 +1268,7 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
                 "create_deal",
                 "update_deal",
                 "create_task",
+                "create_financial_operation",
                 "add_comment",
                 "get_today_tasks",
                 "enqueue_long_operation",
@@ -1309,7 +1310,54 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
         self.assertIn("LOW_LATENCY_CONTEXT", instruction)
         self.assertIn("/projects", instruction)
         self.assertIn("create_deal", instruction)
+        self.assertIn("command_synonyms", instruction)
+        self.assertIn("create_financial_operation", instruction)
         self.assertNotIn("КЭШ-СНИМОК CRM", instruction)
+
+    def test_command_synonyms_cover_available_tools(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+        tool_names = {tool["name"] for tool in service._tool_declarations()}
+        tool_names.update(service.LOW_LATENCY_TOOL_NAMES)
+
+        missing = [
+            name
+            for name in sorted(tool_names)
+            if not service._command_synonyms_for(name).get("verbs")
+            or not service._command_synonyms_for(name).get("objects")
+        ]
+
+        self.assertEqual(missing, [])
+
+    def test_fast_clarification_understands_operation_synonyms(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+        cases = {
+            "заведи сделку": "clarify_create_project_fast",
+            "поставь напоминание": "clarify_create_task_fast",
+            "зафиксируй аванс": "clarify_create_financial_operation_fast",
+            "оставь заметку": "clarify_add_comment_fast",
+            "сформируй кп": "clarify_long_operation_fast",
+        }
+
+        for phrase, expected_intent in cases.items():
+            with self.subTest(phrase=phrase):
+                result = service._fast_mutation_clarification(phrase)
+
+                self.assertIsNotNone(result)
+                self.assertEqual(result["intent"], expected_intent)
+                self.assertTrue(result["needs_clarification"])
+
+    def test_synonym_commands_enable_tool_calling(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+        phrases = [
+            "перекинь проект в монтаж",
+            "отметь задачу выполненной",
+            "проведи расход по проекту",
+            "прочитай комментарии по проекту",
+        ]
+
+        for phrase in phrases:
+            with self.subTest(phrase=phrase):
+                self.assertTrue(service._should_enable_tools(phrase))
 
     @patch("crm_app.tasks.run_long_assistant_operation")
     def test_long_operation_is_queued(self, mocked_task):

@@ -178,21 +178,13 @@ def _build_low_latency_system_instruction(service, user, current_screen, recent_
         "role": role,
     }
 
-    available_functions = [
-        "create_client",
-        "find_client",
-        "create_deal",
-        "update_deal",
-        "create_task",
-        "add_comment",
-        "get_today_tasks",
-        "enqueue_long_operation",
-    ]
+    available_functions = CRMAssistantService.LOW_LATENCY_TOOL_NAMES
     compact_context = {
         "current_user": current_user,
         "current_screen": current_screen or "/assistant",
         "recent_messages": recent_history[-5:],
         "available_functions": available_functions,
+        "command_synonyms": CRMAssistantService._command_synonym_rows(available_functions),
         "reference_cache": reference_cache,
     }
 
@@ -202,6 +194,8 @@ def _build_low_latency_system_instruction(service, user, current_screen, recent_
         "function calling, не обещай создание или изменение без результата функции. Если данных не хватает, задай один "
         "короткий уточняющий вопрос и продолжай диалог. Не запрашивай и не анализируй всю CRM целиком: используй только "
         "текущего пользователя, текущий экран, последние 3-5 сообщений, список функций и кэш справочников ниже. "
+        "Фразы-синонимы команд бери из command_synonyms: пользователь может говорить «заведи сделку», «поставь задачу», "
+        "«зафиксируй аванс», «оставь заметку», «перекинь проект» и похожие формулировки. "
         "Для длинных операций используй enqueue_long_operation и сразу отвечай, что задача запущена в фоне. "
         "Если пользователь просит список или состояние, отвечай кратко; детали раскрывай только по уточнению.\n\n"
         f"LOW_LATENCY_CONTEXT:\n{json.dumps(compact_context, ensure_ascii=False, default=str)}"
