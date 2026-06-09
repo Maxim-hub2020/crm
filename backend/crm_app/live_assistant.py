@@ -534,11 +534,12 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         async for message in session.receive():
             server_content = getattr(message, "server_content", None)
             tool_call = getattr(message, "tool_call", None)
+            server_content_sent_audio = False
 
             if server_content:
-                await self._handle_server_content(server_content)
+                server_content_sent_audio = await self._handle_server_content(server_content)
 
-            if getattr(message, "data", None):
+            if getattr(message, "data", None) and not server_content_sent_audio:
                 self._mark_first_audio_output()
                 await self.send(bytes_data=message.data)
 
@@ -550,6 +551,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 await self._handle_tool_call(session, types, service, tool_call)
 
     async def _handle_server_content(self, server_content):
+        sent_audio = False
         model_turn = getattr(server_content, "model_turn", None)
         if model_turn and getattr(model_turn, "parts", None):
             for part in model_turn.parts:
@@ -557,6 +559,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 if inline_data and getattr(inline_data, "data", None):
                     self._mark_first_audio_output()
                     await self.send(bytes_data=inline_data.data)
+                    sent_audio = True
                 if getattr(part, "text", None):
                     self._mark_first_model_output()
                     await self._send_event({"type": "output_text", "text": part.text})
@@ -580,6 +583,8 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
             logger.info("Assistant Live server turn_complete")
             await self._send_event({"type": "turn_complete"})
             await self._finish_turn_metrics(reason="turn_complete")
+
+        return sent_audio
 
     async def _handle_tool_call(self, session, types, service, tool_call):
         function_responses = []

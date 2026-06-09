@@ -11,7 +11,7 @@ from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
 from .ai_assistant import CRMAssistantService, GeminiClient, GeminiRequestError, humanize_gemini_error
-from .live_assistant import _build_low_latency_system_instruction, _build_reference_cache, _has_live_assistant_access
+from .live_assistant import AssistantLiveConsumer, _build_low_latency_system_instruction, _build_reference_cache, _has_live_assistant_access
 from .models import Account, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectStatus, SubscriptionInvoice, Task, User
 from .subscription import activate_subscription_invoice, ensure_subscription_defaults, issue_subscription_invoice
 
@@ -1255,6 +1255,48 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
         )
         FinanceCategory.objects.get_or_create(name="Аванс", type=FinanceCategory.Type.INCOME)
         FinanceCategory.objects.get_or_create(name="Доставка", type=FinanceCategory.Type.EXPENSE)
+
+    def test_live_consumer_does_not_duplicate_audio_from_same_message(self):
+        class FakeInlineData:
+            data = b"inline-audio"
+
+        class FakePart:
+            inline_data = FakeInlineData()
+            text = None
+
+        class FakeModelTurn:
+            parts = [FakePart()]
+
+        class FakeServerContent:
+            model_turn = FakeModelTurn()
+            input_transcription = None
+            output_transcription = None
+            interrupted = False
+            turn_complete = False
+
+        class FakeMessage:
+            server_content = FakeServerContent()
+            data = b"top-level-audio"
+            text = None
+            tool_call = None
+
+        class FakeSession:
+            async def receive(self):
+                yield FakeMessage()
+
+        consumer = AssistantLiveConsumer()
+        consumer.turn_metrics = consumer._new_turn_metrics()
+        sent_audio = []
+
+        async def fake_send(bytes_data=None, text_data=None):
+            if bytes_data:
+                sent_audio.append(bytes_data)
+
+        consumer.send = fake_send
+
+        async_to_sync(consumer._receive_from_gemini)(FakeSession(), None, None)
+
+        self.assertEqual(sent_audio, [b"inline-audio"])
 
     def test_live_tool_declarations_are_limited_to_low_latency_functions(self):
         service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
