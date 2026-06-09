@@ -1544,6 +1544,60 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
         self.assertIn("assistant_audio", event_types)
         self.assertLess(event_types.index("assistant_audio"), event_types.index("turn_complete"))
 
+    def test_live_tool_call_with_reply_finishes_turn_without_waiting_for_model_audio(self):
+        class FakeFunctionCall:
+            id = "call-1"
+            name = "create_task"
+            args = {"title": "Позвонить клиенту"}
+
+        class FakeToolCall:
+            function_calls = [FakeFunctionCall()]
+
+        class FakeSession:
+            def __init__(self):
+                self.function_responses = []
+
+            async def send_tool_response(self, function_responses):
+                self.function_responses = function_responses
+
+        class FakeTypes:
+            class FunctionResponse:
+                def __init__(self, **kwargs):
+                    self.kwargs = kwargs
+
+        async def fake_generate_speech_event(_user, text):
+            return {
+                "type": "assistant_audio",
+                "audio_base64": "bXAz",
+                "audio_mime_type": "audio/mpeg",
+                "text": text,
+            }
+
+        consumer = AssistantLiveConsumer()
+        consumer.user = self.user
+        consumer.live_context = []
+        consumer.turn_metrics = consumer._new_turn_metrics()
+        consumer.pending_voice_fallback_text = ""
+        consumer.suppress_next_tool_model_turn = False
+        sent_events = []
+
+        async def fake_send(bytes_data=None, text_data=None):
+            if text_data:
+                sent_events.append(json.loads(text_data))
+
+        consumer.send = fake_send
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+        session = FakeSession()
+
+        with patch("crm_app.live_assistant._generate_speech_event", new=fake_generate_speech_event):
+            async_to_sync(consumer._handle_tool_call)(session, FakeTypes, service, FakeToolCall())
+
+        event_types = [event["type"] for event in sent_events]
+        self.assertEqual(event_types[:3], ["tool_call", "assistant_audio", "turn_complete"])
+        self.assertTrue(session.function_responses)
+        self.assertTrue(consumer.suppress_next_tool_model_turn)
+        self.assertTrue(Task.objects.filter(title="Позвонить клиенту", assignee=self.user).exists())
+
     def test_live_tool_declarations_are_limited_to_low_latency_functions(self):
         service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
 
@@ -1583,6 +1637,39 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
         created_project = Project.objects.get(client_phone="+70000000011")
         self.assertEqual(created_project.title, "Зеркало в ванную")
         self.assertEqual(created_project.status, "design")
+
+    def test_ambiguous_project_query_speaks_project_names(self):
+        Project.objects.create(
+            manager=self.user,
+            title="Кухня",
+            client_name="Иван",
+            client_phone="+70000000021",
+            status="design",
+        )
+        Project.objects.create(
+            manager=self.user,
+            title="Шолохова кухня",
+            client_name="Петров",
+            client_phone="+70000000022",
+            status="design",
+        )
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._execute_tool(
+            "create_financial_operation",
+            {
+                "project_query": "кухня",
+                "amount": 30000,
+                "operation_kind": FinanceCategory.Type.INCOME,
+                "category_name": "Аванс",
+            },
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["needs_clarification"])
+        self.assertIn("Кухня", result["summary"])
+        self.assertIn("Шолохова кухня", result["summary"])
+        self.assertIn("Какой именно выбрать", result["summary"])
 
     def test_low_latency_instruction_uses_compact_context(self):
         service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)

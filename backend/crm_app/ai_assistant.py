@@ -3062,9 +3062,11 @@ class CRMAssistantService:
         if not matches:
             return None, self._clarification("Не нашёл подходящий проект. Уточните клиента, адрес или телефон.", [])
         if len(matches) > 1:
+            options = [f"{project.id}: {self._project_display_name(project)}" for project in matches[:6]]
+            spoken_options = "; ".join(self._project_display_name(project) for project in matches[:4])
             return None, self._clarification(
-                "Нашёл несколько похожих проектов. Уточните, какой именно нужен.",
-                [f"{project.id}: {self._project_display_name(project)}" for project in matches[:6]],
+                f"Нашёл несколько похожих проектов: {spoken_options}. Какой именно выбрать?",
+                options,
             )
         return matches[0], None
 

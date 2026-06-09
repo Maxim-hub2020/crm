@@ -287,6 +287,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         self.text_input_queue = asyncio.Queue(maxsize=20)
         self.turn_metrics = self._new_turn_metrics()
         self.pending_voice_fallback_text = ""
+        self.suppress_next_tool_model_turn = False
         self.live_task = asyncio.create_task(self._run_live_session())
         await self._send_event(
             {
@@ -628,6 +629,11 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         self.pending_voice_fallback_text = ""
 
     async def _handle_server_content(self, server_content):
+        if getattr(self, "suppress_next_tool_model_turn", False):
+            if getattr(server_content, "turn_complete", False):
+                self.suppress_next_tool_model_turn = False
+            return True
+
         sent_audio = False
         model_turn = getattr(server_content, "model_turn", None)
         if model_turn and getattr(model_turn, "parts", None):
@@ -668,6 +674,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
 
     async def _handle_tool_call(self, session, types, service, tool_call):
         function_responses = []
+        has_immediate_reply = False
         for function_call in getattr(tool_call, "function_calls", []) or []:
             tool_name = getattr(function_call, "name", "")
             arguments = dict(getattr(function_call, "args", {}) or {})
@@ -686,6 +693,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 }
             )
             if payload["reply"]:
+                has_immediate_reply = True
                 self.pending_voice_fallback_text = payload["reply"]
             self._append_live_context("assistant", self._tool_context_text(payload["event"], payload["reply"]))
 
@@ -699,3 +707,8 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
 
         if function_responses:
             await session.send_tool_response(function_responses=function_responses)
+            if has_immediate_reply:
+                self.suppress_next_tool_model_turn = True
+                await self._send_voice_fallback_if_needed(force=True)
+                await self._send_event({"type": "turn_complete"})
+                await self._finish_turn_metrics(reason="tool_reply")

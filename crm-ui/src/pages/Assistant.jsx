@@ -258,6 +258,7 @@ export default function Assistant() {
   const liveHeardBufferRef = useRef("");
   const liveReplyBufferRef = useRef("");
   const liveToolReplyFallbackRef = useRef("");
+  const liveLastTurnWasToolReplyRef = useRef(false);
   const liveReconnectTimerRef = useRef(null);
   const liveResponseWatchdogTimerRef = useRef(null);
   const liveRefreshAfterPlaybackRef = useRef(false);
@@ -628,6 +629,7 @@ export default function Assistant() {
     liveHeardBufferRef.current = "";
     liveReplyBufferRef.current = "";
     liveToolReplyFallbackRef.current = "";
+    liveLastTurnWasToolReplyRef.current = false;
     liveNoiseFloorRef.current = 0.006;
     resetLiveTurnDetection();
   }
@@ -776,11 +778,12 @@ export default function Assistant() {
     }
 
     if (event.type === "tool_call" && event.reply) {
+      clearLiveResponseWatchdogTimer();
       liveToolReplyFallbackRef.current = event.reply;
-      pendingRef.current = true;
-      setPending(true);
+      liveLastTurnWasToolReplyRef.current = true;
+      pendingRef.current = false;
+      setPending(false);
       setReplyText(event.reply);
-      scheduleLiveResponseWatchdog();
       return;
     }
 
@@ -805,8 +808,10 @@ export default function Assistant() {
       clearLiveResponseWatchdogTimer();
       pendingRef.current = false;
       setPending(false);
+      const shouldRefresh = LIVE_REFRESH_AFTER_TURN && !liveLastTurnWasToolReplyRef.current;
       finalizeLiveTurn();
-      if (LIVE_REFRESH_AFTER_TURN) {
+      liveLastTurnWasToolReplyRef.current = false;
+      if (shouldRefresh) {
         liveRefreshAfterPlaybackRef.current = true;
         window.setTimeout(() => {
           if (
