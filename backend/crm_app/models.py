@@ -164,6 +164,34 @@ class DocumentTemplate(models.Model):
         ordering = ["type"]
 
 
+class ChatIntegrationSettings(models.Model):
+    class Provider(models.TextChoices):
+        CHATWOOT = "chatwoot", "Chatwoot"
+
+    provider = models.CharField(max_length=30, choices=Provider.choices, default=Provider.CHATWOOT)
+    enabled = models.BooleanField(default=False)
+    base_url = models.URLField(blank=True, default="")
+    account_id = models.CharField(max_length=60, blank=True, default="")
+    inbox_name = models.CharField(max_length=120, blank=True, default="")
+    api_access_token = models.CharField(max_length=255, blank=True, default="")
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="updated_chat_settings",
+        blank=True,
+        null=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Chat integration settings"
+        verbose_name_plural = "Chat integration settings"
+
+    def __str__(self):
+        return self.inbox_name or self.base_url or self.get_provider_display()
+
+
 class CRMMemorySnapshot(models.Model):
     owner = models.OneToOneField(User, on_delete=models.CASCADE, related_name="crm_memory_snapshot")
     payload = models.JSONField(default=dict, blank=True)

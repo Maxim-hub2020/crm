@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import AccessToken
 
-from .ai_assistant import CRMAssistantService, humanize_gemini_error
+from .ai_assistant import CRMAssistantService, GeminiClient, humanize_gemini_error
 from .models import FinanceCategory, ProjectCustomField, ProjectStatus, User
 from .subscription import has_assistant_access
 
@@ -240,6 +241,25 @@ def _execute_assistant_tool(service, tool_name, arguments):
     return _json_safe({"event": event, "reply": reply})
 
 
+@database_sync_to_async
+def _generate_speech_event(user, text):
+    clean_text = str(text or "").strip()
+    if not clean_text:
+        return None
+
+    try:
+        speech = GeminiClient().generate_speech(clean_text[:900])
+    except Exception as exc:  # pragma: no cover - defensive network fallback
+        logger.warning("Assistant Live fallback speech failed: %s", exc)
+        return None
+
+    return {
+        "type": "assistant_audio",
+        "audio_base64": base64.b64encode(speech["audio_bytes"]).decode("ascii"),
+        "audio_mime_type": speech["mime_type"],
+    }
+
+
 class AssistantLiveConsumer(AsyncWebsocketConsumer):
     input_sample_rate = 16000
     output_sample_rate = 24000
@@ -265,6 +285,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         self.audio_input_queue = asyncio.Queue(maxsize=80)
         self.text_input_queue = asyncio.Queue(maxsize=20)
         self.turn_metrics = self._new_turn_metrics()
+        self.pending_voice_fallback_text = ""
         self.live_task = asyncio.create_task(self._run_live_session())
         await self._send_event(
             {
@@ -517,10 +538,12 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         while True:
             text = await self.text_input_queue.get()
             self.turn_metrics = self._new_turn_metrics()
+            self.pending_voice_fallback_text = ""
             self._mark_turn_start()
             self.turn_metrics["activity_end_at"] = time.perf_counter()
             fast_response = await _fast_mutation_clarification(service, text)
             if fast_response:
+                self.pending_voice_fallback_text = fast_response["reply"]
                 await self._send_event(
                     {
                         "type": "tool_call",
@@ -530,6 +553,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                         "reply": fast_response["reply"],
                     }
                 )
+                await self._send_voice_fallback_if_needed(force=True)
                 await self._finish_turn_metrics(reason="fast_clarification")
                 continue
             await session.send_realtime_input(text=text)
@@ -581,10 +605,26 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
 
             if getattr(message, "text", None):
                 self._mark_first_model_output()
+                self.pending_voice_fallback_text = message.text
                 await self._send_event({"type": "output_text", "text": message.text})
 
             if tool_call:
                 await self._handle_tool_call(session, types, service, tool_call)
+
+    async def _send_voice_fallback_if_needed(self, force=False):
+        text = str(getattr(self, "pending_voice_fallback_text", "") or "").strip()
+        if not text:
+            return
+        if not force and self.turn_metrics.get("first_audio_at"):
+            return
+
+        speech_event = await _generate_speech_event(self.user, text)
+        if not speech_event:
+            return
+
+        self._mark_first_audio_output()
+        await self._send_event(speech_event)
+        self.pending_voice_fallback_text = ""
 
     async def _handle_server_content(self, server_content):
         sent_audio = False
@@ -598,6 +638,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                     sent_audio = True
                 if getattr(part, "text", None):
                     self._mark_first_model_output()
+                    self.pending_voice_fallback_text = part.text
                     await self._send_event({"type": "output_text", "text": part.text})
 
         input_transcription = getattr(server_content, "input_transcription", None)
@@ -609,6 +650,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         output_transcription = getattr(server_content, "output_transcription", None)
         if output_transcription and getattr(output_transcription, "text", None):
             self._mark_first_model_output()
+            self.pending_voice_fallback_text = output_transcription.text
             await self._send_event({"type": "output_text", "text": output_transcription.text})
 
         if getattr(server_content, "interrupted", False):
@@ -617,6 +659,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
 
         if getattr(server_content, "turn_complete", False):
             logger.info("Assistant Live server turn_complete")
+            await self._send_voice_fallback_if_needed()
             await self._send_event({"type": "turn_complete"})
             await self._finish_turn_metrics(reason="turn_complete")
 
@@ -641,6 +684,8 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                     "reply": payload["reply"],
                 }
             )
+            if payload["reply"]:
+                self.pending_voice_fallback_text = payload["reply"]
             self._append_live_context("assistant", self._tool_context_text(payload["event"], payload["reply"]))
 
             function_responses.append(

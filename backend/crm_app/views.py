@@ -14,6 +14,7 @@ from rest_framework import status as drf_status
 from .ai_assistant import CRMAssistantService, GeminiConfigurationError, GeminiRequestError
 from .models import (
     Account,
+    ChatIntegrationSettings,
     Client,
     DocumentTemplate,
     FinanceCategory,
@@ -30,6 +31,7 @@ from .permissions import HasActiveSubscription, HasAssistantSubscription, IsAdmi
 from .serializers import (
     AdminUserSerializer,
     AccountSerializer,
+    ChatIntegrationSettingsSerializer,
     ClientSerializer,
     DocumentTemplateSerializer,
     FinanceCategorySerializer,
@@ -101,6 +103,23 @@ def billing_activate_invoice_view(request):
             "summary": billing_summary_payload(request.user),
         }
     )
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+def chat_settings_view(request):
+    settings, _created = ChatIntegrationSettings.objects.get_or_create(pk=1)
+
+    if request.method == "GET":
+        return Response(ChatIntegrationSettingsSerializer(settings).data)
+
+    if not request.user.is_admin():
+        return Response({"detail": "Настройки чатов может менять только администратор."}, status=drf_status.HTTP_403_FORBIDDEN)
+
+    serializer = ChatIntegrationSettingsSerializer(settings, data=request.data, partial=True)
+    serializer.is_valid(raise_exception=True)
+    serializer.save(updated_by=request.user)
+    return Response(serializer.data)
 
 
 @api_view(["POST"])

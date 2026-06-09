@@ -1,16 +1,15 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useState } from "react";
 import { ArrowUpRight, CheckCircle2, ExternalLink, Inbox, MessageCircle, PlugZap, RefreshCw, Settings2 } from "lucide-react";
 
+import { extractApiErrorMessage, fetchChatSettings } from "../api";
 import { Button } from "../components/ui.jsx";
-
-const CHATWOOT_URL = String(import.meta.env.VITE_CHATWOOT_URL || "").trim().replace(/\/+$/, "");
 
 function setupSteps() {
   return [
-    "Поднять Chatwoot отдельным compose-файлом на TimeWeb.",
-    "Подключить каналы: Telegram, WhatsApp, сайт, почту и другие мессенджеры.",
-    "Добавить URL Chatwoot в .env CRM: VITE_CHATWOOT_URL=https://chats.cehcrm.ru.",
-    "Пересобрать frontend, чтобы модуль «Чаты» открыл единый inbox.",
+    "Администратор открывает раздел «Система» и блок «Чаты».",
+    "Вставляет адрес Chatwoot, например https://chats.cehcrm.ru, и включает модуль.",
+    "В Chatwoot подключает каналы: Telegram, WhatsApp, сайт, почту и другие мессенджеры.",
+    "Менеджеры открывают «Чаты» и работают с единым inbox своей CRM.",
   ];
 }
 
@@ -27,11 +26,39 @@ function FeatureCard({ icon: Icon, title, text }) {
 }
 
 export default function Chats() {
-  const chatwootAppUrl = useMemo(() => (CHATWOOT_URL ? `${CHATWOOT_URL}/app` : ""), []);
-  const configured = Boolean(CHATWOOT_URL);
+  const [settings, setSettings] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    fetchChatSettings()
+      .then((data) => {
+        if (!active) return;
+        setSettings(data);
+        setError("");
+      })
+      .catch((requestError) => {
+        if (!active) return;
+        setError(extractApiErrorMessage(requestError, "Не удалось загрузить настройки чатов."));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const chatwootAppUrl = settings?.app_url || "";
+  const configured = Boolean(settings?.enabled && chatwootAppUrl);
 
   return (
     <div className="space-y-5">
+      {error ? <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+
       <section className="overflow-hidden rounded-[32px] border border-slate-200/80 bg-white shadow-sm">
         <div className="flex flex-col gap-5 bg-[radial-gradient(circle_at_top_left,#dbeafe,transparent_35%),linear-gradient(135deg,#ffffff,#f8fafc)] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-7">
           <div className="min-w-0">
@@ -41,11 +68,15 @@ export default function Chats() {
             </div>
             <h2 className="text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">Чаты клиентов</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-              Модуль для подключения Chatwoot: все входящие сообщения из сайта, Telegram, WhatsApp, Instagram, почты и других каналов будут собираться в одном окне.
+              Здесь открывается inbox Chatwoot: сайт, Telegram, WhatsApp, Instagram, почта и другие каналы собираются в одном окне.
             </p>
           </div>
 
-          {configured ? (
+          {loading ? (
+            <div className="rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-500">
+              Загружаем настройки...
+            </div>
+          ) : configured ? (
             <a href={chatwootAppUrl} target="_blank" rel="noreferrer">
               <Button type="button" className="gap-2">
                 Открыть Chatwoot <ArrowUpRight size={16} />
@@ -53,7 +84,7 @@ export default function Chats() {
             </a>
           ) : (
             <div className="rounded-3xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-700">
-              Chatwoot URL пока не настроен
+              Подключите Chatwoot в разделе «Система»
             </div>
           )}
         </div>
@@ -73,7 +104,7 @@ export default function Chats() {
               <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10">
                 <Settings2 size={22} />
               </div>
-              <h3 className="text-xl font-black tracking-tight">Как подключим</h3>
+              <h3 className="text-xl font-black tracking-tight">Как подключить</h3>
               <div className="mt-5 space-y-3">
                 {setupSteps().map((step, index) => (
                   <div key={step} className="flex gap-3 rounded-2xl bg-white/5 p-3">
@@ -94,13 +125,13 @@ export default function Chats() {
               />
               <FeatureCard
                 icon={RefreshCw}
-                title="Синхронизация CRM"
-                text="Следующим шагом привяжем контакты Chatwoot к клиентам и проектам CRM через API/webhook."
+                title="Настройка из CRM"
+                text="Адрес Chatwoot теперь хранится в backend-настройках, а не в frontend env."
               />
               <FeatureCard
                 icon={PlugZap}
                 title="Отдельный сервис"
-                text="Chatwoot разворачивается отдельно, поэтому не перегружает Django и проще обновляется."
+                text="Chatwoot разворачивается рядом с CRM и подключает каналы уже внутри себя."
               />
             </div>
           </div>
@@ -110,18 +141,18 @@ export default function Chats() {
       <section className="grid gap-4 md:grid-cols-3">
         <FeatureCard
           icon={CheckCircle2}
-          title="Что уже готово"
-          text="В CRM добавлен модуль «Чаты» и переменная VITE_CHATWOOT_URL для подключения inbox."
+          title="Готово"
+          text="Модуль «Чаты» читает настройки из CRM и открывает подключенный inbox."
         />
         <FeatureCard
           icon={ExternalLink}
           title="Self-host"
-          text="Для TimeWeb подготовлен отдельный docker-compose.chatwoot.yml, чтобы поднять Chatwoot рядом с CRM."
+          text="Для TimeWeb уже есть отдельный docker-compose.chatwoot.yml, чтобы поднять Chatwoot рядом с CRM."
         />
         <FeatureCard
           icon={Settings2}
-          title="Дальше"
-          text="После запуска Chatwoot подключим Telegram/WhatsApp и сделаем связку сообщений с карточками клиентов."
+          title="Следующий слой"
+          text="Для SaaS с разными компаниями нужен workspace/tenant-слой, чтобы изолировать не только чаты, но и клиентов, проекты и финансы."
         />
       </section>
     </div>

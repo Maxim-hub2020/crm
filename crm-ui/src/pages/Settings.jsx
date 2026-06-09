@@ -6,6 +6,7 @@ import {
   Hash,
   Layers,
   Lock,
+  MessageCircle,
   Plus,
   Settings as SettingsIcon,
   Sliders,
@@ -28,12 +29,14 @@ import {
   deleteProjectStatus,
   extractApiErrorMessage,
   fetchAccounts,
+  fetchChatSettings,
   fetchDocumentTemplates,
   fetchFinanceCategories,
   fetchProjectCustomFields,
   fetchProjectStatuses,
   fetchUsers,
   updateProjectStatus,
+  updateChatSettings,
   uploadDocumentTemplate,
 } from "../api";
 import { Input, Select } from "../components/ui.jsx";
@@ -131,6 +134,7 @@ export default function Settings() {
   const [accounts, setAccounts] = useState([]);
   const [customFields, setCustomFields] = useState([]);
   const [templates, setTemplates] = useState([]);
+  const [chatSettings, setChatSettings] = useState(null);
   const [error, setError] = useState("");
 
   const [managerForm, setManagerForm] = useState({ username: "", email: "", phone: "", password: "" });
@@ -142,15 +146,24 @@ export default function Settings() {
   const [fieldName, setFieldName] = useState("");
   const [fieldType, setFieldType] = useState("text");
   const [templateBusy, setTemplateBusy] = useState(false);
+  const [chatSaving, setChatSaving] = useState(false);
+  const [chatForm, setChatForm] = useState({
+    enabled: false,
+    base_url: "",
+    account_id: "",
+    inbox_name: "",
+    api_access_token: "",
+  });
 
   async function reload() {
-    const [userRows, statusRows, categoryRows, accountRows, fieldRows, templateRows] = await Promise.all([
+    const [userRows, statusRows, categoryRows, accountRows, fieldRows, templateRows, chatRows] = await Promise.all([
       fetchUsers(),
       fetchProjectStatuses(),
       fetchFinanceCategories(),
       fetchAccounts(),
       fetchProjectCustomFields(),
       fetchDocumentTemplates(),
+      fetchChatSettings(),
     ]);
 
     setUsers(userRows);
@@ -159,6 +172,14 @@ export default function Settings() {
     setAccounts(accountRows);
     setCustomFields(fieldRows);
     setTemplates(templateRows);
+    setChatSettings(chatRows);
+    setChatForm({
+      enabled: Boolean(chatRows.enabled),
+      base_url: chatRows.base_url || "",
+      account_id: chatRows.account_id || "",
+      inbox_name: chatRows.inbox_name || "",
+      api_access_token: "",
+    });
   }
 
   useEffect(() => {
@@ -268,6 +289,38 @@ export default function Settings() {
     }
   }
 
+  async function handleSaveChatSettings(event) {
+    event.preventDefault();
+    setChatSaving(true);
+
+    try {
+      const payload = {
+        enabled: Boolean(chatForm.enabled),
+        base_url: chatForm.base_url.trim(),
+        account_id: chatForm.account_id.trim(),
+        inbox_name: chatForm.inbox_name.trim(),
+      };
+      if (chatForm.api_access_token.trim()) {
+        payload.api_access_token = chatForm.api_access_token.trim();
+      }
+
+      const updated = await updateChatSettings(payload);
+      setChatSettings(updated);
+      setChatForm({
+        enabled: Boolean(updated.enabled),
+        base_url: updated.base_url || "",
+        account_id: updated.account_id || "",
+        inbox_name: updated.inbox_name || "",
+        api_access_token: "",
+      });
+      setError("");
+    } catch (requestError) {
+      setError(extractApiErrorMessage(requestError, "Не удалось сохранить настройки чатов."));
+    } finally {
+      setChatSaving(false);
+    }
+  }
+
   async function removeAndReload(removeAction, id, fallback) {
     try {
       await removeAction(id);
@@ -288,6 +341,57 @@ export default function Settings() {
           <button className="w-full rounded-full bg-gray-900 px-5 py-3 text-xs font-bold text-white shadow-lg hover:bg-black" type="button">
             Сменить пароль
           </button>
+        </SettingsCard>
+
+        <SettingsCard title="Чаты" icon={<MessageCircle size={16} />}>
+          <form className="space-y-3" onSubmit={handleSaveChatSettings}>
+            <label className="flex items-start gap-3 rounded-2xl bg-blue-50 px-3 py-3 text-sm font-semibold text-blue-700">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 rounded border-blue-200 text-blue-600"
+                checked={chatForm.enabled}
+                onChange={(event) => setChatForm((prev) => ({ ...prev, enabled: event.target.checked }))}
+              />
+              <span>Включить модуль Chatwoot для команды</span>
+            </label>
+            <Input
+              value={chatForm.base_url}
+              onChange={(event) => setChatForm((prev) => ({ ...prev, base_url: event.target.value }))}
+              placeholder="https://chats.cehcrm.ru"
+              inputMode="url"
+            />
+            <Input
+              value={chatForm.inbox_name}
+              onChange={(event) => setChatForm((prev) => ({ ...prev, inbox_name: event.target.value }))}
+              placeholder="Название inbox, например Основные чаты"
+            />
+            <Input
+              value={chatForm.account_id}
+              onChange={(event) => setChatForm((prev) => ({ ...prev, account_id: event.target.value }))}
+              placeholder="Account ID Chatwoot, если нужен для API"
+            />
+            <Input
+              type="password"
+              value={chatForm.api_access_token}
+              onChange={(event) => setChatForm((prev) => ({ ...prev, api_access_token: event.target.value }))}
+              placeholder={chatSettings?.has_api_access_token ? "API token сохранен, новый вводить не обязательно" : "API access token Chatwoot"}
+            />
+            <p className="text-xs leading-5 text-gray-500">
+              Каждый Chatwoot подключает свои каналы внутри себя: Telegram, WhatsApp, виджет сайта, email. В CRM хранится адрес inbox и служебный token для будущих webhooks/API.
+            </p>
+            {chatSettings?.app_url ? (
+              <a className="block truncate text-xs font-bold text-blue-600 hover:underline" href={chatSettings.app_url} target="_blank" rel="noreferrer">
+                Открыть подключенный inbox
+              </a>
+            ) : null}
+            <button
+              className="w-full rounded-full bg-gray-900 px-5 py-3 text-xs font-bold text-white shadow-lg hover:bg-black disabled:opacity-60"
+              type="submit"
+              disabled={chatSaving}
+            >
+              {chatSaving ? "Сохраняем..." : "Сохранить чаты"}
+            </button>
+          </form>
         </SettingsCard>
 
         <SettingsCard title="Команда" icon={<Users2 size={16} />}>

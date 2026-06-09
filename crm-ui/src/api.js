@@ -392,6 +392,18 @@ export async function deleteDocumentTemplate(templateId) {
   await api.delete(`/api/document-templates/${templateId}/`);
 }
 
+export async function fetchChatSettings() {
+  initApiAuth();
+  const { data } = await api.get("/api/chat-settings/");
+  return data;
+}
+
+export async function updateChatSettings(payload) {
+  initApiAuth();
+  const { data } = await api.patch("/api/chat-settings/", payload);
+  return data;
+}
+
 export async function downloadProjectDocument(projectId, documentType) {
   initApiAuth();
   const { data, headers } = await api.get(`/api/projects/${projectId}/documents/${documentType}/`, {

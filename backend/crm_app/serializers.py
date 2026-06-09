@@ -3,6 +3,7 @@ from django.utils.text import slugify
 
 from .models import (
     Account,
+    ChatIntegrationSettings,
     Client,
     DocumentTemplate,
     FinanceCategory,
@@ -303,6 +304,45 @@ class DocumentTemplateSerializer(serializers.ModelSerializer):
         if not filename.lower().endswith(".pdf"):
             raise serializers.ValidationError("Загрузите PDF-файл.")
         return uploaded_file
+
+
+class ChatIntegrationSettingsSerializer(serializers.ModelSerializer):
+    has_api_access_token = serializers.SerializerMethodField()
+    app_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChatIntegrationSettings
+        fields = [
+            "id",
+            "provider",
+            "enabled",
+            "base_url",
+            "account_id",
+            "inbox_name",
+            "api_access_token",
+            "has_api_access_token",
+            "app_url",
+            "updated_by",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["updated_by", "created_at", "updated_at", "has_api_access_token", "app_url"]
+        extra_kwargs = {
+            "base_url": {"required": False, "allow_blank": True},
+            "account_id": {"required": False, "allow_blank": True},
+            "inbox_name": {"required": False, "allow_blank": True},
+            "api_access_token": {"required": False, "allow_blank": True, "write_only": True},
+        }
+
+    def get_has_api_access_token(self, obj):
+        return bool(obj.api_access_token)
+
+    def get_app_url(self, obj):
+        base_url = (obj.base_url or "").strip().rstrip("/")
+        return f"{base_url}/app" if obj.enabled and base_url else ""
+
+    def validate_base_url(self, value):
+        return str(value or "").strip().rstrip("/")
 
 
 class PaymentSerializer(serializers.ModelSerializer):

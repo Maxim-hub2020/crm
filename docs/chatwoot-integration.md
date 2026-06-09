@@ -31,11 +31,12 @@ Chatwoot is a Rails application with its own PostgreSQL database, Redis and Side
 
 - Added `/chats` route.
 - Added `Чаты` item to the CRM menu.
-- Added frontend build variable `VITE_CHATWOOT_URL`.
+- Added backend settings endpoint `/api/chat-settings/`.
+- Added `Система -> Чаты` settings card for admins.
 - Added optional `docker-compose.chatwoot.yml` for TimeWeb self-hosting.
 - Added `.env.chatwoot.example`.
 
-If `VITE_CHATWOOT_URL` is empty, the module shows setup instructions. If it is set, the module opens `VITE_CHATWOOT_URL/app` inside the CRM page and also provides a button to open Chatwoot in a new tab.
+If chat settings are empty, the module shows setup instructions. If an admin enables Chatwoot and saves a base URL, the module opens `<base_url>/app` inside the CRM page and also provides a button to open Chatwoot in a new tab.
 
 If Chatwoot blocks iframe embedding in a browser, use the button first. The next integration step is to build a native CRM inbox UI over the Chatwoot REST API/webhooks.
 
@@ -95,13 +96,18 @@ docker compose -p crm-chatwoot --env-file .env.chatwoot -f docker-compose.chatwo
 docker compose -p crm --env-file .env -f docker-compose.prod.yml up -d --force-recreate caddy
 ```
 
-7. Add Chatwoot URL to CRM `.env`:
+7. Add Chatwoot URL in CRM settings:
 
-```env
-VITE_CHATWOOT_URL=https://chats.cehcrm.ru
+Open `Система -> Чаты`, enable the module and set:
+
+```text
+Chatwoot URL: https://chats.cehcrm.ru
+Inbox name: Основные чаты
+Account ID: <optional Chatwoot account id>
+API access token: <optional token for future webhooks/API sync>
 ```
 
-8. Redeploy CRM or rerun production compose build so the frontend receives the new value.
+No frontend rebuild is needed after changing this URL because the CRM reads it from backend settings.
 
 ## Messenger connection order
 
@@ -162,4 +168,5 @@ After webhook sync, include latest client messages in the CRM memory snapshot so
 - Do not store Chatwoot data inside the CRM database in the first stage.
 - Keep Chatwoot backups separate from CRM backups.
 - Use a separate subdomain for Chatwoot.
-- Keep `VITE_CHATWOOT_URL` empty until Chatwoot is reachable over HTTPS.
+- Keep the CRM chat settings disabled until Chatwoot is reachable over HTTPS.
+- For SaaS mode with several independent companies, add a workspace/tenant model and attach users, clients, projects, finances and chat settings to that workspace. The current setting is one CRM workspace/inbox per deployment.

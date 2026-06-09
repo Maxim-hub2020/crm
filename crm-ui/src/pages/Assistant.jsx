@@ -784,6 +784,18 @@ export default function Assistant() {
       return;
     }
 
+    if (event.type === "assistant_audio" && event.audio_base64) {
+      clearLiveResponseWatchdogTimer();
+      pendingRef.current = false;
+      setPending(false);
+      latestAudioRef.current = {
+        audioBase64: event.audio_base64,
+        audioMimeType: event.audio_mime_type || "audio/mpeg",
+      };
+      void playGeminiAudio(event.audio_base64, event.audio_mime_type || "audio/mpeg");
+      return;
+    }
+
     if (event.type === "interrupted") {
       stopLivePlayback();
       return;

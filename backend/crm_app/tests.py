@@ -12,7 +12,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from .ai_assistant import CRMAssistantService, GeminiClient, GeminiRequestError, humanize_gemini_error
 from .live_assistant import AssistantLiveConsumer, _build_low_latency_system_instruction, _build_reference_cache, _has_live_assistant_access
-from .models import Account, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectStatus, SubscriptionInvoice, Task, User
+from .models import Account, ChatIntegrationSettings, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectStatus, SubscriptionInvoice, Task, User
 from .subscription import activate_subscription_invoice, ensure_subscription_defaults, issue_subscription_invoice
 
 
@@ -320,6 +320,46 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
         project.refresh_from_db()
         self.assertEqual(project.client_name, "Updated Client")
         self.assertEqual(project.object_address, "Object address")
+
+
+class TestChatSettingsApi(AuthenticatedApiMixin, APITestCase):
+    def setUp(self):
+        self.activate_subscription()
+        self.admin = self.create_user("admin.user", role=User.Role.ADMIN)
+        self.manager = self.create_user("manager.user")
+
+    def test_admin_can_update_chat_settings_without_exposing_token(self):
+        api_client = self.auth_client_for(self.admin)
+
+        response = api_client.patch(
+            "/api/chat-settings/",
+            {
+                "enabled": True,
+                "base_url": "https://chats.cehcrm.ru/",
+                "inbox_name": "Основные чаты",
+                "account_id": "1",
+                "api_access_token": "secret-token",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["base_url"], "https://chats.cehcrm.ru")
+        self.assertEqual(response.data["app_url"], "https://chats.cehcrm.ru/app")
+        self.assertTrue(response.data["has_api_access_token"])
+        self.assertNotIn("api_access_token", response.data)
+        self.assertEqual(ChatIntegrationSettings.objects.get(pk=1).api_access_token, "secret-token")
+
+    def test_manager_can_read_but_not_update_chat_settings(self):
+        ChatIntegrationSettings.objects.create(enabled=True, base_url="https://chats.cehcrm.ru")
+        api_client = self.auth_client_for(self.manager)
+
+        read_response = api_client.get("/api/chat-settings/")
+        write_response = api_client.patch("/api/chat-settings/", {"enabled": False}, format="json")
+
+        self.assertEqual(read_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(read_response.data["app_url"], "https://chats.cehcrm.ru/app")
+        self.assertEqual(write_response.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
@@ -1356,6 +1396,43 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
 
         self.assertIn("last_project_id=42", consumer.live_context[-1]["text"])
         self.assertIn("last_project_title=Зеркало в ванную", consumer.live_context[-1]["text"])
+
+    def test_live_text_only_turn_sends_tts_fallback_audio(self):
+        class FakeOutputTranscription:
+            text = "Готово, создал задачу."
+
+        class FakeServerContent:
+            model_turn = None
+            input_transcription = None
+            output_transcription = FakeOutputTranscription()
+            interrupted = False
+            turn_complete = True
+
+        async def fake_generate_speech_event(_user, text):
+            return {
+                "type": "assistant_audio",
+                "audio_base64": "bXAz",
+                "audio_mime_type": "audio/mpeg",
+                "text": text,
+            }
+
+        consumer = AssistantLiveConsumer()
+        consumer.user = self.user
+        consumer.turn_metrics = consumer._new_turn_metrics()
+        sent_events = []
+
+        async def fake_send(bytes_data=None, text_data=None):
+            if text_data:
+                sent_events.append(json.loads(text_data))
+
+        consumer.send = fake_send
+
+        with patch("crm_app.live_assistant._generate_speech_event", new=fake_generate_speech_event):
+            async_to_sync(consumer._handle_server_content)(FakeServerContent())
+
+        event_types = [event["type"] for event in sent_events]
+        self.assertIn("assistant_audio", event_types)
+        self.assertLess(event_types.index("assistant_audio"), event_types.index("turn_complete"))
 
     def test_live_tool_declarations_are_limited_to_low_latency_functions(self):
         service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
