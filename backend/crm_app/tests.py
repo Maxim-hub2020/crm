@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+from decimal import Decimal
 from unittest.mock import patch
 from asgiref.sync import async_to_sync
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -1345,6 +1346,77 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
                 self.assertIsNotNone(result)
                 self.assertEqual(result["intent"], expected_intent)
                 self.assertTrue(result["needs_clarification"])
+
+    def test_project_title_hint_clarifies_only_missing_client(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._fast_mutation_clarification("создай проект зеркало в ванную")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["intent"], "clarify_create_project_fast")
+        self.assertEqual(result["data"]["project_title"], "зеркало в ванную")
+        self.assertIn("Проект назову", result["reply"])
+        self.assertIn("Кто клиент", result["reply"])
+        self.assertNotIn("Как назвать проект", result["reply"])
+        self.assertIn("бюджет", result["reply"].lower())
+
+    def test_create_project_title_only_asks_for_client_not_title(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._execute_tool("create_project", {"title": "Зеркало в ванную"})
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["needs_clarification"])
+        self.assertIn("Зеркало в ванную", result["summary"])
+        self.assertIn("Кто клиент", result["summary"])
+        self.assertNotIn("Как назвать проект", result["summary"])
+
+    def test_create_project_asks_optional_details_before_creation(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._execute_tool(
+            "create_project",
+            {"title": "Зеркало в ванную", "client_name": "Иван"},
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["needs_clarification"])
+        self.assertIn("бюджет", result["summary"].lower())
+        self.assertIn("адрес", result["summary"].lower())
+        self.assertFalse(Project.objects.filter(title="Зеркало в ванную", client_name="Иван").exists())
+
+    def test_create_project_can_skip_optional_details(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._execute_tool(
+            "create_project",
+            {
+                "title": "Зеркало в ванную",
+                "client_name": "Иван",
+                "skip_optional_details": True,
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        created_project = Project.objects.get(title="Зеркало в ванную", client_name="Иван")
+        self.assertIsNone(created_project.total_amount)
+        self.assertEqual(created_project.object_address, None)
+
+    def test_create_project_with_budget_does_not_ask_optional_details(self):
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+
+        result = service._execute_tool(
+            "create_project",
+            {
+                "title": "Зеркало в ванную",
+                "client_name": "Иван",
+                "total_amount": 120000,
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        created_project = Project.objects.get(title="Зеркало в ванную", client_name="Иван")
+        self.assertEqual(created_project.total_amount, Decimal("120000"))
 
     def test_synonym_commands_enable_tool_calling(self):
         service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)

@@ -998,6 +998,46 @@ class CRMAssistantService:
             "needs_clarification": needs_clarification,
         }
 
+    def _extract_project_title_hint(self, message):
+        raw_message = str(message or "").strip()
+        if not raw_message:
+            return ""
+
+        action_pattern = r"(?:создай|создать|создадим|добавь|добавить|заведи|оформи|запусти|сделай)"
+        project_pattern = r"(?:проект|сделку|сделка|заказ|заявку|заявка|объект)"
+        match = re.search(rf"\b{action_pattern}\s+{project_pattern}\s+(.+)$", raw_message, flags=re.IGNORECASE)
+        if not match:
+            return ""
+
+        title = re.split(
+            r"\b(?:для клиента|клиент|заказчик|телефон|номер|бюджет|сумма|адрес|статус|этап)\b",
+            match.group(1),
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        title = title.strip(" .,!?:;\"'«»")
+        if not title or normalize_text(title) in {"и", "давай", "новый", "новую"}:
+            return ""
+        return truncate_text(title, limit=80)
+
+    @staticmethod
+    def _project_optional_details_present(arguments):
+        optional_fields = [
+            "object_address",
+            "description",
+            "total_amount",
+            "status_name",
+            "categories",
+            "manager_name",
+        ]
+        return any(arguments.get(field) not in (None, "") for field in optional_fields)
+
+    @staticmethod
+    def _skip_project_optional_details(arguments):
+        return is_truthy(arguments.get("skip_optional_details")) or is_truthy(
+            arguments.get("optional_details_confirmed")
+        )
+
     def _fast_mutation_clarification(self, message):
         text = normalize_text(message)
         action_tool_names = self._action_tool_names()
@@ -1017,6 +1057,22 @@ class CRMAssistantService:
         status_terms = self._command_markers(["create_project_status", "update_project_status", "delete_project_status"], key="objects")
         user_terms = self._command_markers(["create_user", "update_user"], key="objects")
         long_operation_terms = self._command_markers(["enqueue_long_operation"], key="objects")
+
+        project_title_hint = self._extract_project_title_hint(message)
+        has_client_hint = bool(re.search(r"\b(клиент|заказчик|телефон|номер)\b", text)) or bool(
+            re.search(r"(?:\+?\d[\d\s().-]{5,})", text)
+        )
+        if project_title_hint and self._matches_any(text, project_terms) and not has_client_hint:
+            return self._fast_response(
+                (
+                    f"Проект назову «{project_title_hint}». Кто клиент? "
+                    "Если хотите, сразу назовите бюджет, адрес или статус. "
+                    "Если не нужно, скажите: без бюджета и адреса."
+                ),
+                "clarify_create_project_fast",
+                {"command_kind": "project", "project_title": project_title_hint},
+                needs_clarification=True,
+            )
 
         if self._matches_any(text, finance_terms) and (not has_amount_hint or (word_count <= 4 and not has_target_hint)):
             return self._fast_response(
@@ -1391,6 +1447,9 @@ class CRMAssistantService:
             "Финансовая операция — это платёж по проекту; для создания операции используй create_financial_operation или create_payment. "
             "Фразы-синонимы вроде «создай операцию», «добавь финансовую операцию», «внеси расход», «добавь доход», «создай проект», «добавь проект», «заведи клиента», «поставь задачу» понимай как команды CRM. "
             "Если команда создания неполная, не говори «запись не создана» и не называй это ошибкой: задай один короткий наводящий вопрос. "
+            "При создании проекта не спрашивай повторно уже названное название проекта. Если название есть, а клиента нет, спроси только клиента и предложи сразу назвать бюджет, адрес или статус. "
+            "Если название и клиент есть, но нет бюджета, адреса и статуса, перед созданием один раз спроси: указать бюджет, адрес или статус, либо создать без них. "
+            "Если пользователь отвечает «нет», «не надо», «без бюджета», «без адреса» или «создавай так», вызывай create_project/create_deal со skip_optional_details=true и не подставляй выдуманные optional-данные. "
             "Для финансовой операции уточняй проект, сумму, доход или расход, а затем категорию и счёт, если они нужны. "
             "Если пользователь просит проанализировать проект и сам создать по нему задачи, используй create_project_tasks_from_analysis: выбери понятные рабочие задачи по статусу, описанию, адресу, сумме, комментариям и финансам проекта. "
             "Для общих справочных вопросов используй кэш-снимок CRM ниже и не вызывай функции без необходимости. "
@@ -1500,6 +1559,10 @@ class CRMAssistantService:
                         "categories": {"type": "string"},
                         "works_with_contract": {"type": "boolean"},
                         "manager_name": {"type": "string", "description": "Имя или логин менеджера, только для администратора."},
+                        "skip_optional_details": {
+                            "type": "boolean",
+                            "description": "Передать true, если пользователь сказал создать проект без бюджета, адреса и дополнительных полей.",
+                        },
                     },
                     "required": ["client_name"],
                 },
@@ -1813,6 +1876,7 @@ class CRMAssistantService:
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "title": {"type": "string", "description": "Наименование проекта."},
                         "client_name": {"type": "string"},
                         "client_phone": {"type": "string"},
                         "client_email": {"type": "string"},
@@ -1820,7 +1884,6 @@ class CRMAssistantService:
                         "works_with_contract": {"type": "boolean"},
                         "comment": {"type": "string"},
                     },
-                    "required": ["client_name"],
                 },
             },
             {
@@ -1850,6 +1913,10 @@ class CRMAssistantService:
                         "total_amount": {"type": "number"},
                         "status_name": {"type": "string"},
                         "categories": {"type": "string"},
+                        "skip_optional_details": {
+                            "type": "boolean",
+                            "description": "true, если пользователь подтвердил создание без бюджета, адреса и дополнительных полей.",
+                        },
                     },
                 },
             },
@@ -1976,6 +2043,10 @@ class CRMAssistantService:
             normalized["title"] = normalized.get("deal_name")
         if "address" in normalized and "object_address" not in normalized:
             normalized["object_address"] = normalized.get("address")
+        if "create_without_optional_details" in normalized and "skip_optional_details" not in normalized:
+            normalized["skip_optional_details"] = normalized.get("create_without_optional_details")
+        if "without_optional_details" in normalized and "skip_optional_details" not in normalized:
+            normalized["skip_optional_details"] = normalized.get("without_optional_details")
 
         aliases = {
             "find_client": "list_clients",
@@ -2942,9 +3013,28 @@ class CRMAssistantService:
 
     def _tool_create_project(self, arguments):
         client_name = str(arguments.get("client_name") or "").strip()
+        project_title = str(arguments.get("title") or "").strip()
         if not client_name:
-            return self._clarification("Чтобы создать проект, мне нужно имя клиента или название проекта.", [])
-        project_title = str(arguments.get("title") or "").strip() or client_name
+            if project_title:
+                return self._clarification(
+                    (
+                        f"Проект назову «{project_title}». Кто клиент? "
+                        "Если хотите, сразу назовите бюджет, адрес или статус. "
+                        "Если не нужно, скажите: без бюджета и адреса."
+                    ),
+                    [],
+                )
+            return self._clarification("Как назвать проект и кто клиент?", [])
+        project_title = project_title or client_name
+
+        if not self._project_optional_details_present(arguments) and not self._skip_project_optional_details(arguments):
+            return self._clarification(
+                (
+                    f"Проект «{project_title}» для клиента «{client_name}». "
+                    "Указать бюджет, адрес или статус? Если не нужно, скажите: создать без бюджета и адреса."
+                ),
+                [],
+            )
 
         manager = self.user
         if self.user.is_admin() and arguments.get("manager_name"):
