@@ -673,6 +673,35 @@ export default function Assistant() {
     return bufferRef.current;
   }
 
+  function appendHiddenLiveContext(text) {
+    const cleanText = String(text || "").trim();
+    if (!cleanText) return;
+    const currentContext = activeConversationRef.current || [];
+    const lastContext = currentContext[currentContext.length - 1];
+    if (lastContext?.role === "assistant" && lastContext.content === cleanText) return;
+
+    const nextContext = [
+      ...currentContext,
+      { role: "assistant", content: cleanText },
+    ].slice(-MAX_CONTEXT_MESSAGES);
+
+    activeConversationRef.current = nextContext;
+    writeStoredArray(window.sessionStorage, SESSION_STORAGE_KEY, nextContext);
+  }
+
+  function getToolContextText(event) {
+    if (event.context_text) return event.context_text;
+    if (!event.last_project_id) return "";
+    const parts = [`CRM tool result: ${event.name || "tool_call"}`, `last_project_id=${event.last_project_id}`];
+    if (event.last_project_title) {
+      parts.push(`last_project_title=${event.last_project_title}`);
+    }
+    if (event.reply) {
+      parts.push(`reply=${event.reply}`);
+    }
+    return parts.join("; ");
+  }
+
   function finalizeLiveTurn() {
     const userText = liveHeardBufferRef.current.trim();
     const assistantText = liveReplyBufferRef.current.trim() || liveToolReplyFallbackRef.current.trim();
@@ -777,8 +806,12 @@ export default function Assistant() {
       return;
     }
 
-    if (event.type === "tool_call" && event.reply) {
+    if (event.type === "tool_call") {
       clearLiveResponseWatchdogTimer();
+      appendHiddenLiveContext(getToolContextText(event));
+      if (!event.reply) {
+        return;
+      }
       liveToolReplyFallbackRef.current = event.reply;
       liveLastTurnWasToolReplyRef.current = true;
       pendingRef.current = false;

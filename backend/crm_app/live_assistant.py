@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import os
+import re
 import time
 from urllib.parse import parse_qs
 
@@ -19,6 +20,39 @@ from .tenancy import current_workspace
 logger = logging.getLogger(__name__)
 
 _REFERENCE_CACHE = {}
+_PROJECT_CONTEXT_TOOL_NAMES = {
+    "get_project_details",
+    "update_project",
+    "delete_project",
+    "create_task",
+    "create_project_tasks_from_analysis",
+    "create_payment",
+    "create_financial_operation",
+    "list_project_comments",
+    "add_project_comment",
+    "add_comment",
+    "list_payments",
+}
+_PROJECT_REFERENCE_MARKERS = (
+    "этот проект",
+    "этот же проект",
+    "в этот",
+    "в этот же",
+    "в него",
+    "в нем",
+    "в нём",
+    "к нему",
+    "по нему",
+    "туда",
+    "туда же",
+    "там же",
+    "для него",
+    "этой сделки",
+    "эту сделку",
+    "этой же сделки",
+    "проект который создали",
+    "проект, который создали",
+)
 
 
 def _is_retryable_live_error(exc):
@@ -75,6 +109,45 @@ def _parse_history_param(raw_value):
         if role and text:
             normalized.append({"role": role, "text": text[:500]})
     return normalized[-5:]
+
+
+def _extract_last_project_context(history):
+    context = {}
+    for item in history or []:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or item.get("content") or "").strip()
+        if not text:
+            continue
+        project_id_match = re.search(r"\blast_project_id=(\d+)\b", text)
+        if project_id_match:
+            context["project_id"] = int(project_id_match.group(1))
+        project_title_match = re.search(r"\blast_project_title=([^;]+)", text)
+        if project_title_match:
+            context["project_title"] = project_title_match.group(1).strip()
+    return context
+
+
+def _project_context_from_result(result):
+    result = result or {}
+    project = result.get("project") or {}
+    payment = result.get("payment") or {}
+    task = result.get("task") or {}
+
+    project_id = project.get("project_id") or payment.get("project_id") or task.get("project_id")
+    project_title = (
+        project.get("title")
+        or project.get("client_name")
+        or payment.get("project_name")
+        or task.get("project_title")
+        or ""
+    )
+    if not project_id:
+        return {}
+    return {
+        "project_id": int(project_id),
+        "project_title": str(project_title or "").strip(),
+    }
 
 
 @database_sync_to_async
@@ -271,6 +344,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         self.current_screen = str((query.get("screen") or ["/assistant"])[0] or "/assistant")[:120]
         self.recent_history = _parse_history_param((query.get("history") or [""])[0])
         self.live_context = list(self.recent_history)
+        self.last_project_context = _extract_last_project_context(self.live_context)
         self.user = await _authenticate_websocket_token(token)
 
         if not self.user:
@@ -567,22 +641,49 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         self.live_context.append({"role": role, "text": clean_text[:700]})
         self.live_context = self.live_context[-8:]
 
+    def _last_user_text(self):
+        for item in reversed(self.live_context):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("role") or "").lower() != "user":
+                continue
+            text = str(item.get("text") or item.get("content") or "").strip()
+            if text:
+                return text
+        return ""
+
+    def _with_contextual_project(self, tool_name, arguments):
+        if tool_name not in _PROJECT_CONTEXT_TOOL_NAMES:
+            return arguments
+        if not isinstance(arguments, dict):
+            return {}
+        if arguments.get("project_id"):
+            return arguments
+
+        last_project_id = (self.last_project_context or {}).get("project_id")
+        if not last_project_id:
+            return arguments
+
+        last_user_text = self._last_user_text().lower()
+        project_query_text = str(arguments.get("project_query") or "").strip().lower()
+        marker_source = project_query_text or last_user_text
+        has_context_reference = any(marker in marker_source for marker in _PROJECT_REFERENCE_MARKERS)
+        if not has_context_reference:
+            return arguments
+
+        patched_arguments = dict(arguments)
+        patched_arguments["project_id"] = last_project_id
+        if project_query_text:
+            patched_arguments.pop("project_query", None)
+        return patched_arguments
+
     @staticmethod
     def _tool_context_text(event, reply=""):
         result = event.get("result") or {}
         tool_name = event.get("name") or ""
-        project = result.get("project") or {}
-        payment = result.get("payment") or {}
-        task = result.get("task") or {}
-
-        project_id = project.get("project_id") or payment.get("project_id") or task.get("project_id")
-        project_title = (
-            project.get("title")
-            or project.get("client_name")
-            or payment.get("project_name")
-            or task.get("project_title")
-            or ""
-        )
+        project_context = _project_context_from_result(result)
+        project_id = project_context.get("project_id")
+        project_title = project_context.get("project_title")
         parts = [f"CRM tool result: {tool_name}"]
         if project_id:
             parts.append(f"last_project_id={project_id}")
@@ -652,6 +753,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         if input_transcription and getattr(input_transcription, "text", None):
             if not self.turn_metrics.get("input_transcript_at"):
                 self.turn_metrics["input_transcript_at"] = time.perf_counter()
+            self._append_live_context("user", input_transcription.text)
             await self._send_event({"type": "input_transcript", "text": input_transcription.text})
 
         output_transcription = getattr(server_content, "output_transcription", None)
@@ -678,10 +780,15 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         for function_call in getattr(tool_call, "function_calls", []) or []:
             tool_name = getattr(function_call, "name", "")
             arguments = dict(getattr(function_call, "args", {}) or {})
+            arguments = self._with_contextual_project(tool_name, arguments)
             call_id = getattr(function_call, "id", None)
             tool_started_at = time.perf_counter()
             payload = await _execute_assistant_tool(service, tool_name, arguments)
             self.turn_metrics["crm_api_ms"] += round((time.perf_counter() - tool_started_at) * 1000)
+            project_context = _project_context_from_result(payload["event"].get("result"))
+            if project_context:
+                self.last_project_context = project_context
+            context_text = self._tool_context_text(payload["event"], payload["reply"])
 
             await self._send_event(
                 {
@@ -690,12 +797,15 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                     "arguments": payload["event"]["arguments"],
                     "result": payload["event"]["result"],
                     "reply": payload["reply"],
+                    "context_text": context_text,
+                    "last_project_id": project_context.get("project_id"),
+                    "last_project_title": project_context.get("project_title", ""),
                 }
             )
             if payload["reply"]:
                 has_immediate_reply = True
                 self.pending_voice_fallback_text = payload["reply"]
-            self._append_live_context("assistant", self._tool_context_text(payload["event"], payload["reply"]))
+            self._append_live_context("assistant", context_text)
 
             function_responses.append(
                 types.FunctionResponse(
