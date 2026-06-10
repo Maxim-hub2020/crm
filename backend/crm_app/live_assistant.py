@@ -683,7 +683,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         if arguments.get("project_id"):
             return arguments
 
-        last_project_id = (self.last_project_context or {}).get("project_id")
+        last_project_id = (getattr(self, "last_project_context", {}) or {}).get("project_id")
         if not last_project_id:
             return arguments
 
@@ -850,7 +850,9 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
             if call_id:
                 function_response_payload["id"] = call_id
             if payload["reply"]:
-                function_response_payload["scheduling"] = types.FunctionResponseScheduling.SILENT
+                scheduling = getattr(getattr(types, "FunctionResponseScheduling", None), "SILENT", None)
+                if scheduling is not None:
+                    function_response_payload["scheduling"] = scheduling
 
             function_responses.append(types.FunctionResponse(**function_response_payload))
 

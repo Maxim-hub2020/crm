@@ -15,7 +15,8 @@ const SILENCE_MS = 3000;
 const MIN_RECORDING_MS = 1200;
 const MIN_SPEECH_MS = 220;
 const MAX_UTTERANCE_MS = 30000;
-const LIVE_ASSISTANT_CONFIG_ENABLED = import.meta.env.VITE_ASSISTANT_LIVE === "1";
+const ASSISTANT_TRANSPORT = import.meta.env.VITE_ASSISTANT_TRANSPORT || "stable";
+const LIVE_ASSISTANT_CONFIG_ENABLED = ASSISTANT_TRANSPORT === "live" && import.meta.env.VITE_ASSISTANT_LIVE === "1";
 const LIVE_ASSISTANT_FORCE_IOS = import.meta.env.VITE_ASSISTANT_LIVE_IOS === "1";
 const IOS_DEVICE = isIOSDevice();
 const LIVE_ASSISTANT_ENABLED = LIVE_ASSISTANT_CONFIG_ENABLED && (!IOS_DEVICE || LIVE_ASSISTANT_FORCE_IOS);
@@ -1295,7 +1296,7 @@ export default function Assistant() {
 
     const SpeechRecognitionCtor = getSpeechRecognitionCtor();
     if (!SpeechRecognitionCtor) {
-      setError("В этом браузере нет встроенного распознавания речи. Включите VITE_ASSISTANT_LIVE=1 или используйте Chrome/Яндекс Браузер.");
+      setError("В этом браузере нет встроенного распознавания речи. Разрешите доступ к микрофону или используйте Chrome/Яндекс Браузер.");
       return false;
     }
 

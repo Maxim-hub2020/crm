@@ -463,6 +463,24 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(project.client_name, "Updated Client")
         self.assertEqual(project.object_address, "Object address")
 
+    def test_client_delete_detaches_existing_projects(self):
+        project = Project.objects.create(
+            manager=self.manager,
+            client=self.client_card,
+            title="Kitchen",
+            client_name=self.client_card.name,
+            client_phone=self.client_card.phone,
+        )
+        api_client = self.auth_client_for(self.manager)
+
+        response = api_client.delete(f"/api/clients/{self.client_card.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        project.refresh_from_db()
+        self.assertIsNone(project.client_id)
+        self.assertEqual(project.client_name, "Client One")
+        self.assertEqual(project.client_phone, "+70000000001")
+
 
 class TestChatSettingsApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):

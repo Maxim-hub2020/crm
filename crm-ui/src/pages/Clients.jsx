@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ChevronRight, Edit3, Mail, MapPin, Phone, Plus, Search, Wallet } from "lucide-react";
+import { ChevronRight, Edit3, Mail, MapPin, Phone, Plus, Search, Trash2, Wallet } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-import { createClient, extractApiErrorMessage, fetchClients, fetchPayments, fetchProjects, updateClient } from "../api";
+import { createClient, deleteClient, extractApiErrorMessage, fetchClients, fetchPayments, fetchProjects, updateClient } from "../api";
 import { Badge, Button, Input, Label, Modal } from "../components/ui.jsx";
 
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
@@ -85,6 +85,7 @@ export default function Clients() {
   const [creatingClient, setCreatingClient] = useState(false);
   const [editForm, setEditForm] = useState(createClientEditForm());
   const [savingClient, setSavingClient] = useState(false);
+  const [deletingClient, setDeletingClient] = useState(false);
   const [clientEditMode, setClientEditMode] = useState(false);
 
   useEffect(() => {
@@ -157,7 +158,7 @@ export default function Clients() {
   }
 
   function closeClientCard() {
-    if (savingClient) return;
+    if (savingClient || deletingClient) return;
     setSelectedClientId(null);
     setClientEditMode(false);
   }
@@ -203,6 +204,34 @@ export default function Clients() {
       setError(extractApiErrorMessage(requestError, "Не удалось сохранить клиента."));
     } finally {
       setSavingClient(false);
+    }
+  }
+
+  async function handleDeleteClient() {
+    if (!selectedClient) return;
+    const confirmed = window.confirm(
+      "Удалить клиента? Связанные проекты останутся в CRM, но будут отвязаны от карточки клиента."
+    );
+    if (!confirmed) return;
+
+    setDeletingClient(true);
+    setError("");
+    try {
+      await deleteClient(selectedClient.id);
+      setClientRows((current) => current.filter((row) => row.id !== selectedClient.id));
+      setProjects((current) =>
+        current.map((project) => {
+          const projectClientId = project.client || project.client_info?.id;
+          if (projectClientId !== selectedClient.id) return project;
+          return { ...project, client: null, client_info: null };
+        })
+      );
+      setSelectedClientId(null);
+      setClientEditMode(false);
+    } catch (requestError) {
+      setError(extractApiErrorMessage(requestError, "Не удалось удалить клиента."));
+    } finally {
+      setDeletingClient(false);
     }
   }
 
@@ -313,10 +342,16 @@ export default function Clients() {
                       <Badge>{selectedClient.paymentsCount} операция(й)</Badge>
                       {selectedClient.worksWithContract ? <Badge className="bg-blue-100 text-blue-700">Работает по договору</Badge> : null}
                     </div>
-                    <Button type="button" variant="secondary" onClick={startClientEdit}>
-                      <Edit3 size={16} />
-                      Редактировать
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="secondary" disabled={deletingClient} onClick={startClientEdit}>
+                        <Edit3 size={16} />
+                        Редактировать
+                      </Button>
+                      <Button type="button" variant="danger" disabled={deletingClient} onClick={handleDeleteClient}>
+                        <Trash2 size={16} />
+                        {deletingClient ? "Удаляем..." : "Удалить"}
+                      </Button>
+                    </div>
                   </div>
 
                   <div className="grid gap-3 md:grid-cols-2">

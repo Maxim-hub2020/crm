@@ -97,6 +97,7 @@ DADATA_DEFAULT_CITY=Ростов-на-Дону
 Frontend `.env` values live in `crm-ui/.env`:
 
 ```env
+VITE_ASSISTANT_TRANSPORT=stable
 VITE_ASSISTANT_LIVE=0
 VITE_ASSISTANT_CLIENT_SILENCE_MS=1600
 VITE_ASSISTANT_LIVE_RESPONSE_WATCHDOG_MS=14000
@@ -105,7 +106,7 @@ VITE_ASSISTANT_LIVE_REFRESH_AFTER_TURN=0
 VITE_ASSISTANT_STABLE_MAX_UTTERANCE_MS=30000
 ```
 
-For production, run ASGI, not WSGI. The Docker production entrypoint uses `daphne crm_core.asgi:application`. Gemini Live WebSocket support is still available behind `VITE_ASSISTANT_LIVE=1`, but the default production voice mode is the stable backend voice endpoint.
+For production, run ASGI, not WSGI. The Docker production entrypoint uses `daphne crm_core.asgi:application`. Gemini Live WebSocket support is still available only when both `VITE_ASSISTANT_TRANSPORT=live` and `VITE_ASSISTANT_LIVE=1` are set, but the default production voice mode is the stable backend voice endpoint.
 
 Dadata address suggestions are proxied through Django at `/api/address-suggestions/`, so the Dadata token must stay in backend `.env` as `DADATA_API_KEY`; it is no longer a frontend `VITE_*` key.
 
