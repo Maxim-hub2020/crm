@@ -606,6 +606,7 @@ export default function Projects() {
   const [addressSuggestLoading, setAddressSuggestLoading] = useState(false);
   const [addressSuggestError, setAddressSuggestError] = useState("");
   const selectedAddressValueRef = useRef("");
+  const loadedProjectIdRef = useRef(null);
   const [documentLoading, setDocumentLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [projectClientOpen, setProjectClientOpen] = useState(false);
@@ -869,7 +870,6 @@ export default function Projects() {
     return paymentsByProject.get(activeProjectId) || [];
   }, [activeProjectId, paymentsByProject]);
 
-  const cleanRouteAddress = useMemo(() => cleanAddressForMaps(detailForm.object_address), [detailForm.object_address]);
   const routeUrl = useMemo(
     () => yandexRouteUrl(detailForm.object_address, detailForm.object_lat, detailForm.object_lon),
     [detailForm.object_address, detailForm.object_lat, detailForm.object_lon]
@@ -890,15 +890,20 @@ export default function Projects() {
 
   useEffect(() => {
     if (!activeProject) {
+      loadedProjectIdRef.current = null;
       return;
     }
 
     const nextForm = normalizeProjectForm(activeProject, defaultStatusValue);
-    setDetailForm(nextForm);
-    selectedAddressValueRef.current = nextForm.object_address.trim();
+    const isNewProject = loadedProjectIdRef.current !== activeProject.id;
+    if (isNewProject) {
+      loadedProjectIdRef.current = activeProject.id;
+      setDetailForm(nextForm);
+      selectedAddressValueRef.current = nextForm.object_address.trim();
+      setDetailAutosaveState("idle");
+      setDetailError("");
+    }
     detailSnapshotRef.current = JSON.stringify(buildProjectUpdatePayload(nextForm));
-    setDetailAutosaveState("idle");
-    setDetailError("");
   }, [activeProject, defaultStatusValue]);
 
   useEffect(() => {
@@ -1074,6 +1079,7 @@ export default function Projects() {
     setProjectClientError("");
     setProjectClientForm(createClientEditForm());
     selectedAddressValueRef.current = "";
+    loadedProjectIdRef.current = null;
     detailSnapshotRef.current = "";
     window.clearTimeout(detailAutosaveTimerRef.current);
   }
@@ -2092,13 +2098,14 @@ export default function Projects() {
         open={Boolean(activeProject)}
         title={
           activeProject
-            ? `Карточка проекта — ${projectOrderLabel(activeProject) ? `№${projectOrderLabel(activeProject)} · ` : ""}${projectDisplayName(activeProject)}`
-            : "Карточка проекта"
+            ? `${projectOrderLabel(activeProject) ? `№${projectOrderLabel(activeProject)} · ` : ""}${projectDisplayName(activeProject)}`
+            : ""
         }
         onClose={closeProject}
         widthClassName="max-w-5xl"
         bodyClassName="min-h-0"
         positionClassName="items-start pt-4 sm:pt-6"
+        overlayClassName="bg-slate-950/45 backdrop-blur-2xl backdrop-saturate-50"
       >
         {activeProject && (
           <div className="space-y-4">
@@ -2150,6 +2157,7 @@ export default function Projects() {
                   <Label>Адрес объекта</Label>
                   <div className="relative">
                     <Input
+                      className="pr-14"
                       value={detailForm.object_address}
                       onClick={() => setAddressDetailsOpen(true)}
                       onFocus={() => setAddressDetailsOpen(true)}
@@ -2164,12 +2172,21 @@ export default function Projects() {
                       }}
                       placeholder={hasDadataAddressSuggestions() ? "Начните вводить адрес" : "Адрес объекта"}
                     />
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-white"
+                      disabled={!routeUrl}
+                      onClick={() => routeUrl && window.open(routeUrl, "_blank", "noopener,noreferrer")}
+                      title="Построить маршрут"
+                      aria-label="Построить маршрут"
+                    >
+                      <MapPin size={18} />
+                    </button>
                   </div>
                   {addressDetailsOpen && (
                     <div className="mt-3 space-y-3 rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
-                      {hasDadataAddressSuggestions() ? (
+                      {hasDadataAddressSuggestions() && (addressSuggestLoading || addressSuggestions.length > 0 || addressSuggestError) ? (
                         <div className="space-y-2">
-                          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Подсказки Dadata</div>
                           {addressSuggestLoading ? (
                             <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-400">
                               Ищем адрес...
@@ -2187,18 +2204,10 @@ export default function Projects() {
                                 </button>
                               ))}
                             </div>
-                          ) : (
-                            <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-400">
-                              Введите минимум 3 символа адреса.
-                            </div>
-                          )}
+                          ) : null}
                           {addressSuggestError && <div className="text-xs font-semibold text-red-500">{addressSuggestError}</div>}
                         </div>
-                      ) : (
-                        <div className="rounded-2xl bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-700">
-                          Для подсказок Dadata добавьте `DADATA_API_KEY` в backend `.env`.
-                        </div>
-                      )}
+                      ) : null}
 
                       <div className="grid gap-3 sm:grid-cols-3">
                         <div className="space-y-2">
@@ -2227,25 +2236,6 @@ export default function Projects() {
                         </div>
                       </div>
 
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="text-xs font-semibold text-slate-400">
-                          {detailForm.object_lat && detailForm.object_lon
-                            ? "Маршрут будет построен по координатам Dadata."
-                            : cleanRouteAddress
-                              ? `Маршрут будет построен до: ${cleanRouteAddress}`
-                              : "Укажите адрес, чтобы построить маршрут."}
-                        </div>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          className="shrink-0"
-                          disabled={!routeUrl}
-                          onClick={() => window.open(routeUrl, "_blank", "noopener,noreferrer")}
-                        >
-                          <MapPin size={16} />
-                          Построить маршрут
-                        </Button>
-                      </div>
                     </div>
                   )}
                 </div>

@@ -71,11 +71,12 @@ export function Modal({
   widthClassName = "max-w-3xl",
   bodyClassName = "",
   positionClassName = "items-center",
+  overlayClassName = "bg-gray-900/40 backdrop-blur-md",
 }) {
   if (!open) return null;
 
   return (
-    <div className={`fixed inset-0 z-50 flex justify-center overflow-y-auto bg-gray-900/40 p-2 backdrop-blur-md sm:p-4 ${positionClassName}`}>
+    <div className={`fixed inset-0 z-50 flex justify-center overflow-y-auto p-2 sm:p-4 ${overlayClassName} ${positionClassName}`}>
       <div className="absolute inset-0" onClick={onClose} />
       <div
         className={`relative z-10 flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-3xl bg-white shadow-2xl sm:rounded-[32px] ${widthClassName}`}
