@@ -1191,7 +1191,6 @@ class TestAssistantApi(AuthenticatedApiMixin, APITestCase):
                     "payment_type": "advance",
                     "payment_method": "transfer",
                     "comment": "Аванс по проекту",
-                    "paid_at": "2026-05-26T10:00:00",
                 },
             ),
             self.make_text_response("Добавил финансовую операцию 25 000 ₽ по проекту."),

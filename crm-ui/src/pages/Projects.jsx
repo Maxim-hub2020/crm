@@ -2,6 +2,7 @@ import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "r
 import {
   Calendar,
   Check,
+  Copy,
   FileText,
   LayoutGrid,
   List,
@@ -63,21 +64,10 @@ const DEFAULT_STATUS_OPTIONS = [
   { value: "canceled", label: "Отменено", short: "Стоп", color: "rose", is_default: false },
 ];
 
-const PAYMENT_METHOD_OPTIONS = [
-  { value: "transfer", label: "Перевод" },
-  { value: "cash", label: "Наличные" },
-  { value: "card", label: "Карта" },
-  { value: "other", label: "Другое" },
-];
-
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 0,
 });
-
-function defaultPaymentType(categoryKind) {
-  return categoryKind === "expense" ? "correction" : "advance";
-}
 
 function normalizeStatusOption(status) {
   return {
@@ -115,11 +105,9 @@ function createEmptyPaymentForm() {
     category_kind: "",
     category: "",
     account: "",
-    type: "",
     amount: "",
-    method: "transfer",
     comment: "",
-    paid_at: "",
+    paid_at: todayDateValue(),
   };
 }
 
@@ -278,12 +266,30 @@ function formatDate(value) {
   return date.toLocaleDateString("ru-RU");
 }
 
-function toDateTimeLocalValue(value) {
-  if (!value) return "";
+function todayDateValue() {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
+}
+
+function toDateInputValue(value) {
+  if (!value) return todayDateValue();
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
-  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  return offsetDate.toISOString().slice(0, 16);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10) || todayDateValue();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
+}
+
+function toPaymentDateTime(value) {
+  return value ? `${value}T12:00:00` : undefined;
+}
+
+function isPastDateValue(value) {
+  return Boolean(value && value < todayDateValue());
+}
+
+function isFuturePayment(payment) {
+  return toDateInputValue(payment?.paid_at) > todayDateValue();
 }
 
 function projectSearchText(project, statusMap) {
@@ -369,11 +375,16 @@ function projectAmount(project, paymentsByProject) {
   return rows.reduce((sum, payment) => sum + paymentSignedAmount(payment), 0);
 }
 
-function paymentSignedAmount(payment) {
+function paymentDisplaySignedAmount(payment) {
   const amount = Number(payment?.amount || 0);
   if (payment?.category_type === "expense") return -amount;
   if (payment?.category_type === "income") return amount;
   return payment?.type === "refund" || payment?.type === "correction" ? -amount : amount;
+}
+
+function paymentSignedAmount(payment) {
+  if (isFuturePayment(payment)) return 0;
+  return paymentDisplaySignedAmount(payment);
 }
 
 function paymentCategoryLabel(payment) {
@@ -660,10 +671,11 @@ export default function Projects() {
           value: String(category.id),
           label: category.name,
           type: category.type,
-        }))
-        .sort((left, right) => `${left.type}-${left.label}`.localeCompare(`${right.type}-${right.label}`)),
+        })),
     [financeCategories]
   );
+  const hasMultipleAccounts = accounts.length > 1;
+  const singleAccountId = accounts.length === 1 ? String(accounts[0].id) : "";
 
   const paymentCategoryOptions = useMemo(
     () => financeCategoryOptions.filter((category) => category.type === paymentForm.category_kind),
@@ -1190,16 +1202,15 @@ export default function Projects() {
       ...prev,
       category: categoryId,
       category_kind: category?.type || prev.category_kind,
-      type: category?.type ? defaultPaymentType(category.type) : prev.type,
     }));
   }
 
   function handlePaymentCategoryKindChange(categoryKind) {
+    const firstCategory = financeCategoryOptions.find((category) => category.type === categoryKind);
     setPaymentForm((prev) => ({
       ...prev,
       category_kind: categoryKind,
-      category: "",
-      type: categoryKind ? defaultPaymentType(categoryKind) : "",
+      category: firstCategory ? firstCategory.value : "",
     }));
   }
 
@@ -1307,16 +1318,30 @@ export default function Projects() {
         setPaymentError("Выберите тип операции: доход или расход.");
         return;
       }
+      if (!paymentForm.category) {
+        setPaymentError("Выберите категорию операции.");
+        return;
+      }
+      if (!paymentForm.paid_at) {
+        setPaymentError("Выберите дату операции.");
+        return;
+      }
+      if (isPastDateValue(paymentForm.paid_at)) {
+        setPaymentError("Нельзя поставить операцию задним числом.");
+        return;
+      }
+      if (hasMultipleAccounts && !paymentForm.account) {
+        setPaymentError("Выберите счет для операции.");
+        return;
+      }
 
       const payload = {
         project: activeProject.id,
-        category: paymentForm.category || null,
-        account: paymentForm.account || null,
-        type: paymentForm.type || defaultPaymentType(paymentForm.category_kind),
+        category: paymentForm.category,
+        account: hasMultipleAccounts ? paymentForm.account : singleAccountId || null,
         amount: paymentForm.amount.trim(),
-        method: paymentForm.method,
         comment: paymentForm.comment.trim(),
-        paid_at: paymentForm.paid_at || undefined,
+        paid_at: toPaymentDateTime(paymentForm.paid_at),
       };
 
       if (editingPaymentId) {
@@ -1344,11 +1369,9 @@ export default function Projects() {
       category_kind: categoryKind,
       category: payment.category ? String(payment.category) : "",
       account: payment.account ? String(payment.account) : "",
-      type: payment.type || defaultPaymentType(categoryKind),
       amount: payment.amount ? String(payment.amount) : "",
-      method: payment.method || "transfer",
       comment: payment.comment || "",
-      paid_at: toDateTimeLocalValue(payment.paid_at),
+      paid_at: toDateInputValue(payment.paid_at),
     });
   }
 
@@ -2480,7 +2503,7 @@ export default function Projects() {
                     <form className="space-y-4" onSubmit={submitPayment}>
                       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                         <div className="space-y-2">
-                          <Label>Тип операции</Label>
+                          <Label>Доход / расход</Label>
                           <Select value={paymentForm.category_kind} onChange={(event) => handlePaymentCategoryKindChange(event.target.value)}>
                             <option value="">Выберите тип</option>
                             <option value="income">Доход</option>
@@ -2491,7 +2514,7 @@ export default function Projects() {
                           <div className="space-y-2">
                             <Label>{paymentForm.category_kind === "expense" ? "Категория расхода" : "Категория дохода"}</Label>
                             <Select value={paymentForm.category} onChange={(event) => handlePaymentCategoryChange(event.target.value)}>
-                              <option value="">Без категории</option>
+                              <option value="">Выберите категорию</option>
                               {paymentCategoryOptions.map((category) => (
                                 <option key={category.value} value={category.value}>
                                   {category.label}
@@ -2508,37 +2531,27 @@ export default function Projects() {
                             placeholder="25000"
                           />
                         </div>
-                        <div className="space-y-2">
-                          <Label>Способ оплаты</Label>
-                          <Select
-                            value={paymentForm.method}
-                            onChange={(event) => setPaymentForm((prev) => ({ ...prev, method: event.target.value }))}
-                          >
-                            {PAYMENT_METHOD_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </Select>
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Счет</Label>
-                          <Select
-                            value={paymentForm.account}
-                            onChange={(event) => setPaymentForm((prev) => ({ ...prev, account: event.target.value }))}
-                          >
-                            <option value="">Без счета</option>
-                            {accounts.map((account) => (
-                              <option key={account.id} value={account.id}>
-                                {account.name}
-                              </option>
-                            ))}
-                          </Select>
-                        </div>
+                        {hasMultipleAccounts ? (
+                          <div className="space-y-2">
+                            <Label>Счет</Label>
+                            <Select
+                              value={paymentForm.account}
+                              onChange={(event) => setPaymentForm((prev) => ({ ...prev, account: event.target.value }))}
+                            >
+                              <option value="">Выберите счет</option>
+                              {accounts.map((account) => (
+                                <option key={account.id} value={account.id}>
+                                  {account.name}
+                                </option>
+                              ))}
+                            </Select>
+                          </div>
+                        ) : null}
                         <div className="space-y-2">
                           <Label>Дата</Label>
                           <Input
-                            type="datetime-local"
+                            type="date"
+                            min={todayDateValue()}
                             value={paymentForm.paid_at}
                             onChange={(event) => setPaymentForm((prev) => ({ ...prev, paid_at: event.target.value }))}
                           />
@@ -2587,27 +2600,26 @@ export default function Projects() {
                               <th className="pb-3 font-black uppercase tracking-[0.18em]">Дата</th>
                               <th className="pb-3 font-black uppercase tracking-[0.18em]">Тип</th>
                               <th className="pb-3 font-black uppercase tracking-[0.18em]">Сумма</th>
-                              <th className="pb-3 font-black uppercase tracking-[0.18em]">Способ</th>
+                              {hasMultipleAccounts ? <th className="pb-3 font-black uppercase tracking-[0.18em]">Счет</th> : null}
                               <th className="pb-3 font-black uppercase tracking-[0.18em]">Комментарий</th>
                               <th className="pb-3 text-right font-black uppercase tracking-[0.18em]">Действие</th>
                             </tr>
                           </thead>
                           <tbody>
                             {activeProjectPayments.map((payment) => {
-                              const signedAmount = paymentSignedAmount(payment);
+                              const signedAmount = paymentDisplaySignedAmount(payment);
+                              const futurePayment = isFuturePayment(payment);
                               return (
                                 <tr key={payment.id} className="border-t border-slate-100">
                                   <td className="py-4 text-slate-500">{formatDateTime(payment.paid_at)}</td>
                                   <td className="py-4">
                                     <Badge className={paymentCategoryBadgeClass(payment)}>{paymentCategoryLabel(payment)}</Badge>
+                                    {futurePayment ? <Badge className="ml-2 bg-blue-50 text-blue-600">Запланировано</Badge> : null}
                                   </td>
                                   <td className={`py-4 font-semibold ${signedAmount < 0 ? "text-red-600" : "text-emerald-600"}`}>
                                     {signedAmount < 0 ? "−" : "+"} {formatMoney(Math.abs(signedAmount))} ₽
                                   </td>
-                                  <td className="py-4 text-slate-500">
-                                    {labelFor(PAYMENT_METHOD_OPTIONS, payment.method)}
-                                    {payment.account_name ? ` · ${payment.account_name}` : ""}
-                                  </td>
+                                  {hasMultipleAccounts ? <td className="py-4 text-slate-500">{payment.account_name || "—"}</td> : null}
                                   <td className="py-4 text-slate-500">{payment.comment || "—"}</td>
                                   <td className="py-4 text-right">
                                     <div className="flex justify-end gap-2">
@@ -2750,7 +2762,18 @@ export default function Projects() {
 
           {confirmState?.kind === "project" ? (
             <div className="space-y-2">
-              <Label>Для удаления введите слово «удалить»</Label>
+              <Label>Для удаления скопируйте и введите слово</Label>
+              <div className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-600 ring-1 ring-slate-200">
+                <code className="select-all rounded-xl bg-white px-3 py-1.5 font-bold text-slate-900 ring-1 ring-slate-200">удалить</code>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-bold text-blue-600 ring-1 ring-blue-100 transition hover:bg-blue-50"
+                  onClick={() => navigator.clipboard?.writeText("удалить").catch(() => {})}
+                >
+                  <Copy size={14} />
+                  Скопировать
+                </button>
+              </div>
               <Input
                 value={confirmText}
                 onChange={(event) => {

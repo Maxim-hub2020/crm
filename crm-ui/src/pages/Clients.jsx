@@ -14,7 +14,26 @@ function formatMoney(value) {
   return moneyFormatter.format(Number(value || 0));
 }
 
+function todayDateValue() {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
+}
+
+function toDateInputValue(value) {
+  if (!value) return todayDateValue();
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10) || todayDateValue();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
+}
+
+function isFuturePayment(payment) {
+  return toDateInputValue(payment?.paid_at) > todayDateValue();
+}
+
 function paymentSignedAmount(payment) {
+  if (isFuturePayment(payment)) return 0;
   const amount = Number(payment?.amount || 0);
   if (payment?.category_type === "expense") return -amount;
   if (payment?.category_type === "income") return amount;

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.utils import timezone
 from django.utils.text import slugify
 
 from .models import (
@@ -417,6 +418,34 @@ class PaymentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Счет относится к другой компании.")
         return account
 
+    def validate(self, attrs):
+        request = self.context.get("request")
+        workspace = current_workspace(getattr(request, "user", None))
+
+        category = attrs.get("category", getattr(self.instance, "category", None))
+        if not category:
+            raise serializers.ValidationError({"category": "Выберите категорию операции."})
+
+        attrs["type"] = Payment.Type.CORRECTION if category.type == FinanceCategory.Type.EXPENSE else Payment.Type.ADVANCE
+        attrs["method"] = attrs.get("method") or getattr(self.instance, "method", Payment.Method.TRANSFER) or Payment.Method.TRANSFER
+
+        paid_at = attrs.get("paid_at")
+        if paid_at is None and self.instance is None:
+            attrs["paid_at"] = timezone.now()
+            paid_at = attrs["paid_at"]
+        if paid_at is not None and timezone.localtime(paid_at).date() < timezone.localdate():
+            raise serializers.ValidationError({"paid_at": "Нельзя ставить операцию задним числом."})
+
+        account = attrs.get("account", getattr(self.instance, "account", None))
+        account_queryset = Account.objects.filter(workspace=workspace)
+        account_count = account_queryset.count()
+        if account_count == 1 and not account:
+            attrs["account"] = account_queryset.first()
+        elif account_count > 1 and not account:
+            raise serializers.ValidationError({"account": "Выберите счет для операции."})
+
+        return attrs
+
     class Meta:
         model = Payment
         fields = [
@@ -438,11 +467,12 @@ class PaymentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_by", "created_at", "category_name", "category_type", "account_name"]
         extra_kwargs = {
-            "category": {"required": False, "allow_null": True},
+            "category": {"required": True, "allow_null": False},
             "account": {"required": False, "allow_null": True},
             "comment": {"required": False, "allow_blank": True},
             "attachment_url": {"required": False, "allow_blank": True, "allow_null": True},
             "paid_at": {"required": False},
+            "type": {"required": False},
             "method": {"required": False},
         }
 

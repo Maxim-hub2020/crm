@@ -13,13 +13,6 @@ import {
 } from "../api";
 import { Badge, Button, Input, Label, Modal, Select } from "../components/ui.jsx";
 
-const METHOD_LABELS = {
-  transfer: "Перевод",
-  cash: "Наличные",
-  card: "Карта",
-  other: "Другое",
-};
-
 const KIND_LABELS = {
   income: "Доход",
   expense: "Расход",
@@ -29,10 +22,6 @@ const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 0,
 });
-
-function defaultPaymentType(categoryKind) {
-  return categoryKind === "expense" ? "correction" : "advance";
-}
 
 function paymentKind(payment) {
   if (payment?.category_type === "expense" || payment?.category_type === "income") return payment.category_type;
@@ -50,12 +39,30 @@ function formatDate(value) {
   return date.toLocaleDateString("ru-RU");
 }
 
-function toDateTimeLocalValue(value) {
-  if (!value) return "";
+function todayDateValue() {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
+}
+
+function toDateInputValue(value) {
+  if (!value) return todayDateValue();
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
-  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  return offsetDate.toISOString().slice(0, 16);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10) || todayDateValue();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
+}
+
+function toPaymentDateTime(value) {
+  return value ? `${value}T12:00:00` : undefined;
+}
+
+function isPastDateValue(value) {
+  return Boolean(value && value < todayDateValue());
+}
+
+function isFuturePayment(payment) {
+  return toDateInputValue(payment?.paid_at) > todayDateValue();
 }
 
 function createPaymentForm(payment = {}) {
@@ -66,17 +73,20 @@ function createPaymentForm(payment = {}) {
     category_kind: categoryKind,
     category: payment.category ? String(payment.category) : "",
     account: payment.account ? String(payment.account) : "",
-    type: categoryKind ? payment.type || defaultPaymentType(categoryKind) : "",
     amount: payment.amount ? String(payment.amount) : "",
-    method: payment.method || "transfer",
     comment: payment.comment || "",
-    paid_at: toDateTimeLocalValue(payment.paid_at),
+    paid_at: toDateInputValue(payment.paid_at),
   };
 }
 
-function paymentSignedAmount(payment) {
+function paymentDisplaySignedAmount(payment) {
   const amount = Number(payment?.amount || 0);
   return paymentKind(payment) === "expense" ? -amount : amount;
+}
+
+function paymentSignedAmount(payment) {
+  if (isFuturePayment(payment)) return 0;
+  return paymentDisplaySignedAmount(payment);
 }
 
 function projectDisplayName(project) {
@@ -101,7 +111,6 @@ export default function Finances() {
   const [categories, setCategories] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [search, setSearch] = useState("");
-  const [method, setMethod] = useState("all");
   const [category, setCategory] = useState("all");
   const [account, setAccount] = useState("all");
   const [projectFilter, setProjectFilter] = useState("all");
@@ -140,6 +149,8 @@ export default function Finances() {
   }, []);
 
   const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+  const hasMultipleAccounts = accounts.length > 1;
+  const singleAccountId = accounts.length === 1 ? String(accounts[0].id) : "";
 
   const formCategoryOptions = useMemo(
     () => categories.filter((item) => item.type === paymentForm.category_kind),
@@ -175,18 +186,17 @@ export default function Finances() {
           payment.comment,
           payment.category_name,
           payment.account_name,
-          METHOD_LABELS[payment.method],
           KIND_LABELS[kind],
+          isFuturePayment(payment) ? "запланировано" : "",
           formatDate(payment.paid_at),
           payment.amount,
-          signedAmount,
+          paymentDisplaySignedAmount(payment),
         ]
           .filter((field) => field !== null && field !== undefined)
           .some((field) => normalizeSearch(field).includes(value));
 
       const matchesProject = projectFilter === "all" || String(payment.project || "") === projectFilter;
       const matchesKind = kindFilter === "all" || kind === kindFilter;
-      const matchesMethod = method === "all" || payment.method === method;
       const matchesCategory = category === "all" || String(payment.category || "") === category;
       const matchesAccount = account === "all" || String(payment.account || "") === account;
       const matchesAmountFrom = minAmount === null || absoluteAmount >= minAmount;
@@ -198,7 +208,6 @@ export default function Finances() {
         matchesSearch &&
         matchesProject &&
         matchesKind &&
-        matchesMethod &&
         matchesCategory &&
         matchesAccount &&
         matchesAmountFrom &&
@@ -207,11 +216,10 @@ export default function Finances() {
         matchesDateTo
       );
     });
-  }, [account, amountFrom, amountTo, category, dateFrom, dateTo, kindFilter, method, payments, projectFilter, projectMap, search]);
+  }, [account, amountFrom, amountTo, category, dateFrom, dateTo, kindFilter, payments, projectFilter, projectMap, search]);
 
   function resetFilters() {
     setSearch("");
-    setMethod("all");
     setCategory("all");
     setAccount("all");
     setProjectFilter("all");
@@ -258,20 +266,34 @@ export default function Finances() {
         setActionError("Выберите тип операции: доход или расход.");
         return;
       }
+      if (!paymentForm.category) {
+        setActionError("Выберите категорию операции.");
+        return;
+      }
       if (!paymentForm.amount.trim()) {
         setActionError("Укажите сумму операции.");
+        return;
+      }
+      if (!paymentForm.paid_at) {
+        setActionError("Выберите дату операции.");
+        return;
+      }
+      if (isPastDateValue(paymentForm.paid_at)) {
+        setActionError("Нельзя поставить операцию задним числом.");
+        return;
+      }
+      if (hasMultipleAccounts && !paymentForm.account) {
+        setActionError("Выберите счет для операции.");
         return;
       }
 
       const payload = {
         project: paymentForm.project,
-        category: paymentForm.category || null,
-        account: paymentForm.account || null,
-        type: paymentForm.type || defaultPaymentType(paymentForm.category_kind),
+        category: paymentForm.category,
+        account: hasMultipleAccounts ? paymentForm.account : singleAccountId || null,
         amount: paymentForm.amount.trim(),
-        method: paymentForm.method,
         comment: paymentForm.comment.trim(),
-        paid_at: paymentForm.paid_at || undefined,
+        paid_at: toPaymentDateTime(paymentForm.paid_at),
       };
 
       if (editingPayment) {
@@ -375,28 +397,19 @@ export default function Finances() {
                 ))}
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Счет</Label>
-              <Select value={account} onChange={(event) => setAccount(event.target.value)}>
-                <option value="all">Все счета</option>
-                {accounts.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Способ оплаты</Label>
-              <Select value={method} onChange={(event) => setMethod(event.target.value)}>
-                <option value="all">Все способы</option>
-                {Object.entries(METHOD_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </Select>
-            </div>
+            {hasMultipleAccounts ? (
+              <div className="space-y-2">
+                <Label>Счет</Label>
+                <Select value={account} onChange={(event) => setAccount(event.target.value)}>
+                  <option value="all">Все счета</option>
+                  {accounts.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label>Дата от</Label>
               <Input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
@@ -426,14 +439,17 @@ export default function Finances() {
               <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-widest text-gray-500">Дата</th>
               <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-widest text-gray-500">Проект</th>
               <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-widest text-gray-500">Сумма</th>
-              <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-widest text-gray-500">Способ</th>
+              {hasMultipleAccounts ? (
+                <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-widest text-gray-500">Счет</th>
+              ) : null}
               <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-widest text-gray-500">Комментарий</th>
               <th className="px-6 py-3 text-right text-xs font-black uppercase tracking-widest text-gray-500">Действия</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {filteredPayments.map((payment) => {
-              const signedAmount = paymentSignedAmount(payment);
+              const signedAmount = paymentDisplaySignedAmount(payment);
+              const futurePayment = isFuturePayment(payment);
               return (
                 <tr key={payment.id} className="transition hover:bg-gray-50/50">
                   <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{formatDate(payment.paid_at)}</td>
@@ -447,12 +463,12 @@ export default function Finances() {
                     </span>
                     <div className="mt-2">
                       <Badge className={paymentCategoryBadgeClass(payment)}>{paymentCategoryLabel(payment)}</Badge>
+                      {futurePayment ? <Badge className="ml-2 bg-blue-50 text-blue-600">Запланировано</Badge> : null}
                     </div>
                   </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                    {METHOD_LABELS[payment.method] || payment.method}
-                    {payment.account_name ? ` · ${payment.account_name}` : ""}
-                  </td>
+                  {hasMultipleAccounts ? (
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{payment.account_name || "—"}</td>
+                  ) : null}
                   <td className="max-w-xs truncate px-6 py-4 text-sm text-gray-500">{payment.comment || "—"}</td>
                   <td className="whitespace-nowrap px-6 py-4 text-right text-sm">
                     <div className="flex justify-end gap-2">
@@ -483,7 +499,7 @@ export default function Finances() {
             })}
             {filteredPayments.length === 0 && (
               <tr>
-                <td className="py-10 text-center text-gray-400" colSpan={6}>
+                <td className="py-10 text-center text-gray-400" colSpan={hasMultipleAccounts ? 6 : 5}>
                   Платежи не найдены
                 </td>
               </tr>
@@ -494,7 +510,8 @@ export default function Finances() {
 
       <div className="space-y-4 md:hidden">
         {filteredPayments.map((payment) => {
-          const signedAmount = paymentSignedAmount(payment);
+          const signedAmount = paymentDisplaySignedAmount(payment);
+          const futurePayment = isFuturePayment(payment);
           return (
             <div key={payment.id} className="space-y-2 rounded-2xl bg-white p-4 shadow-lg">
               <div className="flex items-start justify-between">
@@ -504,16 +521,14 @@ export default function Finances() {
                   </div>
                   <div className="mt-1">
                     <Badge className={paymentCategoryBadgeClass(payment)}>{paymentCategoryLabel(payment)}</Badge>
+                    {futurePayment ? <Badge className="ml-2 bg-blue-50 text-blue-600">Запланировано</Badge> : null}
                   </div>
                 </div>
                 <div className="text-xs text-gray-500">{formatDate(payment.paid_at)}</div>
               </div>
               <div className="border-t pt-2 text-sm text-gray-600">
                 <p className="font-semibold text-gray-800">{projectDisplayName(projectMap.get(payment.project))}</p>
-                <p>
-                  {METHOD_LABELS[payment.method] || payment.method}
-                  {payment.account_name ? ` · ${payment.account_name}` : ""}
-                </p>
+                {hasMultipleAccounts ? <p>{payment.account_name || "Счет не указан"}</p> : null}
                 <p className="truncate">{payment.comment || "Без комментария"}</p>
                 <div className="flex gap-2 pt-2">
                   <Button type="button" variant="secondary" className="flex-1 justify-center" onClick={() => openPaymentEdit(payment)}>
@@ -549,17 +564,18 @@ export default function Finances() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Тип операции</Label>
+              <Label>Доход / расход</Label>
               <Select
                 value={paymentForm.category_kind}
-                onChange={(event) =>
+                onChange={(event) => {
+                  const nextKind = event.target.value;
+                  const firstCategory = categories.find((item) => item.type === nextKind);
                   setPaymentForm((prev) => ({
                     ...prev,
-                    category_kind: event.target.value,
-                    category: "",
-                    type: event.target.value ? defaultPaymentType(event.target.value) : "",
-                  }))
-                }
+                    category_kind: nextKind,
+                    category: firstCategory ? String(firstCategory.id) : "",
+                  }));
+                }}
               >
                 <option value="">Выберите тип</option>
                 <option value="income">Доход</option>
@@ -570,7 +586,7 @@ export default function Finances() {
               <div className="space-y-2">
                 <Label>{paymentForm.category_kind === "expense" ? "Категория расхода" : "Категория дохода"}</Label>
                 <Select value={paymentForm.category} onChange={(event) => setPaymentForm((prev) => ({ ...prev, category: event.target.value }))}>
-                  <option value="">Без категории</option>
+                  <option value="">Выберите категорию</option>
                   {formCategoryOptions.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name}
@@ -579,35 +595,28 @@ export default function Finances() {
                 </Select>
               </div>
             ) : null}
-            <div className="space-y-2">
-              <Label>Счет</Label>
-              <Select value={paymentForm.account} onChange={(event) => setPaymentForm((prev) => ({ ...prev, account: event.target.value }))}>
-                <option value="">Без счета</option>
-                {accounts.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
+            {hasMultipleAccounts ? (
+              <div className="space-y-2">
+                <Label>Счет</Label>
+                <Select value={paymentForm.account} onChange={(event) => setPaymentForm((prev) => ({ ...prev, account: event.target.value }))}>
+                  <option value="">Выберите счет</option>
+                  {accounts.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label>Сумма</Label>
               <Input value={paymentForm.amount} onChange={(event) => setPaymentForm((prev) => ({ ...prev, amount: event.target.value }))} />
             </div>
             <div className="space-y-2">
-              <Label>Способ оплаты</Label>
-              <Select value={paymentForm.method} onChange={(event) => setPaymentForm((prev) => ({ ...prev, method: event.target.value }))}>
-                {Object.entries(METHOD_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="space-y-2">
               <Label>Дата</Label>
               <Input
-                type="datetime-local"
+                type="date"
+                min={todayDateValue()}
                 value={paymentForm.paid_at}
                 onChange={(event) => setPaymentForm((prev) => ({ ...prev, paid_at: event.target.value }))}
               />

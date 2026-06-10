@@ -4002,12 +4002,18 @@ class CRMAssistantService:
         paid_at = parse_iso_datetime(arguments.get("paid_at")) if "paid_at" in arguments else None
         if arguments.get("paid_at") and not paid_at:
             return self._clarification("Не смог разобрать дату платежа. Нужен ISO-формат.", [])
+        if paid_at and timezone.is_naive(paid_at):
+            paid_at = timezone.make_aware(paid_at, timezone.get_current_timezone())
+        if paid_at and timezone.localtime(paid_at).date() < timezone.localdate():
+            return self._clarification("Нельзя ставить финансовую операцию задним числом.", [])
 
         payment_type = arguments.get("payment_type")
         if not payment_type:
             payment_type = self._infer_payment_type(finance_hint_text, operation_kind)
         if payment_type not in Payment.Type.values:
             payment_type = self._infer_payment_type(finance_hint_text, operation_kind)
+        if category:
+            payment_type = Payment.Type.CORRECTION if category.type == FinanceCategory.Type.EXPENSE else Payment.Type.ADVANCE
 
         payment_method = arguments.get("payment_method") or Payment.Method.TRANSFER
         if payment_method not in Payment.Method.values:
@@ -4025,6 +4031,14 @@ class CRMAssistantService:
             if not account:
                 options = [f"{item.id}: {item.name}" for item in Account.objects.filter(workspace=self.workspace).order_by("name", "id")[:8]]
                 return self._clarification("Не нашёл такой счёт. Уточните счёт.", options)
+        if not account:
+            account_queryset = Account.objects.filter(workspace=self.workspace).order_by("name", "id")
+            account_count = account_queryset.count()
+            if account_count == 1:
+                account = account_queryset.first()
+            elif account_count > 1:
+                options = [f"{item.id}: {item.name}" for item in account_queryset[:8]]
+                return self._clarification("Уточните, на какой счёт добавить операцию.", options)
 
         payment = Payment.objects.create(
             project=project,
