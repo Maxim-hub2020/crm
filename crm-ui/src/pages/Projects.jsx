@@ -72,7 +72,7 @@ const PAYMENT_METHOD_OPTIONS = [
 
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
-  maximumFractionDigits: 2,
+  maximumFractionDigits: 0,
 });
 
 function defaultPaymentType(categoryKind) {
@@ -157,7 +157,7 @@ function buildProjectUpdatePayload(form) {
     description: form.description.trim(),
     categories: "",
     status: form.status,
-    total_amount: form.total_amount.trim() ? form.total_amount.trim() : null,
+    total_amount: cleanAmountValue(form.total_amount) || null,
   };
 }
 
@@ -170,14 +170,14 @@ function normalizeProjectForm(project, fallbackStatus = "active") {
     client_name: clientInfo.name || project?.client_name || "",
     client_phone: clientInfo.phone || project?.client_phone || "",
     client_email: clientInfo.email ?? project?.client_email ?? "",
-    object_address: project?.object_address || "",
+    object_address: project?.object_address || clientInfo.address || "",
     object_lat: project?.object_lat || "",
     object_lon: project?.object_lon || "",
     apartment: project?.apartment || "",
     entrance: project?.entrance || "",
     floor: project?.floor || "",
     description: project?.description || "",
-    total_amount: project?.total_amount ? String(project.total_amount) : "",
+    total_amount: formatAmountInput(project?.total_amount || ""),
     works_with_contract: Boolean(project?.client_info?.works_with_contract ?? project?.works_with_contract),
     status: project?.status || fallbackStatus,
   };
@@ -189,6 +189,18 @@ function labelFor(options, value) {
 
 function formatMoney(value) {
   return moneyFormatter.format(Number(value || 0));
+}
+
+function cleanAmountValue(value) {
+  const normalized = String(value || "").trim().replace(/\s+/g, "").replace(",", ".");
+  const decimalMatch = normalized.match(/^(\d+)[.](\d{1,2})$/);
+  const source = decimalMatch ? decimalMatch[1] : normalized;
+  return source.replace(/\D/g, "");
+}
+
+function formatAmountInput(value) {
+  const digits = cleanAmountValue(value);
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 }
 
 function projectDisplayName(project) {
@@ -387,14 +399,6 @@ function statusBadgeClass(colorOrStatus) {
   if (colorOrStatus === "violet") return "bg-violet-100 text-violet-700";
   if (colorOrStatus === "slate") return "bg-slate-100 text-slate-700";
   return "bg-sky-100 text-sky-700";
-}
-
-function autosaveStatusLabel(status) {
-  if (status === "pending") return "Готовим сохранение...";
-  if (status === "saving") return "Сохраняем...";
-  if (status === "saved") return "Сохранено";
-  if (status === "error") return "Не удалось сохранить";
-  return "";
 }
 
 function ModeButton({ active, icon: Icon, label, onClick }) {
@@ -974,7 +978,7 @@ export default function Projects() {
   }, [activeProjectId]);
 
   useEffect(() => {
-    if (!activeProject || !addressDetailsOpen || !hasDadataAddressSuggestions()) {
+    if (!activeProjectId || !addressDetailsOpen || !hasDadataAddressSuggestions()) {
       setAddressSuggestions([]);
       setAddressSuggestLoading(false);
       setAddressSuggestError("");
@@ -1002,11 +1006,10 @@ export default function Projects() {
         const suggestions = await fetchAddressSuggestions(query);
         if (!cancelled) {
           setAddressSuggestions(suggestions);
-          setAddressSuggestError("");
+          setAddressSuggestError(suggestions.length ? "" : "Адрес не найден. Уточните улицу, дом или город.");
         }
       } catch (requestError) {
         if (!cancelled) {
-          setAddressSuggestions([]);
           setAddressSuggestError(requestError?.message || "Не удалось загрузить подсказки Dadata.");
         }
       } finally {
@@ -1020,7 +1023,7 @@ export default function Projects() {
       cancelled = true;
       window.clearTimeout(timerId);
     };
-  }, [activeProject, addressDetailsOpen, detailForm.object_address]);
+  }, [activeProjectId, addressDetailsOpen, detailForm.object_address]);
 
   function openCreateModal(status = defaultStatusValue) {
     setCreateError("");
@@ -1137,18 +1140,27 @@ export default function Projects() {
             client_name: updated.name || "",
             client_phone: updated.phone || "",
             client_email: updated.email || "",
+            object_address: project.object_address || updated.address || "",
             works_with_contract: Boolean(updated.works_with_contract),
           };
         })
       );
-      setDetailForm((prev) => ({
-        ...prev,
-        client: updated.id,
-        client_name: updated.name || "",
-        client_phone: updated.phone || "",
-        client_email: updated.email || "",
-        works_with_contract: Boolean(updated.works_with_contract),
-      }));
+      setDetailForm((prev) => {
+        const objectAddress = prev.object_address || updated.address || "";
+        if (objectAddress) {
+          selectedAddressValueRef.current = objectAddress.trim();
+        }
+
+        return {
+          ...prev,
+          client: updated.id,
+          client_name: updated.name || "",
+          client_phone: updated.phone || "",
+          client_email: updated.email || "",
+          object_address: objectAddress,
+          works_with_contract: Boolean(updated.works_with_contract),
+        };
+      });
       setProjectClientForm(createClientEditForm(updated));
       setProjectClientOpen(false);
     } catch (error) {
@@ -1222,7 +1234,7 @@ export default function Projects() {
         description: createForm.description.trim(),
         categories: "",
         status: createForm.status,
-        total_amount: createForm.total_amount.trim() ? createForm.total_amount.trim() : null,
+        total_amount: cleanAmountValue(createForm.total_amount) || null,
       });
 
       setProjects((prev) => [created, ...prev]);
@@ -2066,8 +2078,9 @@ export default function Projects() {
               <Label>Сумма проекта</Label>
               <Input
                 value={createForm.total_amount}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, total_amount: event.target.value }))}
-                placeholder="Например, 120000"
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, total_amount: formatAmountInput(event.target.value) }))}
+                inputMode="numeric"
+                placeholder="Например, 120 000"
               />
             </div>
           </div>
@@ -2191,7 +2204,8 @@ export default function Projects() {
                             <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-400">
                               Ищем адрес...
                             </div>
-                          ) : addressSuggestions.length > 0 ? (
+                          ) : null}
+                          {addressSuggestions.length > 0 ? (
                             <div className="space-y-2">
                               {addressSuggestions.map((suggestion) => (
                                 <button
@@ -2205,7 +2219,11 @@ export default function Projects() {
                               ))}
                             </div>
                           ) : null}
-                          {addressSuggestError && <div className="text-xs font-semibold text-red-500">{addressSuggestError}</div>}
+                          {addressSuggestError && (
+                            <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-500">
+                              {addressSuggestError}
+                            </div>
+                          )}
                         </div>
                       ) : null}
 
@@ -2256,8 +2274,9 @@ export default function Projects() {
                   <Label>Сумма проекта</Label>
                   <Input
                     value={detailForm.total_amount}
-                    onChange={(event) => setDetailForm((prev) => ({ ...prev, total_amount: event.target.value }))}
-                    placeholder="Например, 120000"
+                    onChange={(event) => setDetailForm((prev) => ({ ...prev, total_amount: formatAmountInput(event.target.value) }))}
+                    inputMode="numeric"
+                    placeholder="Например, 120 000"
                   />
                 </div>
               </div>
@@ -2271,25 +2290,20 @@ export default function Projects() {
                 />
               </div>
 
-              <div className="flex flex-col gap-3 rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70 sm:flex-row sm:items-center sm:justify-between">
-                <div className={`text-sm font-bold ${detailAutosaveState === "error" ? "text-red-600" : "text-slate-500"}`}>
-                  {autosaveStatusLabel(detailAutosaveState)}
+              {detailForm.works_with_contract ? (
+                <div className="flex justify-end rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="justify-center"
+                    onClick={() => handleDocumentDownload("contract")}
+                    disabled={documentLoading}
+                  >
+                    <FileText size={16} />
+                    {documentLoading ? "Формируем..." : "Сформировать договор"}
+                  </Button>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {detailForm.works_with_contract ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="justify-center"
-                      onClick={() => handleDocumentDownload("contract")}
-                      disabled={documentLoading}
-                    >
-                      <FileText size={16} />
-                      {documentLoading ? "Формируем..." : "Сформировать договор"}
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
+              ) : null}
             </div>
 
             {detailError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{detailError}</div>}

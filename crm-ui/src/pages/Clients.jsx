@@ -7,7 +7,7 @@ import { Badge, Button, Input, Label, Modal } from "../components/ui.jsx";
 
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
-  maximumFractionDigits: 2,
+  maximumFractionDigits: 0,
 });
 
 function formatMoney(value) {

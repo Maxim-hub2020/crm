@@ -2255,7 +2255,7 @@ class CRMAssistantService:
         tasks = list(self._visible_tasks()[:task_limit])
         recent_payments = payments[:payment_limit]
         accounts = list(Account.objects.filter(workspace=self.workspace).order_by("name", "id"))
-        finance_categories = list(FinanceCategory.objects.filter(workspace=self.workspace).order_by("type", "name", "id"))
+        finance_categories = list(FinanceCategory.objects.filter(workspace=self.workspace).order_by("type", "sort_order", "id"))
 
         paid_by_project = {}
         payment_count_by_project = {}
@@ -2720,7 +2720,7 @@ class CRMAssistantService:
             return None
 
         wanted = normalize_text(identifier)
-        queryset = FinanceCategory.objects.filter(workspace=self.workspace).order_by("type", "name", "id")
+        queryset = FinanceCategory.objects.filter(workspace=self.workspace).order_by("type", "sort_order", "id")
         if operation_kind in FinanceCategory.Type.values:
             queryset = queryset.filter(type=operation_kind)
 
@@ -2844,7 +2844,7 @@ class CRMAssistantService:
                 if category:
                     return category
 
-        queryset = FinanceCategory.objects.filter(workspace=self.workspace).order_by("type", "name", "id")
+        queryset = FinanceCategory.objects.filter(workspace=self.workspace).order_by("type", "sort_order", "id")
         if operation_kind in FinanceCategory.Type.values:
             queryset = queryset.filter(type=operation_kind)
         for category in queryset:
@@ -3965,10 +3965,10 @@ class CRMAssistantService:
             if not category:
                 options = [
                     f"{item.id}: {item.name}"
-                    for item in FinanceCategory.objects.filter(workspace=self.workspace, type=operation_kind).order_by("name", "id")[:8]
+                    for item in FinanceCategory.objects.filter(workspace=self.workspace, type=operation_kind).order_by("sort_order", "id")[:8]
                 ] if operation_kind else [
                     f"{item.id}: {item.name} ({'доход' if item.type == FinanceCategory.Type.INCOME else 'расход'})"
-                    for item in FinanceCategory.objects.filter(workspace=self.workspace).order_by("type", "name", "id")[:8]
+                    for item in FinanceCategory.objects.filter(workspace=self.workspace).order_by("type", "sort_order", "id")[:8]
                 ]
                 return self._clarification("Не нашёл такую финансовую категорию. Уточните категорию.", options)
         else:

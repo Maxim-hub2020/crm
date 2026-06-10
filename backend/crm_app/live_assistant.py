@@ -154,7 +154,7 @@ def _build_reference_cache(user=None):
         ],
         "finance_categories": [
             {"id": category.id, "name": category.name, "type": category.type}
-            for category in FinanceCategory.objects.filter(workspace=workspace).order_by("type", "name", "id")
+            for category in FinanceCategory.objects.filter(workspace=workspace).order_by("type", "sort_order", "id")
         ],
         "project_fields": [
             {"name": field.name, "type": field.field_type}

@@ -273,8 +273,25 @@ class ProjectStatusSerializer(serializers.ModelSerializer):
 class FinanceCategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = FinanceCategory
-        fields = ["id", "name", "type", "created_at"]
+        fields = ["id", "name", "type", "sort_order", "created_at"]
         read_only_fields = ["created_at"]
+        extra_kwargs = {
+            "sort_order": {"required": False},
+        }
+
+    def validate(self, attrs):
+        if self.instance is None and "sort_order" not in attrs:
+            request = self.context.get("request")
+            workspace = current_workspace(getattr(request, "user", None))
+            category_type = attrs.get("type", FinanceCategory.Type.EXPENSE)
+            max_order = (
+                FinanceCategory.objects.filter(workspace=workspace, type=category_type)
+                .order_by("-sort_order")
+                .values_list("sort_order", flat=True)
+                .first()
+            )
+            attrs["sort_order"] = (max_order or 0) + 10
+        return attrs
 
 
 class AccountSerializer(serializers.ModelSerializer):

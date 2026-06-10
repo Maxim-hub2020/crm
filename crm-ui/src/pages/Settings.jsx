@@ -35,6 +35,7 @@ import {
   fetchProjectCustomFields,
   fetchProjectStatuses,
   fetchUsers,
+  updateFinanceCategory,
   updateProjectStatus,
   updateChatSettings,
   uploadDocumentTemplate,
@@ -80,6 +81,24 @@ function DeleteButton({ className = "", ...props }) {
       <Trash2 size={14} />
     </button>
   );
+}
+
+function reorderSettingsRows(rows, sourceId, targetId) {
+  if (!sourceId || !targetId || String(sourceId) === String(targetId)) {
+    return rows;
+  }
+
+  const nextRows = [...rows];
+  const sourceIndex = nextRows.findIndex((item) => String(item.id) === String(sourceId));
+  const targetIndex = nextRows.findIndex((item) => String(item.id) === String(targetId));
+
+  if (sourceIndex < 0 || targetIndex < 0) {
+    return rows;
+  }
+
+  const [moved] = nextRows.splice(sourceIndex, 1);
+  nextRows.splice(targetIndex, 0, moved);
+  return nextRows.map((item, index) => ({ ...item, sort_order: (index + 1) * 10 }));
 }
 
 function TemplateUploader({ label, templateType, templates, onUpload, onDelete, busy }) {
@@ -136,6 +155,8 @@ export default function Settings() {
   const [templates, setTemplates] = useState([]);
   const [chatSettings, setChatSettings] = useState(null);
   const [error, setError] = useState("");
+  const [draggedRow, setDraggedRow] = useState(null);
+  const [reorderSaving, setReorderSaving] = useState("");
 
   const [managerForm, setManagerForm] = useState({ username: "", email: "", phone: "", password: "" });
   const [stageName, setStageName] = useState("");
@@ -243,10 +264,60 @@ export default function Settings() {
     }
   }
 
+  function handleDragStart(event, row) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `${row.kind}:${row.id}`);
+    setDraggedRow(row);
+  }
+
+  async function handleStatusDrop(targetId) {
+    if (draggedRow?.kind !== "status") return;
+
+    const orderedRows = reorderSettingsRows(statuses, draggedRow.id, targetId);
+    setDraggedRow(null);
+    if (orderedRows === statuses) return;
+
+    setStatuses(orderedRows);
+    setReorderSaving("statuses");
+    try {
+      await Promise.all(orderedRows.map((status) => updateProjectStatus(status.id, { sort_order: status.sort_order })));
+      setError("");
+    } catch (requestError) {
+      setError(extractApiErrorMessage(requestError, "Не удалось сохранить порядок этапов."));
+      await reload();
+    } finally {
+      setReorderSaving("");
+    }
+  }
+
+  async function handleCategoryDrop(targetId, type) {
+    if (draggedRow?.kind !== "category" || draggedRow.type !== type) return;
+
+    const groupRows = financeCategoriesByType[type] || [];
+    const orderedRows = reorderSettingsRows(groupRows, draggedRow.id, targetId);
+    setDraggedRow(null);
+    if (orderedRows === groupRows) return;
+
+    const orderedMap = new Map(orderedRows.map((category) => [category.id, category]));
+    setCategories((prev) => prev.map((category) => (category.type === type ? orderedMap.get(category.id) || category : category)));
+    setReorderSaving(`categories-${type}`);
+    try {
+      await Promise.all(orderedRows.map((category) => updateFinanceCategory(category.id, { sort_order: category.sort_order })));
+      setError("");
+    } catch (requestError) {
+      setError(extractApiErrorMessage(requestError, "Не удалось сохранить порядок финансовых категорий."));
+      await reload();
+    } finally {
+      setReorderSaving("");
+    }
+  }
+
   async function handleAddCategory() {
     if (!categoryName.trim()) return;
     try {
-      await createFinanceCategory({ name: categoryName.trim(), type: categoryType });
+      const typeRows = financeCategoriesByType[categoryType] || [];
+      const nextOrder = typeRows.length > 0 ? Math.max(...typeRows.map((item) => Number(item.sort_order || 0))) + 10 : 10;
+      await createFinanceCategory({ name: categoryName.trim(), type: categoryType, sort_order: nextOrder });
       setCategoryName("");
       await reload();
     } catch (requestError) {
@@ -445,10 +516,33 @@ export default function Settings() {
 
       <div className="space-y-6">
         <SettingsCard title="Этапы проектов" icon={<Layers size={16} />}>
-          <div className="mb-4 space-y-2">
+          <div className={`mb-4 space-y-2 transition ${reorderSaving === "statuses" ? "opacity-70" : ""}`}>
             {statuses.map((status) => (
-              <div key={status.id} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-lg bg-gray-50 p-2">
-                <GripVertical size={16} className="shrink-0 text-gray-300" />
+              <div
+                key={status.id}
+                className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-lg bg-gray-50 p-2 transition ${
+                  draggedRow?.kind === "status" && draggedRow.id !== status.id ? "ring-2 ring-blue-100" : ""
+                }`}
+                onDragOver={(event) => {
+                  if (draggedRow?.kind === "status" && draggedRow.id !== status.id) {
+                    event.preventDefault();
+                  }
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  handleStatusDrop(status.id);
+                }}
+              >
+                <button
+                  type="button"
+                  draggable
+                  className="shrink-0 cursor-grab rounded-md p-1 text-gray-300 transition hover:bg-white hover:text-blue-500 active:cursor-grabbing"
+                  onDragStart={(event) => handleDragStart(event, { kind: "status", id: status.id })}
+                  onDragEnd={() => setDraggedRow(null)}
+                  aria-label="Переместить этап"
+                >
+                  <GripVertical size={16} />
+                </button>
                 <span className="min-w-0 flex-1 truncate text-sm font-semibold">{status.name}</span>
                 {status.id !== terminalStatusId ? (
                   <div className="flex shrink-0 items-center gap-1">
@@ -514,13 +608,37 @@ export default function Settings() {
               { key: "income", title: "Доходы", tone: "text-green-600", empty: "Доходных категорий пока нет." },
               { key: "expense", title: "Расходы", tone: "text-red-600", empty: "Расходных категорий пока нет." },
             ].map((group) => (
-              <div key={group.key} className="rounded-2xl bg-gray-50 p-2">
+              <div key={group.key} className={`rounded-2xl bg-gray-50 p-2 transition ${reorderSaving === `categories-${group.key}` ? "opacity-70" : ""}`}>
                 <div className={`mb-2 px-2 text-[10px] font-black uppercase tracking-widest ${group.tone}`}>{group.title}</div>
                 <div className="space-y-2">
                   {financeCategoriesByType[group.key].length ? (
                     financeCategoriesByType[group.key].map((category) => (
-                      <div key={category.id} className="flex items-center justify-between rounded-lg bg-white p-2">
-                        <span className="min-w-0 truncate text-sm font-semibold text-gray-800">{category.name}</span>
+                      <div
+                        key={category.id}
+                        className={`flex items-center justify-between gap-2 rounded-lg bg-white p-2 transition ${
+                          draggedRow?.kind === "category" && draggedRow.type === group.key && draggedRow.id !== category.id ? "ring-2 ring-blue-100" : ""
+                        }`}
+                        onDragOver={(event) => {
+                          if (draggedRow?.kind === "category" && draggedRow.type === group.key && draggedRow.id !== category.id) {
+                            event.preventDefault();
+                          }
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          handleCategoryDrop(category.id, group.key);
+                        }}
+                      >
+                        <button
+                          type="button"
+                          draggable
+                          className="shrink-0 cursor-grab rounded-md p-1 text-gray-300 transition hover:bg-gray-50 hover:text-blue-500 active:cursor-grabbing"
+                          onDragStart={(event) => handleDragStart(event, { kind: "category", type: group.key, id: category.id })}
+                          onDragEnd={() => setDraggedRow(null)}
+                          aria-label="Переместить категорию"
+                        >
+                          <GripVertical size={14} />
+                        </button>
+                        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-800">{category.name}</span>
                         <DeleteButton onClick={() => removeAndReload(deleteFinanceCategory, category.id, "Не удалось удалить категорию.")} />
                       </div>
                     ))

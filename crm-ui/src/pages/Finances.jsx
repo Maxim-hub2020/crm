@@ -27,7 +27,7 @@ const KIND_LABELS = {
 
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
-  maximumFractionDigits: 2,
+  maximumFractionDigits: 0,
 });
 
 function defaultPaymentType(categoryKind) {

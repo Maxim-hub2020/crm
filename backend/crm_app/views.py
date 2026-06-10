@@ -409,7 +409,7 @@ class FinanceCategoryViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
 
     def get_queryset(self):
-        return FinanceCategory.objects.filter(workspace=current_workspace(self.request.user)).order_by("type", "name", "id")
+        return FinanceCategory.objects.filter(workspace=current_workspace(self.request.user)).order_by("type", "sort_order", "id")
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:

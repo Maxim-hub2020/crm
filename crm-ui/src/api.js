@@ -323,6 +323,12 @@ export async function createFinanceCategory(payload) {
   return data;
 }
 
+export async function updateFinanceCategory(categoryId, payload) {
+  initApiAuth();
+  const { data } = await api.patch(`/api/finance-categories/${categoryId}/`, payload);
+  return data;
+}
+
 export async function deleteFinanceCategory(categoryId) {
   initApiAuth();
   await api.delete(`/api/finance-categories/${categoryId}/`);

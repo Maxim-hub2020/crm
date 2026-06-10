@@ -190,10 +190,11 @@ class FinanceCategory(models.Model):
     )
     name = models.CharField(max_length=120)
     type = models.CharField(max_length=20, choices=Type.choices, default=Type.EXPENSE, db_index=True)
+    sort_order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["type", "name", "id"]
+        ordering = ["type", "sort_order", "id"]
         constraints = [
             models.UniqueConstraint(fields=["workspace", "name", "type"], name="unique_workspace_finance_category_name_type"),
         ]
