@@ -2105,7 +2105,7 @@ export default function Projects() {
         widthClassName="max-w-5xl"
         bodyClassName="min-h-0"
         positionClassName="items-start pt-4 sm:pt-6"
-        overlayClassName="bg-slate-950/45 backdrop-blur-2xl backdrop-saturate-50"
+        overlayClassName="bg-slate-950/30 backdrop-blur-md backdrop-saturate-75"
       >
         {activeProject && (
           <div className="space-y-4">

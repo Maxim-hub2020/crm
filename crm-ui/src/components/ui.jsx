@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 export function Card({ className = "", children }) {
@@ -75,7 +76,7 @@ export function Modal({
 }) {
   if (!open) return null;
 
-  return (
+  const modal = (
     <div className={`fixed inset-0 z-50 flex justify-center overflow-y-auto p-2 sm:p-4 ${overlayClassName} ${positionClassName}`}>
       <div className="absolute inset-0" onClick={onClose} />
       <div
@@ -95,4 +96,6 @@ export function Modal({
       </div>
     </div>
   );
+
+  return createPortal(modal, document.body);
 }
