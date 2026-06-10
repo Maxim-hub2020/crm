@@ -438,11 +438,15 @@ class AccountViewSet(viewsets.ModelViewSet):
 
 class ProjectCustomFieldViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectCustomFieldSerializer
-    permission_classes = [IsAdmin, HasActiveSubscription]
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
 
     def get_queryset(self):
         return ProjectCustomField.objects.filter(workspace=current_workspace(self.request.user)).order_by("sort_order", "id")
+
+    def get_permissions(self):
+        if self.action in {"list", "retrieve"}:
+            return [IsAuthenticatedAny(), HasActiveSubscription()]
+        return [IsAdmin(), HasActiveSubscription()]
 
     def perform_create(self, serializer):
         serializer.save(workspace=current_workspace(self.request.user))

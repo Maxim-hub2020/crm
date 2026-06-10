@@ -35,6 +35,7 @@ import {
   fetchFinanceCategories,
   fetchPayments,
   fetchProjectComments,
+  fetchProjectCustomFields,
   fetchProjects,
   fetchProjectStatuses,
   fetchTasks,
@@ -95,6 +96,7 @@ function createEmptyProjectForm(status = "active") {
     floor: "",
     description: "",
     total_amount: "",
+    custom_fields: {},
     works_with_contract: false,
     status,
   };
@@ -146,7 +148,18 @@ function buildProjectUpdatePayload(form) {
     categories: "",
     status: form.status,
     total_amount: cleanAmountValue(form.total_amount) || null,
+    custom_fields: normalizeCustomFieldValues(form.custom_fields),
   };
+}
+
+function normalizeCustomFieldValues(values = {}) {
+  if (!values || typeof values !== "object") return {};
+
+  return Object.fromEntries(
+    Object.entries(values)
+      .map(([key, value]) => [String(key), String(value ?? "").trim()])
+      .filter(([, value]) => value)
+  );
 }
 
 function normalizeProjectForm(project, fallbackStatus = "active") {
@@ -166,6 +179,7 @@ function normalizeProjectForm(project, fallbackStatus = "active") {
     floor: project?.floor || "",
     description: project?.description || "",
     total_amount: formatAmountInput(project?.total_amount || ""),
+    custom_fields: normalizeCustomFieldValues(project?.custom_fields || {}),
     works_with_contract: Boolean(project?.client_info?.works_with_contract ?? project?.works_with_contract),
     status: project?.status || fallbackStatus,
   };
@@ -307,6 +321,7 @@ function projectSearchText(project, statusMap) {
       project.entrance,
       project.floor,
       project.description,
+      ...Object.values(project.custom_fields || {}),
       status?.label,
       status?.short,
     ]
@@ -485,6 +500,46 @@ function ProjectTaskRow({ task, onToggle, onDelete }) {
   );
 }
 
+function customFieldInputProps(field) {
+  if (field.field_type === "date") {
+    return { type: "date" };
+  }
+  if (field.field_type === "number") {
+    return { inputMode: "decimal", placeholder: "Например, 120" };
+  }
+  if (field.field_type === "file") {
+    return { placeholder: "Ссылка или название файла" };
+  }
+  return { placeholder: "Введите значение" };
+}
+
+function ProjectCustomFieldsGrid({ fields, values, onChange }) {
+  if (!fields.length) return null;
+
+  return (
+    <div className="rounded-[24px] border border-slate-100 bg-slate-50/70 p-4">
+      <div className="mb-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+        Пользовательские поля
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        {fields.map((field) => {
+          const fieldKey = String(field.id);
+          return (
+            <div key={field.id} className="space-y-2">
+              <Label>{field.name}</Label>
+              <Input
+                {...customFieldInputProps(field)}
+                value={values?.[fieldKey] || ""}
+                onChange={(event) => onChange(fieldKey, event.target.value)}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function EmptyColumn({ onCreate }) {
   return (
     <button
@@ -590,6 +645,7 @@ export default function Projects() {
   const [statusRows, setStatusRows] = useState(DEFAULT_STATUS_OPTIONS);
   const [financeCategories, setFinanceCategories] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [customFields, setCustomFields] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState(location.state?.q || "");
   const deferredQuery = useDeferredValue(query);
@@ -687,7 +743,7 @@ export default function Projects() {
     }
 
     try {
-      const [projectRows, clientRows, paymentRows, taskRows, statusItems, financeCategoryRows, accountRows] = await Promise.all([
+      const [projectRows, clientRows, paymentRows, taskRows, statusItems, financeCategoryRows, accountRows, customFieldRows] = await Promise.all([
         fetchProjects(),
         fetchClients(),
         fetchPayments(),
@@ -695,6 +751,7 @@ export default function Projects() {
         fetchProjectStatuses(),
         fetchFinanceCategories(),
         fetchAccounts(),
+        fetchProjectCustomFields(),
       ]);
 
       setProjects(projectRows);
@@ -704,6 +761,7 @@ export default function Projects() {
       setStatusRows(statusItems.length > 0 ? statusItems : DEFAULT_STATUS_OPTIONS);
       setFinanceCategories(financeCategoryRows);
       setAccounts(accountRows);
+      setCustomFields(customFieldRows);
     } finally {
       if (!silent) {
         setLoading(false);
@@ -737,6 +795,7 @@ export default function Projects() {
       setStatusRows(DEFAULT_STATUS_OPTIONS);
       setFinanceCategories([]);
       setAccounts([]);
+      setCustomFields([]);
       setLoading(false);
     });
   }, []);
@@ -1246,6 +1305,7 @@ export default function Projects() {
         categories: "",
         status: createForm.status,
         total_amount: cleanAmountValue(createForm.total_amount) || null,
+        custom_fields: normalizeCustomFieldValues(createForm.custom_fields),
       });
 
       setProjects((prev) => [created, ...prev]);
@@ -2117,6 +2177,20 @@ export default function Projects() {
             />
           </div>
 
+          <ProjectCustomFieldsGrid
+            fields={customFields}
+            values={createForm.custom_fields}
+            onChange={(fieldId, value) =>
+              setCreateForm((prev) => ({
+                ...prev,
+                custom_fields: {
+                  ...(prev.custom_fields || {}),
+                  [fieldId]: value,
+                },
+              }))
+            }
+          />
+
           {createError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{createError}</div>}
 
           <div className="flex justify-end gap-3">
@@ -2312,6 +2386,20 @@ export default function Projects() {
                   onChange={(event) => setDetailForm((prev) => ({ ...prev, description: event.target.value }))}
                 />
               </div>
+
+              <ProjectCustomFieldsGrid
+                fields={customFields}
+                values={detailForm.custom_fields}
+                onChange={(fieldId, value) =>
+                  setDetailForm((prev) => ({
+                    ...prev,
+                    custom_fields: {
+                      ...(prev.custom_fields || {}),
+                      [fieldId]: value,
+                    },
+                  }))
+                }
+              />
 
               {detailForm.works_with_contract ? (
                 <div className="flex justify-end rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">

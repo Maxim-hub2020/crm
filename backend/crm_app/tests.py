@@ -12,7 +12,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from .ai_assistant import CRMAssistantService, GeminiClient, GeminiRequestError, humanize_gemini_error
 from .live_assistant import AssistantLiveConsumer, _build_low_latency_system_instruction, _build_reference_cache, _has_live_assistant_access
-from .models import Account, ChatIntegrationSettings, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectStatus, SubscriptionInvoice, Task, User, Workspace
+from .models import Account, ChatIntegrationSettings, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, ProjectStatus, SubscriptionInvoice, Task, User, Workspace
 from .subscription import activate_subscription_invoice, ensure_subscription_defaults, issue_subscription_invoice
 
 
@@ -331,6 +331,38 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["client_phone"], "")
+
+    def test_project_custom_fields_are_saved_and_updated(self):
+        client = self.auth_client_for(self.manager)
+        custom_field = ProjectCustomField.objects.create(
+            workspace=self.manager.workspace,
+            name="Glass color",
+            field_type=ProjectCustomField.FieldType.TEXT,
+            sort_order=10,
+        )
+
+        create_response = client.post(
+            "/api/projects/",
+            {
+                "client_name": "Custom Client",
+                "client_phone": "+70000000088",
+                "custom_fields": {str(custom_field.id): "bronze"},
+            },
+            format="json",
+        )
+
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(create_response.data["custom_fields"], {str(custom_field.id): "bronze"})
+
+        update_response = client.patch(
+            f"/api/projects/{create_response.data['id']}/",
+            {"custom_fields": {str(custom_field.id): "clear"}},
+            format="json",
+        )
+
+        self.assertEqual(update_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(update_response.data["custom_fields"], {str(custom_field.id): "clear"})
+        self.assertEqual(Project.objects.get(id=create_response.data["id"]).custom_fields, {str(custom_field.id): "clear"})
 
     def test_project_rejects_unknown_status(self):
         client = self.auth_client_for(self.manager)

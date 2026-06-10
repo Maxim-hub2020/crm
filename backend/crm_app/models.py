@@ -149,6 +149,7 @@ class Project(models.Model):
     description = models.TextField(blank=True, default="")
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
     status = models.CharField(max_length=50, default="active", db_index=True)
+    custom_fields = models.JSONField(blank=True, default=dict)
 
     # MVP: CSV. Можно заменить на ManyToMany позже.
     categories = models.CharField(max_length=200, blank=True, default="")  # "mirrors,furniture,shower"

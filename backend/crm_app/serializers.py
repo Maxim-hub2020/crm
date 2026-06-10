@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from django.utils.text import slugify
 
 from .models import (
@@ -161,7 +162,48 @@ class ProjectSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Укажите существующий статус канбана.")
         return value
 
+    def _normalize_custom_fields(self, value):
+        if value in (None, ""):
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Project custom fields must be an object.")
+
+        workspace = self._workspace() or getattr(self.instance, "workspace", None)
+        fields = {
+            str(field.id): field
+            for field in ProjectCustomField.objects.filter(workspace=workspace).order_by("sort_order", "id")
+        }
+        normalized = {}
+
+        for raw_key, raw_value in value.items():
+            key = str(raw_key)
+            field = fields.get(key)
+            if not field:
+                continue
+            if raw_value in (None, ""):
+                continue
+
+            if field.field_type == ProjectCustomField.FieldType.NUMBER:
+                clean_value = str(raw_value).strip().replace(" ", "").replace(",", ".")
+                try:
+                    float(clean_value)
+                except (TypeError, ValueError):
+                    raise serializers.ValidationError({key: "Enter a numeric value."})
+            elif field.field_type == ProjectCustomField.FieldType.DATE:
+                clean_value = str(raw_value).strip()
+                if clean_value and not parse_date(clean_value):
+                    raise serializers.ValidationError({key: "Enter a date in YYYY-MM-DD format."})
+            else:
+                clean_value = str(raw_value).strip()
+
+            if clean_value:
+                normalized[key] = clean_value
+
+        return normalized
+
     def validate(self, attrs):
+        if "custom_fields" in attrs:
+            attrs["custom_fields"] = self._normalize_custom_fields(attrs.get("custom_fields"))
         has_client = attrs.get("client") or getattr(self.instance, "client", None)
         has_name = str(attrs.get("client_name", getattr(self.instance, "client_name", "")) or "").strip()
         has_phone = str(attrs.get("client_phone", getattr(self.instance, "client_phone", "")) or "").strip()
@@ -205,6 +247,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             "description": {"required": False, "allow_blank": True},
             "total_amount": {"required": False, "allow_null": True},
             "status": {"required": False},
+            "custom_fields": {"required": False},
             "categories": {"required": False, "allow_blank": True},
             "works_with_contract": {"required": False},
         }
