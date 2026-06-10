@@ -807,18 +807,22 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 self.pending_voice_fallback_text = payload["reply"]
             self._append_live_context("assistant", context_text)
 
-            function_responses.append(
-                types.FunctionResponse(
-                    id=call_id,
-                    name=tool_name,
-                    response={"output": payload["event"]["result"]},
-                )
-            )
+            function_response_payload = {
+                "name": tool_name,
+                "response": {"output": payload["event"]["result"]},
+            }
+            if call_id:
+                function_response_payload["id"] = call_id
+            if payload["reply"]:
+                function_response_payload["scheduling"] = types.FunctionResponseScheduling.SILENT
+
+            function_responses.append(types.FunctionResponse(**function_response_payload))
 
         if function_responses:
-            await session.send_tool_response(function_responses=function_responses)
             if has_immediate_reply:
                 self.suppress_next_tool_model_turn = True
+            await session.send_tool_response(function_responses=function_responses)
+            if has_immediate_reply:
                 await self._send_voice_fallback_if_needed(force=True)
                 await self._send_event({"type": "turn_complete"})
                 await self._finish_turn_metrics(reason="tool_reply")
