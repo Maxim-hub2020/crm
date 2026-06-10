@@ -362,6 +362,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         self.turn_metrics = self._new_turn_metrics()
         self.pending_voice_fallback_text = ""
         self.suppress_next_tool_model_turn = False
+        self.background_tasks = set()
         self.live_task = asyncio.create_task(self._run_live_session())
         await self._send_event(
             {
@@ -379,6 +380,10 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 await task
             except asyncio.CancelledError:
                 pass
+        for background_task in list(getattr(self, "background_tasks", set())):
+            background_task.cancel()
+        if getattr(self, "background_tasks", None):
+            await asyncio.gather(*self.background_tasks, return_exceptions=True)
 
     async def receive(self, text_data=None, bytes_data=None):
         if bytes_data:
@@ -396,6 +401,8 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         event_type = payload.get("type")
         if event_type == "text" and payload.get("text"):
             await self._put_latest(self.text_input_queue, str(payload["text"]))
+        elif event_type == "ping":
+            await self._send_event({"type": "pong", "ts": payload.get("ts")})
         elif event_type in {"activity_start", "activity_end", "audio_stream_end"}:
             logger.info("Assistant Live client event: %s", event_type)
             await self._put_latest(self.audio_input_queue, {"type": event_type})
@@ -410,6 +417,22 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
 
     async def _send_event(self, payload):
         await self.send(text_data=json.dumps(payload, ensure_ascii=False))
+
+    def _create_background_task(self, coro, label="background"):
+        task = asyncio.create_task(coro)
+        self.background_tasks.add(task)
+
+        def _cleanup(done_task):
+            self.background_tasks.discard(done_task)
+            try:
+                exception = done_task.exception()
+            except asyncio.CancelledError:
+                return
+            if exception:
+                logger.warning("Assistant Live %s task failed: %s", label, exception)
+
+        task.add_done_callback(_cleanup)
+        return task
 
     @staticmethod
     def _new_turn_metrics():
@@ -712,7 +735,20 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 await self._send_event({"type": "output_text", "text": message.text})
 
             if tool_call:
-                await self._handle_tool_call(session, types, service, tool_call)
+                if self._tool_call_has_mutation(tool_call):
+                    self.suppress_next_tool_model_turn = True
+                self._create_background_task(
+                    self._handle_tool_call(session, types, service, tool_call),
+                    label="tool_call",
+                )
+
+    @staticmethod
+    def _tool_call_has_mutation(tool_call):
+        for function_call in getattr(tool_call, "function_calls", []) or []:
+            tool_name = str(getattr(function_call, "name", "") or "")
+            if tool_name.startswith(("create_", "update_", "delete_", "add_")):
+                return True
+        return False
 
     async def _send_voice_fallback_if_needed(self, force=False):
         text = str(getattr(self, "pending_voice_fallback_text", "") or "").strip()

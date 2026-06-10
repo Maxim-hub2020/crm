@@ -26,6 +26,7 @@ const LIVE_MIN_SPEECH_MS = 220;
 const LIVE_MIN_RECORDING_MS = 700;
 const LIVE_MAX_UTTERANCE_MS = clampNumber(readEnvNumber(import.meta.env.VITE_ASSISTANT_LIVE_MAX_UTTERANCE_MS, 30000), 8000, 60000);
 const LIVE_RESPONSE_WATCHDOG_MS = clampNumber(readEnvNumber(import.meta.env.VITE_ASSISTANT_LIVE_RESPONSE_WATCHDOG_MS, 14000), 6000, 30000);
+const LIVE_KEEPALIVE_MS = clampNumber(readEnvNumber(import.meta.env.VITE_ASSISTANT_LIVE_KEEPALIVE_MS, 15000), 8000, 45000);
 const LIVE_REFRESH_AFTER_TURN = false;
 const LIVE_RECONNECT_MAX_ATTEMPTS = 4;
 const STABLE_CLIENT_SILENCE_MS = Number(import.meta.env.VITE_ASSISTANT_STABLE_SILENCE_MS || 3000);
@@ -261,6 +262,8 @@ export default function Assistant() {
   const liveLastTurnWasToolReplyRef = useRef(false);
   const liveReconnectTimerRef = useRef(null);
   const liveResponseWatchdogTimerRef = useRef(null);
+  const liveKeepaliveTimerRef = useRef(null);
+  const liveLastPongAtRef = useRef(0);
   const liveRefreshAfterPlaybackRef = useRef(false);
   const liveReconnectAttemptsRef = useRef(0);
   const liveStartedAtRef = useRef(0);
@@ -302,7 +305,7 @@ export default function Assistant() {
     pendingRef.current = pending;
     clearPendingWatchdogTimer();
 
-    if (pending) {
+    if (pending && !LIVE_ASSISTANT_ENABLED) {
       pendingWatchdogTimerRef.current = window.setTimeout(
         recoverStuckPendingState,
         ASSISTANT_PENDING_WATCHDOG_MS
@@ -359,6 +362,13 @@ export default function Assistant() {
     if (liveResponseWatchdogTimerRef.current) {
       window.clearTimeout(liveResponseWatchdogTimerRef.current);
       liveResponseWatchdogTimerRef.current = null;
+    }
+  }
+
+  function clearLiveKeepaliveTimer() {
+    if (liveKeepaliveTimerRef.current) {
+      window.clearInterval(liveKeepaliveTimerRef.current);
+      liveKeepaliveTimerRef.current = null;
     }
   }
 
@@ -539,6 +549,24 @@ export default function Assistant() {
     }
   }
 
+  function startLiveKeepalive(socket) {
+    clearLiveKeepaliveTimer();
+    liveLastPongAtRef.current = Date.now();
+    liveKeepaliveTimerRef.current = window.setInterval(() => {
+      if (!sessionActiveRef.current) {
+        clearLiveKeepaliveTimer();
+        return;
+      }
+      if (socket !== liveSocketRef.current) {
+        clearLiveKeepaliveTimer();
+        return;
+      }
+      if (socket.readyState === WebSocket.OPEN) {
+        sendLiveJson(socket, { type: "ping", ts: Date.now() });
+      }
+    }, LIVE_KEEPALIVE_MS);
+  }
+
   function scheduleLiveResponseWatchdog() {
     clearLiveResponseWatchdogTimer();
     if (!sessionActiveRef.current || !LIVE_ASSISTANT_ENABLED) return;
@@ -588,6 +616,7 @@ export default function Assistant() {
   function teardownLiveSession() {
     clearLiveReconnectTimer();
     clearLiveResponseWatchdogTimer();
+    clearLiveKeepaliveTimer();
     liveRefreshAfterPlaybackRef.current = false;
 
     try {
@@ -781,6 +810,11 @@ export default function Assistant() {
   }
 
   function handleLiveEvent(event) {
+    if (event.type === "pong") {
+      liveLastPongAtRef.current = Date.now();
+      return;
+    }
+
     if (event.type === "ready" || event.type === "live_connected") {
       if (event.type === "live_connected") {
         liveReconnectAttemptsRef.current = 0;
@@ -1413,6 +1447,7 @@ export default function Assistant() {
       };
 
       socket.binaryType = "arraybuffer";
+      liveSocketRef.current = socket;
       gainNode.gain.value = 0;
 
       processor.onaudioprocess = (event) => {
@@ -1488,6 +1523,7 @@ export default function Assistant() {
       };
 
       socket.onopen = () => {
+        startLiveKeepalive(socket);
         pendingRef.current = false;
         recordingRef.current = true;
         setPending(false);
