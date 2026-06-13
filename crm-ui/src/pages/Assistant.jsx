@@ -145,12 +145,13 @@ function encodePcm16(samples, inputSampleRate, outputSampleRate = LIVE_INPUT_SAM
 }
 
 function pcm16ToAudioBuffer(audioContext, arrayBuffer, sampleRate = LIVE_OUTPUT_SAMPLE_RATE) {
-  const samples = new Int16Array(arrayBuffer);
-  const audioBuffer = audioContext.createBuffer(1, samples.length, sampleRate);
+  const view = new DataView(arrayBuffer);
+  const sampleCount = Math.floor(arrayBuffer.byteLength / 2);
+  const audioBuffer = audioContext.createBuffer(1, sampleCount, sampleRate);
   const channel = audioBuffer.getChannelData(0);
 
-  for (let index = 0; index < samples.length; index += 1) {
-    channel[index] = samples[index] / 0x8000;
+  for (let index = 0; index < sampleCount; index += 1) {
+    channel[index] = view.getInt16(index * 2, true) / 0x8000;
   }
 
   return audioBuffer;
@@ -163,6 +164,15 @@ function base64ToBlob(base64, mimeType) {
     bytes[index] = binary.charCodeAt(index);
   }
   return new Blob([bytes], { type: mimeType || "audio/wav" });
+}
+
+function base64ToArrayBuffer(base64) {
+  const binary = window.atob(base64 || "");
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
 }
 
 function readStoredArray(storage, key) {
@@ -815,9 +825,35 @@ export default function Assistant() {
     resetLiveTurnDetection();
   }
 
-  function playLivePcmChunk(arrayBuffer) {
+  async function playLivePcmChunk(arrayBuffer, sampleRate = LIVE_OUTPUT_SAMPLE_RATE) {
     const audioContext = liveAudioContextRef.current;
-    if (!audioContext || audioContext.state === "closed" || !arrayBuffer?.byteLength) return;
+    if (!audioContext || audioContext.state === "closed" || !arrayBuffer?.byteLength) {
+      logLiveLifecycle("GeminiPcmPlayer skip", {
+        reason: !audioContext ? "missing_audio_context" : audioContext?.state || "empty_chunk",
+        byte_length: arrayBuffer?.byteLength || 0,
+      }, "warn");
+      return;
+    }
+
+    try {
+      if (audioContext.state === "suspended") {
+        await audioContext.resume();
+      }
+    } catch (error) {
+      logLiveLifecycle("GeminiPcmPlayer resume failed", { error: String(error), state: audioContext.state }, "warn");
+    }
+
+    logLiveLifecycle("GeminiPcmPlayer enqueue", {
+      byte_length: arrayBuffer.byteLength,
+      sample_rate: sampleRate,
+      audio_context_state: audioContext.state,
+      next_start_time: liveNextPlayTimeRef.current,
+    });
+
+    if (audioContext.state === "suspended") {
+      setError("Браузер заблокировал воспроизведение аудио. Нажмите на значок ассистента ещё раз.");
+      return;
+    }
 
     if (liveActivityOpenRef.current && liveSocketRef.current?.readyState === WebSocket.OPEN) {
       sendLiveJson(liveSocketRef.current, { type: "activity_end" });
@@ -829,7 +865,7 @@ export default function Assistant() {
     pendingRef.current = false;
     setPending(false);
 
-    const audioBuffer = pcm16ToAudioBuffer(audioContext, arrayBuffer);
+    const audioBuffer = pcm16ToAudioBuffer(audioContext, arrayBuffer, sampleRate);
     const source = audioContext.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(audioContext.destination);
@@ -940,11 +976,18 @@ export default function Assistant() {
       return;
     }
 
-    if (event.type === "assistant_audio" && event.audio_base64) {
+    if (event.type === "assistant_audio" && (event.data || event.audio_base64)) {
       clearLiveResponseWatchdogTimer();
       liveToolStateRef.current = "";
       pendingRef.current = false;
       setPending(false);
+      if (event.format === "pcm16") {
+        const pcmBase64 = event.data || event.audio_base64;
+        const sampleRate = Number(event.sampleRate || event.sample_rate || LIVE_OUTPUT_SAMPLE_RATE);
+        latestAudioRef.current = null;
+        void playLivePcmChunk(base64ToArrayBuffer(pcmBase64), sampleRate);
+        return;
+      }
       latestAudioRef.current = {
         audioBase64: event.audio_base64,
         audioMimeType: event.audio_mime_type || "audio/mpeg",
@@ -1647,8 +1690,13 @@ export default function Assistant() {
         }
       };
 
-      socket.onopen = () => {
-        logLiveLifecycle("onopen");
+      socket.onopen = async () => {
+        try {
+          if (audioContext.state === "suspended") {
+            await audioContext.resume();
+          }
+        } catch {}
+        logLiveLifecycle("onopen", { audio_context_state: audioContext.state });
         startLiveKeepalive(socket);
         pendingRef.current = false;
         recordingRef.current = true;
@@ -1658,12 +1706,12 @@ export default function Assistant() {
 
       socket.onmessage = (event) => {
         if (event.data instanceof ArrayBuffer) {
-          playLivePcmChunk(event.data);
+          void playLivePcmChunk(event.data);
           return;
         }
 
         if (event.data instanceof Blob) {
-          void event.data.arrayBuffer().then(playLivePcmChunk);
+          void event.data.arrayBuffer().then((arrayBuffer) => playLivePcmChunk(arrayBuffer));
           return;
         }
 

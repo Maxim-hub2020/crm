@@ -1498,6 +1498,7 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
     def test_live_consumer_does_not_duplicate_audio_from_same_message(self):
         class FakeInlineData:
             data = b"inline-audio"
+            mime_type = "audio/pcm;rate=24000"
 
         class FakePart:
             inline_data = FakeInlineData()
@@ -1525,17 +1526,54 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
 
         consumer = AssistantLiveConsumer()
         consumer.turn_metrics = consumer._new_turn_metrics()
-        sent_audio = []
+        sent_events = []
 
         async def fake_send(bytes_data=None, text_data=None):
-            if bytes_data:
-                sent_audio.append(bytes_data)
+            if text_data:
+                sent_events.append(json.loads(text_data))
 
         consumer.send = fake_send
 
         async_to_sync(consumer._receive_from_gemini)(FakeSession(), None, None)
 
-        self.assertEqual(sent_audio, [b"inline-audio"])
+        audio_events = [event for event in sent_events if event["type"] == "assistant_audio"]
+        self.assertEqual(len(audio_events), 1)
+        self.assertEqual(audio_events[0]["format"], "pcm16")
+        self.assertEqual(audio_events[0]["sampleRate"], 24000)
+        self.assertEqual(base64.b64decode(audio_events[0]["data"]), b"inline-audio")
+
+    def test_live_consumer_forwards_top_level_audio_as_pcm_event(self):
+        class FakeMessage:
+            setup_complete = None
+            server_content = None
+            data = b"top-level-audio"
+            text = None
+            tool_call = None
+            tool_call_cancellation = None
+            go_away = None
+            session_resumption_update = None
+
+        class FakeSession:
+            async def receive(self):
+                yield FakeMessage()
+
+        consumer = AssistantLiveConsumer()
+        consumer.turn_metrics = consumer._new_turn_metrics()
+        sent_events = []
+
+        async def fake_send(bytes_data=None, text_data=None):
+            if text_data:
+                sent_events.append(json.loads(text_data))
+
+        consumer.send = fake_send
+
+        async_to_sync(consumer._receive_from_gemini)(FakeSession(), None, None)
+
+        audio_events = [event for event in sent_events if event["type"] == "assistant_audio"]
+        self.assertEqual(len(audio_events), 1)
+        self.assertEqual(audio_events[0]["format"], "pcm16")
+        self.assertEqual(audio_events[0]["sampleRate"], 24000)
+        self.assertEqual(base64.b64decode(audio_events[0]["data"]), b"top-level-audio")
 
     def test_live_context_keeps_last_project_from_tool_result(self):
         consumer = AssistantLiveConsumer()

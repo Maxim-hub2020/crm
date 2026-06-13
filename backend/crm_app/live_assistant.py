@@ -84,6 +84,17 @@ def _live_stack(limit=8):
     return "".join(traceback.format_stack(limit=limit)[:-1]).strip()
 
 
+def _coerce_audio_bytes(data):
+    if not data:
+        return b""
+    if isinstance(data, str):
+        try:
+            return base64.b64decode(data)
+        except Exception:
+            return b""
+    return bytes(data)
+
+
 def _split_env_csv(name, default=""):
     raw_value = os.getenv(name, default)
     return [item.strip() for item in raw_value.split(",") if item.strip()]
@@ -335,6 +346,7 @@ def _generate_speech_event(user, text):
 
     return {
         "type": "assistant_audio",
+        "format": "encoded",
         "audio_base64": base64.b64encode(speech["audio_bytes"]).decode("ascii"),
         "audio_mime_type": speech["mime_type"],
     }
@@ -466,6 +478,38 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
             _json_safe(details),
         )
 
+    async def _send_pcm_audio_event(self, audio_data, source, mime_type="audio/pcm;rate=24000"):
+        audio_bytes = _coerce_audio_bytes(audio_data)
+        if not audio_bytes:
+            logger.warning("Assistant Live empty audio chunk: session=%s source=%s", self.live_session_id, source)
+            return False
+
+        audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
+        logger.info(
+            "Assistant Live audio chunk: session=%s source=%s bytes=%s mime_type=%s sample_rate=%s",
+            self.live_session_id,
+            source,
+            len(audio_bytes),
+            mime_type,
+            self.output_sample_rate,
+        )
+        self._mark_first_audio_output()
+        await self._send_event(
+            {
+                "type": "assistant_audio",
+                "format": "pcm16",
+                "sampleRate": self.output_sample_rate,
+                "sample_rate": self.output_sample_rate,
+                "mime_type": mime_type or f"audio/pcm;rate={self.output_sample_rate}",
+                "data": audio_base64,
+                "audio_base64": audio_base64,
+                "audio_mime_type": mime_type or f"audio/pcm;rate={self.output_sample_rate}",
+                "source": source,
+                "byte_length": len(audio_bytes),
+            }
+        )
+        return True
+
     def _create_background_task(self, coro, label="background"):
         task = asyncio.create_task(coro)
         self.background_tasks.add(task)
@@ -576,6 +620,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         model = os.getenv("GEMINI_LIVE_MODEL", "gemini-live-2.5-flash-native-audio").strip()
         voice_name = os.getenv("GEMINI_LIVE_VOICE", os.getenv("GEMINI_TTS_VOICE", "Kore")).strip() or "Kore"
         silence_ms = max(0, min(_env_int("GEMINI_LIVE_SILENCE_MS", 2000), 2000))
+        activity_handling_name = os.getenv("GEMINI_LIVE_ACTIVITY_HANDLING", "NO_INTERRUPTION").strip() or "NO_INTERRUPTION"
 
         if not project_id:
             await self._send_event(
@@ -606,6 +651,11 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         ]
 
         client = genai.Client(vertexai=True, project=project_id, location=location)
+        activity_handling = getattr(
+            types.ActivityHandling,
+            activity_handling_name,
+            types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+        )
         config = types.LiveConnectConfig(
             responseModalities=[types.Modality.AUDIO],
             speechConfig=types.SpeechConfig(
@@ -621,7 +671,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 automaticActivityDetection=types.AutomaticActivityDetection(
                     disabled=True,
                 ),
-                activityHandling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+                activityHandling=activity_handling,
                 turnCoverage=types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
             ),
             proactivity=types.ProactivityConfig(proactiveAudio=False),
@@ -646,9 +696,20 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                         "model": model,
                         "voice": voice_name,
                         "silence_ms": silence_ms,
+                        "response_modalities": ["AUDIO"],
+                        "activity_handling": str(activity_handling),
                     }
                 )
-                logger.info("Assistant Live connected: model=%s location=%s silence_ms=%s", model, location, silence_ms)
+                logger.info(
+                    "Assistant Live connected: model=%s location=%s silence_ms=%s voice=%s activity_handling=%s response_modalities=%s proactivity=%s",
+                    model,
+                    location,
+                    silence_ms,
+                    voice_name,
+                    activity_handling,
+                    ["AUDIO"],
+                    False,
+                )
                 await asyncio.gather(
                     self._send_audio_to_gemini(session, types),
                     self._send_text_to_gemini(session, types, service),
@@ -804,8 +865,45 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 summary[attr] = getattr(event_payload, attr)
         return _json_safe(summary)
 
+    def _log_gemini_message(self, message):
+        server_content = getattr(message, "server_content", None)
+        model_turn = getattr(server_content, "model_turn", None) if server_content else None
+        inline_parts = []
+        for index, part in enumerate(getattr(model_turn, "parts", []) or []):
+            inline_data = getattr(part, "inline_data", None) or getattr(part, "inlineData", None)
+            if not inline_data:
+                continue
+            raw_data = getattr(inline_data, "data", None)
+            inline_parts.append(
+                {
+                    "index": index,
+                    "byte_length": len(_coerce_audio_bytes(raw_data)),
+                    "mime_type": getattr(inline_data, "mime_type", None) or getattr(inline_data, "mimeType", None),
+                }
+            )
+
+        output_transcription = getattr(server_content, "output_transcription", None) if server_content else None
+        logger.info(
+            "Assistant Live Gemini message: session=%s summary=%s",
+            self.live_session_id,
+            _json_safe(
+                {
+                    "has_message_data": bool(getattr(message, "data", None)),
+                    "message_data_length": len(_coerce_audio_bytes(getattr(message, "data", None))),
+                    "has_server_content": bool(server_content),
+                    "inline_audio_parts": inline_parts,
+                    "output_transcription": str(getattr(output_transcription, "text", "") or "")[:240],
+                    "turn_complete": bool(getattr(server_content, "turn_complete", False)) if server_content else False,
+                    "interrupted": bool(getattr(server_content, "interrupted", False)) if server_content else False,
+                    "tool_call": self._function_call_summaries(getattr(message, "tool_call", None)),
+                    "tool_call_cancellation": self._event_payload_summary(getattr(message, "tool_call_cancellation", None)),
+                }
+            ),
+        )
+
     async def _receive_from_gemini(self, session, types, service):
         async for message in session.receive():
+            self._log_gemini_message(message)
             setup_complete = getattr(message, "setup_complete", None)
             server_content = getattr(message, "server_content", None)
             tool_call = getattr(message, "tool_call", None)
@@ -822,8 +920,7 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 server_content_sent_audio = await self._handle_server_content(server_content)
 
             if getattr(message, "data", None) and not server_content_sent_audio:
-                self._mark_first_audio_output()
-                await self.send(bytes_data=message.data)
+                await self._send_pcm_audio_event(message.data, "message.data")
 
             if getattr(message, "text", None):
                 self._mark_first_model_output()
@@ -886,10 +983,10 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         model_turn = getattr(server_content, "model_turn", None)
         if model_turn and getattr(model_turn, "parts", None):
             for part in model_turn.parts:
-                inline_data = getattr(part, "inline_data", None)
+                inline_data = getattr(part, "inline_data", None) or getattr(part, "inlineData", None)
                 if inline_data and getattr(inline_data, "data", None):
-                    self._mark_first_audio_output()
-                    await self.send(bytes_data=inline_data.data)
+                    mime_type = getattr(inline_data, "mime_type", None) or getattr(inline_data, "mimeType", None)
+                    await self._send_pcm_audio_event(inline_data.data, "serverContent.modelTurn.inlineData", mime_type)
                     sent_audio = True
                 if getattr(part, "text", None):
                     self._mark_first_model_output()
