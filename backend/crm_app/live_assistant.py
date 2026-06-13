@@ -831,8 +831,6 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 await self._send_event({"type": "output_text", "text": message.text})
 
             if tool_call:
-                if self._tool_call_has_mutation(tool_call):
-                    self.suppress_next_tool_model_turn = True
                 self._create_background_task(
                     self._handle_tool_call(session, types, service, tool_call),
                     label="tool_call",
@@ -871,6 +869,12 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
 
         speech_event = await _generate_speech_event(self.user, text)
         if not speech_event:
+            logger.warning(
+                "Assistant Live voice fallback unavailable: session=%s text_len=%s",
+                self.live_session_id,
+                len(text),
+            )
+            await self._send_event({"type": "assistant_audio_unavailable", "text": text})
             return
 
         self._mark_first_audio_output()
@@ -878,11 +882,6 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         self.pending_voice_fallback_text = ""
 
     async def _handle_server_content(self, server_content):
-        if getattr(self, "suppress_next_tool_model_turn", False):
-            if getattr(server_content, "turn_complete", False):
-                self.suppress_next_tool_model_turn = False
-            return True
-
         sent_audio = False
         model_turn = getattr(server_content, "model_turn", None)
         if model_turn and getattr(model_turn, "parts", None):
@@ -926,7 +925,6 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
 
     async def _handle_tool_call(self, session, types, service, tool_call):
         function_responses = []
-        has_immediate_reply = False
         tool_call_summaries = self._function_call_summaries(tool_call)
         self._set_live_state("tool_running", tool_calls=tool_call_summaries)
         logger.info("Assistant Live toolCall: session=%s calls=%s", self.live_session_id, tool_call_summaries)
@@ -983,7 +981,6 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                 }
             )
             if payload["reply"]:
-                has_immediate_reply = True
                 self.pending_voice_fallback_text = payload["reply"]
             self._append_live_context("assistant", context_text)
 
@@ -999,8 +996,6 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
             function_responses.append(types.FunctionResponse(**function_response_payload))
 
         if function_responses:
-            if has_immediate_reply:
-                self.suppress_next_tool_model_turn = True
             response_summaries = [
                 {
                     "id": getattr(response, "id", None) or getattr(response, "kwargs", {}).get("id"),
@@ -1012,14 +1007,8 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
             logger.info("Assistant Live toolResponse sending: session=%s responses=%s", self.live_session_id, response_summaries)
             await session.send_tool_response(function_responses=function_responses)
             logger.info("Assistant Live toolResponse sent: session=%s responses=%s", self.live_session_id, response_summaries)
+            self._set_live_state("waiting_for_model_response", function_responses=response_summaries)
             await self._send_event({"type": "tool_response_sent", "function_responses": response_summaries})
-            if has_immediate_reply:
-                await self._send_voice_fallback_if_needed(force=True)
-                self._set_live_state("connected", reason="tool_reply")
-                await self._send_event({"type": "turn_complete"})
-                await self._finish_turn_metrics(reason="tool_reply")
-            else:
-                self._set_live_state("waiting_for_model_response", function_responses=response_summaries)
         else:
             logger.warning("Assistant Live toolCall had no functionCalls: session=%s", self.live_session_id)
             self._set_live_state("connected", reason="empty_tool_call")

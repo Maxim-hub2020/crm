@@ -913,8 +913,12 @@ export default function Assistant() {
     }
 
     if (event.type === "tool_response_sent") {
-      liveToolStateRef.current = "waiting_for_tool_response";
-      clearLiveResponseWatchdogTimer();
+      liveToolStateRef.current = event.live_state || "waiting_for_model_response";
+      pendingRef.current = true;
+      recordingRef.current = false;
+      setPending(true);
+      setRecording(false);
+      scheduleLiveResponseWatchdog();
       logLiveLifecycle("toolResponse sent", { function_responses: event.function_responses || [] });
       return;
     }
@@ -926,11 +930,12 @@ export default function Assistant() {
       if (!event.reply) {
         return;
       }
-      liveToolStateRef.current = "";
       liveToolReplyFallbackRef.current = event.reply;
       liveLastTurnWasToolReplyRef.current = true;
-      pendingRef.current = false;
-      setPending(false);
+      pendingRef.current = true;
+      recordingRef.current = false;
+      setPending(true);
+      setRecording(false);
       setReplyText(event.reply);
       return;
     }
@@ -945,6 +950,16 @@ export default function Assistant() {
         audioMimeType: event.audio_mime_type || "audio/mpeg",
       };
       void playGeminiAudio(event.audio_base64, event.audio_mime_type || "audio/mpeg");
+      return;
+    }
+
+    if (event.type === "assistant_audio_unavailable") {
+      clearLiveResponseWatchdogTimer();
+      liveToolStateRef.current = "";
+      pendingRef.current = false;
+      setPending(false);
+      logLiveLifecycle("assistant_audio_unavailable", { text: event.text || "" }, "warn");
+      setError("Gemini ответил текстом, но аудиоответ не был сгенерирован. Проверьте настройки TTS/Vertex в backend.");
       return;
     }
 
