@@ -1642,10 +1642,113 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
             async_to_sync(consumer._handle_tool_call)(session, FakeTypes, service, FakeToolCall())
 
         event_types = [event["type"] for event in sent_events]
-        self.assertEqual(event_types[:3], ["tool_call", "assistant_audio", "turn_complete"])
+        self.assertEqual(event_types[:5], ["tool_running", "tool_call", "tool_response_sent", "assistant_audio", "turn_complete"])
         self.assertTrue(session.function_responses)
+        response_kwargs = session.function_responses[0].kwargs
+        self.assertEqual(response_kwargs["id"], "call-1")
+        self.assertEqual(response_kwargs["name"], "create_task")
+        self.assertTrue(response_kwargs["response"]["ok"])
+        self.assertNotIn("output", response_kwargs["response"])
+        self.assertNotIn("scheduling", response_kwargs)
         self.assertTrue(consumer.suppress_next_tool_model_turn)
         self.assertTrue(Task.objects.filter(title="Позвонить клиенту", assignee=self.user).exists())
+
+    def test_live_tool_handler_error_returns_function_response_without_crash(self):
+        class FakeFunctionCall:
+            id = "call-error"
+            name = "create_task"
+            args = {"title": "Сломанная задача"}
+
+        class FakeToolCall:
+            function_calls = [FakeFunctionCall()]
+
+        class FakeSession:
+            def __init__(self):
+                self.function_responses = []
+
+            async def send_tool_response(self, function_responses):
+                self.function_responses = function_responses
+
+        class FakeTypes:
+            class FunctionResponse:
+                def __init__(self, **kwargs):
+                    self.kwargs = kwargs
+
+        async def fake_execute_assistant_tool(_service, _tool_name, _arguments):
+            raise RuntimeError("tool boom")
+
+        async def fake_generate_speech_event(_user, text):
+            return {
+                "type": "assistant_audio",
+                "audio_base64": "bXAz",
+                "audio_mime_type": "audio/mpeg",
+                "text": text,
+            }
+
+        consumer = AssistantLiveConsumer()
+        consumer.user = self.user
+        consumer.live_context = []
+        consumer.turn_metrics = consumer._new_turn_metrics()
+        consumer.pending_voice_fallback_text = ""
+        consumer.suppress_next_tool_model_turn = False
+        sent_events = []
+
+        async def fake_send(bytes_data=None, text_data=None):
+            if text_data:
+                sent_events.append(json.loads(text_data))
+
+        consumer.send = fake_send
+        service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)
+        session = FakeSession()
+
+        with (
+            patch("crm_app.live_assistant._execute_assistant_tool", new=fake_execute_assistant_tool),
+            patch("crm_app.live_assistant._generate_speech_event", new=fake_generate_speech_event),
+        ):
+            async_to_sync(consumer._handle_tool_call)(session, FakeTypes, service, FakeToolCall())
+
+        event_types = [event["type"] for event in sent_events]
+        self.assertIn("tool_response_sent", event_types)
+        self.assertTrue(session.function_responses)
+        response_kwargs = session.function_responses[0].kwargs
+        self.assertEqual(response_kwargs["id"], "call-error")
+        self.assertEqual(response_kwargs["name"], "create_task")
+        self.assertFalse(response_kwargs["response"]["ok"])
+        self.assertIn("tool boom", response_kwargs["response"]["error"])
+
+    def test_live_tool_call_cancellation_is_not_disconnect(self):
+        class FakeCancellation:
+            ids = ["call-1"]
+            reason = "cancelled by model"
+
+        class FakeMessage:
+            setup_complete = None
+            server_content = None
+            data = None
+            text = None
+            tool_call = None
+            tool_call_cancellation = FakeCancellation()
+            go_away = None
+            session_resumption_update = None
+
+        class FakeSession:
+            async def receive(self):
+                yield FakeMessage()
+
+        consumer = AssistantLiveConsumer()
+        consumer.turn_metrics = consumer._new_turn_metrics()
+        sent_events = []
+
+        async def fake_send(bytes_data=None, text_data=None):
+            if text_data:
+                sent_events.append(json.loads(text_data))
+
+        consumer.send = fake_send
+
+        async_to_sync(consumer._receive_from_gemini)(FakeSession(), None, None)
+
+        self.assertEqual(sent_events[-1]["type"], "tool_call_cancellation")
+        self.assertEqual(sent_events[-1]["payload"]["ids"], ["call-1"])
 
     def test_live_tool_declarations_are_limited_to_low_latency_functions(self):
         service = CRMAssistantService(self.user, init_gemini_client=False, init_memory=False)

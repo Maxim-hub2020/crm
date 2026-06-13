@@ -30,6 +30,7 @@ const LIVE_RESPONSE_WATCHDOG_MS = clampNumber(readEnvNumber(import.meta.env.VITE
 const LIVE_KEEPALIVE_MS = clampNumber(readEnvNumber(import.meta.env.VITE_ASSISTANT_LIVE_KEEPALIVE_MS, 15000), 8000, 45000);
 const LIVE_REFRESH_AFTER_TURN = false;
 const LIVE_RECONNECT_MAX_ATTEMPTS = 4;
+const LIVE_TOOL_PROTECTED_STATES = new Set(["tool_running", "waiting_for_tool_response"]);
 const STABLE_CLIENT_SILENCE_MS = Number(import.meta.env.VITE_ASSISTANT_STABLE_SILENCE_MS || 3000);
 const STABLE_MAX_UTTERANCE_MS = clampNumber(readEnvNumber(import.meta.env.VITE_ASSISTANT_STABLE_MAX_UTTERANCE_MS, 30000), 8000, 60000);
 const BROWSER_TTS_MAX_MS = Number(import.meta.env.VITE_ASSISTANT_TTS_MAX_MS || 18000);
@@ -267,6 +268,9 @@ export default function Assistant() {
   const liveLastPongAtRef = useRef(0);
   const liveRefreshAfterPlaybackRef = useRef(false);
   const liveReconnectAttemptsRef = useRef(0);
+  const liveLocalSessionIdRef = useRef("");
+  const liveBackendSessionIdRef = useRef("");
+  const liveToolStateRef = useRef("");
   const liveStartedAtRef = useRef(0);
   const liveLastVoiceAtRef = useRef(0);
   const liveLastStrongVoiceAtRef = useRef(0);
@@ -335,7 +339,7 @@ export default function Assistant() {
       clearLiveReconnectTimer();
       clearPendingWatchdogTimer();
       stopStableVoiceSession();
-      teardownLiveSession();
+      teardownLiveSession("component_unmount");
       teardownRecorder();
       stopPlayback();
     };
@@ -344,6 +348,34 @@ export default function Assistant() {
   const recentCommands = useMemo(() => history.slice(0, 5), [history]);
   const hasDialogButton = Boolean(history.length || heardText || replyText);
   const currentStatus = statusText({ sessionActive, recording, pending, speaking });
+
+  function getLiveDebugStack() {
+    try {
+      return new Error().stack || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function logLiveLifecycle(action, details = {}, level = "info") {
+    const payload = {
+      local_session_id: liveLocalSessionIdRef.current,
+      backend_session_id: liveBackendSessionIdRef.current,
+      tool_state: liveToolStateRef.current,
+      socket_state: liveSocketRef.current?.readyState,
+      ...details,
+    };
+    const logger = level === "warn" ? console.warn : level === "error" ? console.error : console.info;
+    logger(`[Gemini Live] ${action}`, payload);
+  }
+
+  function newLocalLiveSessionId() {
+    try {
+      return window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    } catch {
+      return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+  }
 
   function clearResumeTimer() {
     if (resumeTimerRef.current) {
@@ -544,7 +576,8 @@ export default function Assistant() {
     try {
       socket.send(JSON.stringify(payload));
       return true;
-    } catch {
+    } catch (error) {
+      logLiveLifecycle("send_json_failed", { payload_type: payload?.type, error: String(error), stack: getLiveDebugStack() }, "warn");
       scheduleLiveReconnect("Live-соединение AI-помощника оборвалось. Переподключаюсь...");
       return false;
     }
@@ -574,6 +607,15 @@ export default function Assistant() {
 
     liveResponseWatchdogTimerRef.current = window.setTimeout(() => {
       if (!sessionActiveRef.current || !pendingRef.current) return;
+      if (LIVE_TOOL_PROTECTED_STATES.has(liveToolStateRef.current)) {
+        logLiveLifecycle(
+          "watchdog_skip_reconnect_during_tool",
+          { watchdog_ms: LIVE_RESPONSE_WATCHDOG_MS, stack: getLiveDebugStack() },
+          "warn"
+        );
+        scheduleLiveResponseWatchdog();
+        return;
+      }
       scheduleLiveReconnect("AI-помощник не получил ответ от Live API. Переподключаюсь...");
     }, LIVE_RESPONSE_WATCHDOG_MS);
   }
@@ -596,7 +638,7 @@ export default function Assistant() {
     clearLiveReconnectTimer();
     clearLiveResponseWatchdogTimer();
     liveRefreshAfterPlaybackRef.current = false;
-    teardownLiveSession();
+    teardownLiveSession("session_refresh");
 
     if (!sessionActiveRef.current) return;
 
@@ -614,11 +656,14 @@ export default function Assistant() {
     }, delay);
   }
 
-  function teardownLiveSession() {
+  function teardownLiveSession(reason = "teardown") {
     clearLiveReconnectTimer();
     clearLiveResponseWatchdogTimer();
     clearLiveKeepaliveTimer();
     liveRefreshAfterPlaybackRef.current = false;
+    if (liveSocketRef.current || liveStreamRef.current || liveAudioContextRef.current) {
+      logLiveLifecycle("teardown_live_session", { reason, stack: getLiveDebugStack() }, "warn");
+    }
 
     try {
       liveProcessorRef.current?.disconnect();
@@ -640,7 +685,7 @@ export default function Assistant() {
       liveSocketRef.current.onerror = null;
       liveSocketRef.current.onclose = null;
       if (liveSocketRef.current.readyState === WebSocket.OPEN || liveSocketRef.current.readyState === WebSocket.CONNECTING) {
-        liveSocketRef.current.close();
+        liveSocketRef.current.close(1000, "client_teardown");
       }
     }
 
@@ -660,6 +705,8 @@ export default function Assistant() {
     liveReplyBufferRef.current = "";
     liveToolReplyFallbackRef.current = "";
     liveLastTurnWasToolReplyRef.current = false;
+    liveBackendSessionIdRef.current = "";
+    liveToolStateRef.current = "";
     liveNoiseFloorRef.current = 0.006;
     resetLiveTurnDetection();
   }
@@ -668,6 +715,12 @@ export default function Assistant() {
     if (!sessionActiveRef.current) return;
 
     clearLiveResponseWatchdogTimer();
+    if (LIVE_TOOL_PROTECTED_STATES.has(liveToolStateRef.current) && reason.includes("не получил ответ")) {
+      logLiveLifecycle("skip_reconnect_during_tool", { reason, stack: getLiveDebugStack() }, "warn");
+      scheduleLiveResponseWatchdog();
+      return;
+    }
+    logLiveLifecycle("schedule_reconnect", { reason, silent, stack: getLiveDebugStack() }, "warn");
 
     if (liveReconnectAttemptsRef.current >= LIVE_RECONNECT_MAX_ATTEMPTS) {
       setError("Live-сессия Gemini несколько раз оборвалась. Нажмите на значок ассистента и запустите режим заново.");
@@ -678,7 +731,7 @@ export default function Assistant() {
     clearLiveReconnectTimer();
     liveReconnectAttemptsRef.current += 1;
     const delay = Math.min(3000, 600 * liveReconnectAttemptsRef.current);
-    teardownLiveSession();
+    teardownLiveSession(`reconnect: ${reason || "unknown"}`);
 
     pendingRef.current = !silent;
     recordingRef.current = Boolean(silent);
@@ -811,6 +864,10 @@ export default function Assistant() {
   }
 
   function handleLiveEvent(event) {
+    if (event.live_session_id) {
+      liveBackendSessionIdRef.current = event.live_session_id;
+    }
+
     if (event.type === "pong") {
       liveLastPongAtRef.current = Date.now();
       return;
@@ -820,11 +877,18 @@ export default function Assistant() {
       if (event.type === "live_connected") {
         liveReconnectAttemptsRef.current = 0;
         setError("");
+        logLiveLifecycle("setupComplete", { model: event.model, voice: event.voice });
       }
+      liveToolStateRef.current = "";
       pendingRef.current = false;
       recordingRef.current = true;
       setPending(false);
       setRecording(true);
+      return;
+    }
+
+    if (event.type === "setup_complete") {
+      logLiveLifecycle("setupComplete", { backend_event: true });
       return;
     }
 
@@ -841,12 +905,28 @@ export default function Assistant() {
       return;
     }
 
+    if (event.type === "tool_running") {
+      liveToolStateRef.current = "tool_running";
+      clearLiveResponseWatchdogTimer();
+      logLiveLifecycle("toolCall", { tool_calls: event.tool_calls || [] });
+      return;
+    }
+
+    if (event.type === "tool_response_sent") {
+      liveToolStateRef.current = "waiting_for_tool_response";
+      clearLiveResponseWatchdogTimer();
+      logLiveLifecycle("toolResponse sent", { function_responses: event.function_responses || [] });
+      return;
+    }
+
     if (event.type === "tool_call") {
       clearLiveResponseWatchdogTimer();
       appendHiddenLiveContext(getToolContextText(event));
+      logLiveLifecycle("toolCall result", { name: event.name, last_project_id: event.last_project_id });
       if (!event.reply) {
         return;
       }
+      liveToolStateRef.current = "";
       liveToolReplyFallbackRef.current = event.reply;
       liveLastTurnWasToolReplyRef.current = true;
       pendingRef.current = false;
@@ -857,6 +937,7 @@ export default function Assistant() {
 
     if (event.type === "assistant_audio" && event.audio_base64) {
       clearLiveResponseWatchdogTimer();
+      liveToolStateRef.current = "";
       pendingRef.current = false;
       setPending(false);
       latestAudioRef.current = {
@@ -868,12 +949,35 @@ export default function Assistant() {
     }
 
     if (event.type === "interrupted") {
+      liveToolStateRef.current = "";
+      clearLiveResponseWatchdogTimer();
+      logLiveLifecycle("interrupted");
       stopLivePlayback();
+      return;
+    }
+
+    if (event.type === "tool_call_cancellation") {
+      liveToolStateRef.current = "";
+      clearLiveResponseWatchdogTimer();
+      logLiveLifecycle("toolCallCancellation", { payload: event.payload || {} });
+      pendingRef.current = false;
+      setPending(false);
+      return;
+    }
+
+    if (event.type === "go_away") {
+      logLiveLifecycle("goAway", { payload: event.payload || {} }, "warn");
+      return;
+    }
+
+    if (event.type === "session_resumption_update") {
+      logLiveLifecycle("sessionResumptionUpdate", { payload: event.payload || {} });
       return;
     }
 
     if (event.type === "turn_complete") {
       clearLiveResponseWatchdogTimer();
+      liveToolStateRef.current = "";
       pendingRef.current = false;
       setPending(false);
       const shouldRefresh = LIVE_REFRESH_AFTER_TURN && !liveLastTurnWasToolReplyRef.current;
@@ -897,6 +1001,7 @@ export default function Assistant() {
 
     if (event.type === "error") {
       clearLiveResponseWatchdogTimer();
+      logLiveLifecycle("backend_error", { detail: event.detail, retryable: event.retryable }, event.retryable ? "warn" : "error");
       if (event.retryable) {
         scheduleLiveReconnect("Live-соединение Gemini временно оборвалось. Переподключаюсь...");
         return;
@@ -941,7 +1046,7 @@ export default function Assistant() {
     try {
       window.speechSynthesis?.cancel();
     } catch {}
-    teardownLiveSession();
+    teardownLiveSession("deactivate_session");
     teardownRecorder();
     stopPlayback();
   }
@@ -1396,7 +1501,7 @@ export default function Assistant() {
       return false;
     }
 
-    teardownLiveSession();
+    teardownLiveSession("start_live_session_reset");
     stopPlayback();
     clearResumeTimer();
     setError(reconnecting && !silent ? "Переподключаю Live-сессию Gemini..." : "");
@@ -1417,6 +1522,9 @@ export default function Assistant() {
     setPending(true);
     setRecording(false);
     setSpeaking(false);
+    liveLocalSessionIdRef.current = newLocalLiveSessionId();
+    liveBackendSessionIdRef.current = "";
+    liveToolStateRef.current = "";
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -1440,6 +1548,7 @@ export default function Assistant() {
         })
       );
       let recoverHandled = false;
+      logLiveLifecycle("new WebSocket", { reconnecting, silent, stack: getLiveDebugStack() });
 
       const recoverLiveConnection = (message) => {
         if (recoverHandled || !sessionActiveRef.current) return;
@@ -1524,6 +1633,7 @@ export default function Assistant() {
       };
 
       socket.onopen = () => {
+        logLiveLifecycle("onopen");
         startLiveKeepalive(socket);
         pendingRef.current = false;
         recordingRef.current = true;
@@ -1549,11 +1659,17 @@ export default function Assistant() {
         }
       };
 
-      socket.onerror = () => {
+      socket.onerror = (event) => {
+        logLiveLifecycle("onerror", { event_type: event?.type, stack: getLiveDebugStack() }, "error");
         recoverLiveConnection("Live-соединение Gemini оборвалось. Переподключаюсь...");
       };
 
       socket.onclose = (event) => {
+        logLiveLifecycle(
+          "onclose",
+          { code: event.code, reason: event.reason, was_clean: event.wasClean, stack: getLiveDebugStack() },
+          event.wasClean ? "info" : "warn"
+        );
         if (!sessionActiveRef.current) return;
         if (event.code === 4401 || event.code === 4403) {
           const reason =
@@ -1579,7 +1695,7 @@ export default function Assistant() {
       liveSocketRef.current = socket;
       return true;
     } catch {
-      teardownLiveSession();
+      teardownLiveSession("start_live_session_failed");
       pendingRef.current = false;
       setPending(false);
       setError("Браузер не дал доступ к микрофону или не удалось открыть Live-сессию.");

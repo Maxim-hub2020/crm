@@ -5,6 +5,8 @@ import logging
 import os
 import re
 import time
+import traceback
+import uuid
 from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
@@ -76,6 +78,10 @@ def _env_int(name, default):
 
 def _json_safe(value):
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def _live_stack(limit=8):
+    return "".join(traceback.format_stack(limit=limit)[:-1]).strip()
 
 
 def _split_env_csv(name, default=""):
@@ -338,20 +344,43 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
     input_sample_rate = 16000
     output_sample_rate = 24000
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.live_session_id = uuid.uuid4().hex[:12]
+        self.live_state = "initialized"
+
     async def connect(self):
+        self.live_session_id = uuid.uuid4().hex[:12]
+        self.live_state = "connecting"
         query = parse_qs(self.scope.get("query_string", b"").decode("utf-8", errors="ignore"))
         token = (query.get("token") or [""])[0]
         self.current_screen = str((query.get("screen") or ["/assistant"])[0] or "/assistant")[:120]
         self.recent_history = _parse_history_param((query.get("history") or [""])[0])
         self.live_context = list(self.recent_history)
         self.last_project_context = _extract_last_project_context(self.live_context)
+        logger.info(
+            "Assistant Live websocket connect requested: session=%s screen=%s history_items=%s",
+            self.live_session_id,
+            self.current_screen,
+            len(self.live_context),
+        )
         self.user = await _authenticate_websocket_token(token)
 
         if not self.user:
+            logger.warning(
+                "Assistant Live websocket close before accept: session=%s code=4401 reason=auth_failed stack=%s",
+                self.live_session_id,
+                _live_stack(),
+            )
             await self.close(code=4401)
             return
 
         if not await _has_live_assistant_access(self.user):
+            logger.warning(
+                "Assistant Live websocket close before accept: session=%s code=4403 reason=no_subscription stack=%s",
+                self.live_session_id,
+                _live_stack(),
+            )
             await self.close(code=4403)
             return
 
@@ -373,6 +402,13 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         )
 
     async def disconnect(self, _code):
+        logger.info(
+            "Assistant Live websocket disconnect: session=%s code=%s state=%s stack=%s",
+            getattr(self, "live_session_id", ""),
+            _code,
+            getattr(self, "live_state", ""),
+            _live_stack(),
+        )
         task = getattr(self, "live_task", None)
         if task:
             task.cancel()
@@ -416,7 +452,19 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         await queue.put(item)
 
     async def _send_event(self, payload):
+        payload = dict(payload or {})
+        payload.setdefault("live_session_id", getattr(self, "live_session_id", ""))
+        payload.setdefault("live_state", getattr(self, "live_state", ""))
         await self.send(text_data=json.dumps(payload, ensure_ascii=False))
+
+    def _set_live_state(self, state, **details):
+        self.live_state = state
+        logger.info(
+            "Assistant Live state: session=%s state=%s details=%s",
+            getattr(self, "live_session_id", ""),
+            state,
+            _json_safe(details),
+        )
 
     def _create_background_task(self, coro, label="background"):
         task = asyncio.create_task(coro)
@@ -583,7 +631,15 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
         )
 
         try:
+            logger.info(
+                "Assistant Live ai.live.connect start: session=%s model=%s location=%s tools=%s",
+                self.live_session_id,
+                model,
+                location,
+                [declaration.get("name") for declaration in tool_declarations],
+            )
             async with client.aio.live.connect(model=model, config=config) as session:
+                self._set_live_state("connected", model=model, location=location)
                 await self._send_event(
                     {
                         "type": "live_connected",
@@ -599,10 +655,18 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                     self._receive_from_gemini(session, types, service),
                 )
         except asyncio.CancelledError:
+            logger.info("Assistant Live ai.live.connect cancelled: session=%s stack=%s", self.live_session_id, _live_stack())
             raise
         except Exception as exc:
             retryable = _is_retryable_live_error(exc)
-            logger.warning("Assistant Live session error retryable=%s: %s", retryable, exc)
+            logger.warning(
+                "Assistant Live session error: session=%s state=%s retryable=%s error=%s stack=%s",
+                self.live_session_id,
+                getattr(self, "live_state", ""),
+                retryable,
+                exc,
+                _live_stack(),
+            )
             await self._send_event(
                 {
                     "type": "error",
@@ -716,11 +780,43 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
             parts.append(f"reply={reply}")
         return "; ".join(parts)
 
+    @staticmethod
+    def _function_call_summaries(tool_call):
+        summaries = []
+        for function_call in getattr(tool_call, "function_calls", []) or []:
+            summaries.append(
+                {
+                    "id": getattr(function_call, "id", None),
+                    "name": getattr(function_call, "name", ""),
+                }
+            )
+        return summaries
+
+    @staticmethod
+    def _event_payload_summary(event_payload):
+        if not event_payload:
+            return {}
+        if isinstance(event_payload, dict):
+            return _json_safe(event_payload)
+        summary = {}
+        for attr in ("id", "ids", "name", "reason", "newHandle", "resumable"):
+            if hasattr(event_payload, attr):
+                summary[attr] = getattr(event_payload, attr)
+        return _json_safe(summary)
+
     async def _receive_from_gemini(self, session, types, service):
         async for message in session.receive():
+            setup_complete = getattr(message, "setup_complete", None)
             server_content = getattr(message, "server_content", None)
             tool_call = getattr(message, "tool_call", None)
+            tool_call_cancellation = getattr(message, "tool_call_cancellation", None)
+            go_away = getattr(message, "go_away", None)
+            session_resumption_update = getattr(message, "session_resumption_update", None)
             server_content_sent_audio = False
+
+            if setup_complete:
+                logger.info("Assistant Live setupComplete: session=%s", self.live_session_id)
+                await self._send_event({"type": "setup_complete"})
 
             if server_content:
                 server_content_sent_audio = await self._handle_server_content(server_content)
@@ -741,6 +837,22 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
                     self._handle_tool_call(session, types, service, tool_call),
                     label="tool_call",
                 )
+
+            if tool_call_cancellation:
+                payload = self._event_payload_summary(tool_call_cancellation)
+                logger.info("Assistant Live toolCallCancellation: session=%s payload=%s", self.live_session_id, payload)
+                self._set_live_state("connected", reason="tool_call_cancellation")
+                await self._send_event({"type": "tool_call_cancellation", "payload": payload})
+
+            if go_away:
+                payload = self._event_payload_summary(go_away)
+                logger.warning("Assistant Live goAway: session=%s payload=%s", self.live_session_id, payload)
+                await self._send_event({"type": "go_away", "payload": payload})
+
+            if session_resumption_update:
+                payload = self._event_payload_summary(session_resumption_update)
+                logger.info("Assistant Live sessionResumptionUpdate: session=%s payload=%s", self.live_session_id, payload)
+                await self._send_event({"type": "session_resumption_update", "payload": payload})
 
     @staticmethod
     def _tool_call_has_mutation(tool_call):
@@ -800,11 +912,13 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
 
         if getattr(server_content, "interrupted", False):
             logger.info("Assistant Live server interrupted")
+            self._set_live_state("connected", reason="interrupted")
             await self._send_event({"type": "interrupted"})
 
         if getattr(server_content, "turn_complete", False):
             logger.info("Assistant Live server turn_complete")
             await self._send_voice_fallback_if_needed()
+            self._set_live_state("connected", reason="turn_complete")
             await self._send_event({"type": "turn_complete"})
             await self._finish_turn_metrics(reason="turn_complete")
 
@@ -813,14 +927,44 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
     async def _handle_tool_call(self, session, types, service, tool_call):
         function_responses = []
         has_immediate_reply = False
+        tool_call_summaries = self._function_call_summaries(tool_call)
+        self._set_live_state("tool_running", tool_calls=tool_call_summaries)
+        logger.info("Assistant Live toolCall: session=%s calls=%s", self.live_session_id, tool_call_summaries)
+        await self._send_event({"type": "tool_running", "tool_calls": tool_call_summaries})
+
         for function_call in getattr(tool_call, "function_calls", []) or []:
             tool_name = getattr(function_call, "name", "")
             arguments = dict(getattr(function_call, "args", {}) or {})
             arguments = self._with_contextual_project(tool_name, arguments)
-            call_id = getattr(function_call, "id", None)
+            gemini_function_id = getattr(function_call, "id", None)
             tool_started_at = time.perf_counter()
-            payload = await _execute_assistant_tool(service, tool_name, arguments)
-            self.turn_metrics["crm_api_ms"] += round((time.perf_counter() - tool_started_at) * 1000)
+            try:
+                payload = await _execute_assistant_tool(service, tool_name, arguments)
+            except Exception as exc:  # pragma: no cover - defensive tool safety net
+                logger.exception(
+                    "Assistant Live tool handler failed: session=%s id=%s name=%s args=%s",
+                    self.live_session_id,
+                    gemini_function_id,
+                    tool_name,
+                    _json_safe(arguments),
+                )
+                result = {
+                    "ok": False,
+                    "error": str(exc),
+                    "message": "Не удалось выполнить команду CRM. Попробуйте повторить или уточнить данные.",
+                }
+                payload = _json_safe(
+                    {
+                        "event": {
+                            "name": tool_name,
+                            "arguments": arguments,
+                            "result": result,
+                        },
+                        "reply": result["message"],
+                    }
+                )
+            finally:
+                self.turn_metrics["crm_api_ms"] += round((time.perf_counter() - tool_started_at) * 1000)
             project_context = _project_context_from_result(payload["event"].get("result"))
             if project_context:
                 self.last_project_context = project_context
@@ -845,22 +989,37 @@ class AssistantLiveConsumer(AsyncWebsocketConsumer):
 
             function_response_payload = {
                 "name": tool_name,
-                "response": {"output": payload["event"]["result"]},
+                "response": _json_safe(payload["event"]["result"]),
             }
-            if call_id:
-                function_response_payload["id"] = call_id
-            if payload["reply"]:
-                scheduling = getattr(getattr(types, "FunctionResponseScheduling", None), "SILENT", None)
-                if scheduling is not None:
-                    function_response_payload["scheduling"] = scheduling
+            if gemini_function_id:
+                function_response_payload["id"] = gemini_function_id
+            else:
+                logger.warning("Assistant Live toolCall without id: session=%s name=%s", self.live_session_id, tool_name)
 
             function_responses.append(types.FunctionResponse(**function_response_payload))
 
         if function_responses:
             if has_immediate_reply:
                 self.suppress_next_tool_model_turn = True
+            response_summaries = [
+                {
+                    "id": getattr(response, "id", None) or getattr(response, "kwargs", {}).get("id"),
+                    "name": getattr(response, "name", None) or getattr(response, "kwargs", {}).get("name"),
+                }
+                for response in function_responses
+            ]
+            self._set_live_state("waiting_for_tool_response", function_responses=response_summaries)
+            logger.info("Assistant Live toolResponse sending: session=%s responses=%s", self.live_session_id, response_summaries)
             await session.send_tool_response(function_responses=function_responses)
+            logger.info("Assistant Live toolResponse sent: session=%s responses=%s", self.live_session_id, response_summaries)
+            await self._send_event({"type": "tool_response_sent", "function_responses": response_summaries})
             if has_immediate_reply:
                 await self._send_voice_fallback_if_needed(force=True)
+                self._set_live_state("connected", reason="tool_reply")
                 await self._send_event({"type": "turn_complete"})
                 await self._finish_turn_metrics(reason="tool_reply")
+            else:
+                self._set_live_state("waiting_for_model_response", function_responses=response_summaries)
+        else:
+            logger.warning("Assistant Live toolCall had no functionCalls: session=%s", self.live_session_id)
+            self._set_live_state("connected", reason="empty_tool_call")
