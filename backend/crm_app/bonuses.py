@@ -9,6 +9,7 @@ from .models import Client, ClientBonusTransaction, FinanceCategory, Payment, Pr
 
 BONUS_ORDER_THRESHOLD = Decimal("50000")
 BONUS_RATE = Decimal("0.03")
+BONUS_REDEMPTION_RATE = Decimal("0.10")
 MONEY_QUANT = Decimal("0.01")
 
 
@@ -120,10 +121,14 @@ def apply_project_bonus_promo_code(project, actor=None):
         if available_bonus <= 0:
             raise ValidationError({"bonus_promo_code": "У клиента-рекомендателя нет доступных бонусов."})
 
-        project_limit = _money(project.total_amount) if project.total_amount else available_bonus
+        project_total = _money(project.total_amount)
+        if project_total <= 0:
+            raise ValidationError({"bonus_promo_code": "Укажите сумму проекта, чтобы применить бонусы."})
+
+        project_limit = _money(project_total * BONUS_REDEMPTION_RATE)
         transfer_amount = min(available_bonus, project_limit)
         if transfer_amount <= 0:
-            raise ValidationError({"bonus_promo_code": "Укажите сумму проекта, чтобы применить бонусы."})
+            raise ValidationError({"bonus_promo_code": "Бонусами можно покрыть до 10% стоимости проекта."})
 
         _change_bonus_balance(
             client=referrer,

@@ -710,7 +710,7 @@ function ProjectBonusSummary({ project, client }) {
           <div className="mt-1 text-lg font-black text-emerald-600">{formatMoney(accruedAmount)} ₽</div>
         </div>
         <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-blue-100">
-          <div className="text-xs font-bold text-slate-400">По промокоду</div>
+          <div className="text-xs font-bold text-slate-400">По промокоду, до 10%</div>
           <div className="mt-1 text-lg font-black text-blue-600">
             {referralAmount ? `${formatMoney(referralAmount)} ₽` : promoCode || "Не применён"}
           </div>
@@ -1186,6 +1186,10 @@ export default function Projects() {
       setDetailAutosaveState("idle");
       return;
     }
+    if (payload.bonus_promo_code && !payload.total_amount) {
+      setDetailAutosaveState("idle");
+      return;
+    }
 
     setDetailAutosaveState("pending");
     window.clearTimeout(detailAutosaveTimerRef.current);
@@ -1540,6 +1544,10 @@ export default function Projects() {
       const promoCode = normalizePromoCodeInput(createForm.bonus_promo_code);
       if (promoCode && promoCode.length !== 5) {
         setCreateError("Промокод должен состоять из последних 5 цифр телефона.");
+        return;
+      }
+      if (promoCode && !cleanAmountValue(createForm.total_amount)) {
+        setCreateError("Укажите сумму проекта: бонусами можно покрыть до 10% стоимости.");
         return;
       }
 
@@ -2473,7 +2481,7 @@ export default function Projects() {
                 onChange={(event) => setCreateForm((prev) => ({ ...prev, bonus_promo_code: normalizePromoCodeInput(event.target.value) }))}
                 inputMode="numeric"
                 maxLength={5}
-                placeholder="Последние 5 цифр телефона клиента-рекомендателя"
+                placeholder="Последние 5 цифр телефона, покрывает до 10% проекта"
               />
             </div>
           </div>
@@ -2694,7 +2702,7 @@ export default function Projects() {
                     inputMode="numeric"
                     maxLength={5}
                     disabled={Boolean(Number(activeProject.referral_bonus_used || 0))}
-                    placeholder="Последние 5 цифр телефона клиента-рекомендателя"
+                    placeholder="Последние 5 цифр телефона, покрывает до 10% проекта"
                   />
                 </div>
               </div>

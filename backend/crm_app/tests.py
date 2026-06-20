@@ -430,7 +430,7 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
             workspace=self.manager.workspace,
             name="Referrer",
             phone="+79000001234",
-            bonus_balance=Decimal("1800.00"),
+            bonus_balance=Decimal("20000.00"),
         )
 
         response = api_client.post(
@@ -449,11 +449,11 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         referrer.refresh_from_db()
         project = Project.objects.get(id=response.data["id"])
         project.client.refresh_from_db()
-        self.assertEqual(referrer.bonus_balance, Decimal("0.00"))
-        self.assertEqual(project.client.bonus_balance, Decimal("1800.00"))
+        self.assertEqual(referrer.bonus_balance, Decimal("8000.00"))
+        self.assertEqual(project.client.bonus_balance, Decimal("12000.00"))
         self.assertEqual(project.bonus_promo_code, "01234")
         self.assertEqual(project.referred_by_client_id, referrer.id)
-        self.assertEqual(project.referral_bonus_used, Decimal("1800.00"))
+        self.assertEqual(project.referral_bonus_used, Decimal("12000.00"))
         self.assertEqual(ClientBonusTransaction.objects.filter(project=project, promo_code="01234").count(), 2)
 
     def test_project_rejects_unknown_status(self):
