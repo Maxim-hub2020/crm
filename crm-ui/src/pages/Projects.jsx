@@ -45,6 +45,7 @@ import {
   updatePayment,
   updateTask,
   updateProject,
+  updateProjectComment,
   uploadProjectCustomFieldFile,
 } from "../api";
 import {
@@ -58,6 +59,7 @@ import {
   Modal,
   Select,
 } from "../components/ui.jsx";
+import { clientPhoneValidationError, normalizeOptionalClientPhone, phoneDigits } from "../utils/phone.js";
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
 
@@ -138,7 +140,7 @@ function buildProjectUpdatePayload(form) {
   return {
     title: form.title.trim(),
     client_name: form.client_name.trim(),
-    client_phone: form.client_phone.trim(),
+    client_phone: normalizeOptionalClientPhone(form.client_phone) || form.client_phone.trim(),
     client_email: form.client_email.trim(),
     object_address: form.object_address.trim(),
     object_lat: form.object_lat.trim() || null,
@@ -244,10 +246,6 @@ function customFieldValueSearchText(value) {
     return [value.name, value.original_name, value.url, value.content_type].filter(Boolean).join(" ");
   }
   return String(value || "");
-}
-
-function phoneDigits(value) {
-  return String(value || "").replace(/\D/g, "");
 }
 
 function phoneHref(value) {
@@ -830,6 +828,9 @@ export default function Projects() {
   const [commentText, setCommentText] = useState("");
   const [commentSaving, setCommentSaving] = useState(false);
   const [commentError, setCommentError] = useState("");
+  const [editingCommentId, setEditingCommentId] = useState(null);
+  const [editingCommentText, setEditingCommentText] = useState("");
+  const [commentUpdating, setCommentUpdating] = useState(false);
 
   const [paymentForm, setPaymentForm] = useState(createEmptyPaymentForm());
   const [editingPaymentId, setEditingPaymentId] = useState(null);
@@ -1175,6 +1176,8 @@ export default function Projects() {
       setComments([]);
       setCommentText("");
       setCommentError("");
+      setEditingCommentId(null);
+      setEditingCommentText("");
       setPaymentForm(createEmptyPaymentForm());
       setEditingPaymentId(null);
       setPaymentError("");
@@ -1184,6 +1187,8 @@ export default function Projects() {
     }
 
     reloadComments(activeProjectId).catch(() => {});
+    setEditingCommentId(null);
+    setEditingCommentText("");
     setEditingPaymentId(null);
     setPaymentForm(createEmptyPaymentForm());
   }, [activeProjectId]);
@@ -1367,10 +1372,15 @@ export default function Projects() {
         setProjectClientError("Укажите имя клиента.");
         return;
       }
+      const phoneError = clientPhoneValidationError(projectClientForm.phone);
+      if (phoneError) {
+        setProjectClientError(phoneError);
+        return;
+      }
 
       const updated = await updateClient(activeProjectClient.id, {
         name: projectClientForm.name.trim(),
-        phone: projectClientForm.phone.trim(),
+        phone: normalizeOptionalClientPhone(projectClientForm.phone),
         email: projectClientForm.email.trim() || null,
         address: projectClientForm.address.trim() || null,
         works_with_contract: Boolean(projectClientForm.works_with_contract),
@@ -1468,12 +1478,17 @@ export default function Projects() {
         setCreateError("Выберите клиента или укажите имя для новой карточки клиента.");
         return;
       }
+      const phoneError = clientPhoneValidationError(createForm.client_phone);
+      if (phoneError) {
+        setCreateError(phoneError);
+        return;
+      }
 
       const created = await createProject({
         title: createForm.title.trim(),
         client: createForm.client || undefined,
         client_name: createForm.client_name.trim(),
-        client_phone: createForm.client_phone.trim(),
+        client_phone: normalizeOptionalClientPhone(createForm.client_phone),
         client_email: createForm.client_email.trim() || undefined,
         object_address: createForm.object_address.trim(),
         object_lat: createForm.object_lat.trim() || undefined,
@@ -1537,8 +1552,46 @@ export default function Projects() {
     try {
       await deleteProjectComment(commentId);
       setComments((prev) => prev.filter((comment) => comment.id !== commentId));
+      if (editingCommentId === commentId) {
+        setEditingCommentId(null);
+        setEditingCommentText("");
+      }
     } catch (error) {
       setCommentError(extractApiErrorMessage(error, "Не удалось удалить комментарий."));
+    }
+  }
+
+  function startCommentEdit(comment) {
+    setCommentError("");
+    setEditingCommentId(comment.id);
+    setEditingCommentText(comment.text || "");
+  }
+
+  function cancelCommentEdit() {
+    if (commentUpdating) return;
+    setEditingCommentId(null);
+    setEditingCommentText("");
+  }
+
+  async function submitCommentEdit(commentId) {
+    const text = editingCommentText.trim();
+    setCommentError("");
+
+    if (!text) {
+      setCommentError("Введите комментарий.");
+      return;
+    }
+
+    setCommentUpdating(true);
+    try {
+      const updated = await updateProjectComment(commentId, { text });
+      setComments((prev) => prev.map((comment) => (comment.id === updated.id ? updated : comment)));
+      setEditingCommentId(null);
+      setEditingCommentText("");
+    } catch (error) {
+      setCommentError(extractApiErrorMessage(error, "Не удалось сохранить комментарий."));
+    } finally {
+      setCommentUpdating(false);
     }
   }
 
@@ -2668,15 +2721,44 @@ export default function Projects() {
                               <div className="text-sm font-black text-slate-900">{comment.author_name || `Пользователь #${comment.author}`}</div>
                               <div className="mt-1 text-xs text-slate-400">{formatDateTime(comment.created_at)}</div>
                             </div>
-                            <button
-                              type="button"
-                              className="rounded-full p-2 text-slate-400 transition hover:bg-white hover:text-red-600"
-                              onClick={() => requestDeleteComment(comment.id)}
-                            >
-                              <Trash2 size={16} />
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                className="rounded-full p-2 text-slate-400 transition hover:bg-white hover:text-blue-600"
+                                onClick={() => startCommentEdit(comment)}
+                                aria-label="Редактировать комментарий"
+                              >
+                                <Pencil size={16} />
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-full p-2 text-slate-400 transition hover:bg-white hover:text-red-600"
+                                onClick={() => requestDeleteComment(comment.id)}
+                                aria-label="Удалить комментарий"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
                           </div>
-                          <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{comment.text}</div>
+                          {editingCommentId === comment.id ? (
+                            <div className="mt-3 space-y-3">
+                              <textarea
+                                className="min-h-24 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+                                value={editingCommentText}
+                                onChange={(event) => setEditingCommentText(event.target.value)}
+                              />
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <Button type="button" variant="secondary" disabled={commentUpdating} onClick={cancelCommentEdit}>
+                                  Отмена
+                                </Button>
+                                <Button type="button" disabled={commentUpdating} onClick={() => submitCommentEdit(comment.id)}>
+                                  {commentUpdating ? "Сохраняем..." : "Сохранить"}
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{comment.text}</div>
+                          )}
                         </div>
                       ))
                     )}

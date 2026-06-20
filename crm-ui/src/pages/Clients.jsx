@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 
 import { createClient, deleteClient, extractApiErrorMessage, fetchClients, fetchPayments, fetchProjects, updateClient } from "../api";
 import { Badge, Button, Input, Label, Modal } from "../components/ui.jsx";
+import { clientPhoneValidationError, normalizeOptionalClientPhone } from "../utils/phone.js";
 
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
@@ -189,9 +190,15 @@ export default function Clients() {
     setSavingClient(true);
     setError("");
     try {
+      const phoneError = clientPhoneValidationError(editForm.phone);
+      if (phoneError) {
+        setError(phoneError);
+        return;
+      }
+
       const updated = await updateClient(selectedClient.id, {
         name: editForm.name.trim(),
-        phone: editForm.phone.trim(),
+        phone: normalizeOptionalClientPhone(editForm.phone),
         email: editForm.email.trim() || null,
         address: editForm.address.trim() || null,
         works_with_contract: editForm.works_with_contract,
@@ -245,10 +252,15 @@ export default function Clients() {
         setError("Укажите имя клиента.");
         return;
       }
+      const phoneError = clientPhoneValidationError(createForm.phone);
+      if (phoneError) {
+        setError(phoneError);
+        return;
+      }
 
       const created = await createClient({
         name: createForm.name.trim(),
-        phone: createForm.phone.trim(),
+        phone: normalizeOptionalClientPhone(createForm.phone),
         email: createForm.email.trim() || null,
         address: createForm.address.trim() || null,
         works_with_contract: createForm.works_with_contract,
@@ -375,8 +387,11 @@ export default function Clients() {
                       <Input
                         type="tel"
                         inputMode="numeric"
+                        autoComplete="tel"
+                        pattern="[0-9+()\\-\\s]*"
                         value={editForm.phone}
                         onChange={(event) => setEditForm((prev) => ({ ...prev, phone: event.target.value }))}
+                        placeholder="+7..."
                       />
                     </div>
                     <div className="space-y-2">

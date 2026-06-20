@@ -1,3 +1,5 @@
+import re
+
 from rest_framework import serializers
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -19,6 +21,22 @@ from .models import (
 )
 from .subscription import has_trial_access, is_subscription_active
 from .tenancy import current_workspace
+
+PHONE_VALIDATION_ERROR = "Телефон должен быть в формате +7 999 123-45-67, 8 999 123-45-67 или 10 цифр."
+
+
+def normalize_client_phone(value):
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return ""
+
+    digits = re.sub(r"\D", "", raw_value)
+    if len(digits) == 10:
+        return f"+7{digits}"
+    if len(digits) == 11 and digits[0] in ("7", "8"):
+        return f"+7{digits[1:]}"
+
+    raise serializers.ValidationError(PHONE_VALIDATION_ERROR)
 
 class MeSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
@@ -92,6 +110,9 @@ class ClientSerializer(serializers.ModelSerializer):
     def get_project_count(self, obj):
         return obj.projects.count()
 
+    def validate_phone(self, value):
+        return normalize_client_phone(value)
+
 
 class ProjectSerializer(serializers.ModelSerializer):
     client_info = ClientSerializer(source="client", read_only=True)
@@ -161,6 +182,9 @@ class ProjectSerializer(serializers.ModelSerializer):
         if value and not ProjectStatus.objects.filter(workspace=workspace, code=value).exists():
             raise serializers.ValidationError("Укажите существующий статус канбана.")
         return value
+
+    def validate_client_phone(self, value):
+        return normalize_client_phone(value)
 
     def _normalize_custom_fields(self, value):
         if value in (None, ""):
@@ -551,6 +575,12 @@ class ProjectCommentSerializer(serializers.ModelSerializer):
 
     def get_author_name(self, obj):
         return obj.author.get_full_name() or obj.author.username
+
+    def validate_text(self, value):
+        text = str(value or "").strip()
+        if not text:
+            raise serializers.ValidationError("Введите комментарий.")
+        return text
 
     class Meta:
         model = ProjectComment

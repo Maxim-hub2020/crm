@@ -333,6 +333,37 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["client_phone"], "")
 
+    def test_project_normalizes_client_phone(self):
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/projects/",
+            {
+                "client_name": "Phone Client",
+                "client_phone": "8 (900) 000-00-77",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["client_phone"], "+79000000077")
+        self.assertTrue(Client.objects.filter(phone="+79000000077").exists())
+
+    def test_project_rejects_invalid_client_phone(self):
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/projects/",
+            {
+                "client_name": "Bad Phone Client",
+                "client_phone": "12345",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("client_phone", response.data)
+
     def test_project_custom_fields_are_saved_and_updated(self):
         client = self.auth_client_for(self.manager)
         custom_field = ProjectCustomField.objects.create(
@@ -465,6 +496,31 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(self.client_card.email, "updated@example.com")
         self.assertEqual(self.client_card.address, "Updated address")
         self.assertTrue(self.client_card.works_with_contract)
+
+    def test_client_phone_is_normalized(self):
+        api_client = self.auth_client_for(self.manager)
+
+        response = api_client.patch(
+            f"/api/clients/{self.client_card.id}/",
+            {"phone": "8 (900) 000-00-55"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.client_card.refresh_from_db()
+        self.assertEqual(self.client_card.phone, "+79000000055")
+
+    def test_client_rejects_invalid_phone(self):
+        api_client = self.auth_client_for(self.manager)
+
+        response = api_client.patch(
+            f"/api/clients/{self.client_card.id}/",
+            {"phone": "12345"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("phone", response.data)
 
     def test_client_update_does_not_overwrite_project_object_address(self):
         project = Project.objects.create(
@@ -967,6 +1023,45 @@ class TestProjectCommentsApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("project", response.data)
         self.assertFalse(ProjectComment.objects.filter(text="Should be rejected").exists())
+
+    def test_manager_can_update_own_comment(self):
+        client = self.auth_client_for(self.manager)
+
+        response = client.patch(
+            f"/api/project-comments/{self.manager_comment.id}/",
+            {"text": "Updated comment"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["text"], "Updated comment")
+        self.manager_comment.refresh_from_db()
+        self.assertEqual(self.manager_comment.text, "Updated comment")
+
+    def test_manager_cannot_update_foreign_comment(self):
+        client = self.auth_client_for(self.manager)
+
+        response = client.patch(
+            f"/api/project-comments/{self.other_comment.id}/",
+            {"text": "Should be rejected"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.other_comment.refresh_from_db()
+        self.assertEqual(self.other_comment.text, "Other comment")
+
+    def test_blank_comment_is_rejected(self):
+        client = self.auth_client_for(self.manager)
+
+        response = client.patch(
+            f"/api/project-comments/{self.manager_comment.id}/",
+            {"text": "   "},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("text", response.data)
 
 
 class TestProjectStatusesApi(AuthenticatedApiMixin, APITestCase):

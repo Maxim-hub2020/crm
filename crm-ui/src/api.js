@@ -505,6 +505,12 @@ export async function createProjectComment(payload) {
   return data;
 }
 
+export async function updateProjectComment(commentId, payload) {
+  initApiAuth();
+  const { data } = await api.patch(`/api/project-comments/${commentId}/`, payload);
+  return data;
+}
+
 export async function deleteProjectComment(commentId) {
   initApiAuth();
   await api.delete(`/api/project-comments/${commentId}/`);
