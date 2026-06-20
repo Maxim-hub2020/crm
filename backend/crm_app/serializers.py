@@ -1,14 +1,17 @@
 import re
 
+from django.db import transaction
 from rest_framework import serializers
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.text import slugify
 
+from .bonuses import apply_project_bonus_promo_code, ensure_project_bonus_accrual, normalize_bonus_promo_code, promo_code_for_phone
 from .models import (
     Account,
     ChatIntegrationSettings,
     Client,
+    ClientBonusTransaction,
     DocumentTemplate,
     FinanceCategory,
     Payment,
@@ -85,6 +88,7 @@ class MeSerializer(serializers.ModelSerializer):
 
 class ClientSerializer(serializers.ModelSerializer):
     project_count = serializers.SerializerMethodField()
+    promo_code = serializers.SerializerMethodField()
 
     class Meta:
         model = Client
@@ -95,11 +99,13 @@ class ClientSerializer(serializers.ModelSerializer):
             "email",
             "address",
             "works_with_contract",
+            "bonus_balance",
+            "promo_code",
             "project_count",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["project_count", "created_at", "updated_at"]
+        read_only_fields = ["bonus_balance", "promo_code", "project_count", "created_at", "updated_at"]
         extra_kwargs = {
             "phone": {"required": False, "allow_blank": True},
             "email": {"required": False, "allow_blank": True, "allow_null": True},
@@ -110,6 +116,9 @@ class ClientSerializer(serializers.ModelSerializer):
     def get_project_count(self, obj):
         return obj.projects.count()
 
+    def get_promo_code(self, obj):
+        return promo_code_for_phone(obj.phone)
+
     def validate_phone(self, value):
         return normalize_client_phone(value)
 
@@ -117,6 +126,7 @@ class ClientSerializer(serializers.ModelSerializer):
 class ProjectSerializer(serializers.ModelSerializer):
     client_info = ClientSerializer(source="client", read_only=True)
     order_number_label = serializers.SerializerMethodField()
+    referred_by_client_name = serializers.CharField(source="referred_by_client.name", read_only=True)
 
     def _workspace(self):
         request = self.context.get("request")
@@ -185,6 +195,12 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     def validate_client_phone(self, value):
         return normalize_client_phone(value)
+
+    def validate_bonus_promo_code(self, value):
+        normalized = normalize_bonus_promo_code(value)
+        if self.instance and self.instance.referral_bonus_used and normalized != (self.instance.bonus_promo_code or ""):
+            raise serializers.ValidationError("Промокод уже применен, изменить его нельзя.")
+        return normalized
 
     def _normalize_custom_fields(self, value):
         if value in (None, ""):
@@ -256,11 +272,25 @@ class ProjectSerializer(serializers.ModelSerializer):
                 attrs["status"] = default_status.code
         return attrs
 
+    def _actor(self):
+        request = self.context.get("request")
+        return getattr(request, "user", None)
+
     def create(self, validated_data):
-        return super().create(self._resolve_client(validated_data))
+        with transaction.atomic():
+            project = super().create(self._resolve_client(validated_data))
+            apply_project_bonus_promo_code(project, actor=self._actor())
+            ensure_project_bonus_accrual(project, actor=self._actor())
+            project.refresh_from_db()
+            return project
 
     def update(self, instance, validated_data):
-        return super().update(instance, self._resolve_client(validated_data))
+        with transaction.atomic():
+            project = super().update(instance, self._resolve_client(validated_data))
+            apply_project_bonus_promo_code(project, actor=self._actor())
+            ensure_project_bonus_accrual(project, actor=self._actor())
+            project.refresh_from_db()
+            return project
 
     def get_order_number_label(self, obj):
         return f"{obj.order_number:04d}" if obj.order_number else ""
@@ -268,7 +298,20 @@ class ProjectSerializer(serializers.ModelSerializer):
     class Meta:
         model = Project
         fields = "__all__"
-        read_only_fields = ["workspace", "manager", "created_at", "updated_at", "client_info", "order_number", "order_number_label"]
+        read_only_fields = [
+            "workspace",
+            "manager",
+            "created_at",
+            "updated_at",
+            "client_info",
+            "order_number",
+            "order_number_label",
+            "referred_by_client",
+            "referred_by_client_name",
+            "referral_bonus_used",
+            "bonus_accrued_amount",
+            "bonus_accrued_at",
+        ]
         extra_kwargs = {
             "client": {"required": False, "allow_null": True},
             "title": {"required": False, "allow_blank": True},
@@ -555,6 +598,36 @@ class PaymentSerializer(serializers.ModelSerializer):
             "type": {"required": False},
             "method": {"required": False},
         }
+
+
+class ClientBonusTransactionSerializer(serializers.ModelSerializer):
+    client_name = serializers.CharField(source="client.name", read_only=True)
+    related_client_name = serializers.CharField(source="related_client.name", read_only=True)
+    project_title = serializers.SerializerMethodField()
+
+    def get_project_title(self, obj):
+        if not obj.project:
+            return ""
+        return obj.project.title or obj.project.client_name or f"Проект #{obj.project_id}"
+
+    class Meta:
+        model = ClientBonusTransaction
+        fields = [
+            "id",
+            "client",
+            "client_name",
+            "project",
+            "project_title",
+            "related_client",
+            "related_client_name",
+            "type",
+            "amount",
+            "balance_after",
+            "promo_code",
+            "comment",
+            "created_at",
+        ]
+        read_only_fields = fields
 
 
 class ProjectCommentSerializer(serializers.ModelSerializer):

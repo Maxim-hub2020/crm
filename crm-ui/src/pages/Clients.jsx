@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ChevronRight, Edit3, Mail, MapPin, Phone, Plus, Search, Trash2, Wallet } from "lucide-react";
+import { ChevronRight, Edit3, Gift, Mail, MapPin, Phone, Plus, Search, Ticket, Trash2, Wallet } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { createClient, deleteClient, extractApiErrorMessage, fetchClients, fetchPayments, fetchProjects, updateClient } from "../api";
@@ -130,6 +130,8 @@ export default function Clients() {
           projects: clientProjects,
           projectCount: clientProjects.length || client.project_count || 0,
           worksWithContract: Boolean(client.works_with_contract),
+          bonusBalance: Number(client.bonus_balance || 0),
+          promoCode: client.promo_code || "",
           paymentsCount: projectPayments.length,
           total,
         };
@@ -315,6 +317,7 @@ export default function Clients() {
               <div className="truncate text-sm font-black text-slate-900">{client.name || "Без имени"}</div>
               <div className="mt-1 flex flex-wrap gap-2">
                 <Badge>{client.projectCount} проект(ов)</Badge>
+                <Badge className="bg-blue-50 text-blue-700">Бонусы {formatMoney(client.bonusBalance)} ₽</Badge>
                 {client.worksWithContract && <Badge className="bg-blue-100 text-blue-700">Договор</Badge>}
               </div>
             </div>
@@ -352,6 +355,7 @@ export default function Clients() {
                     <div className="flex flex-wrap gap-2">
                       <Badge>{selectedClient.projectCount} проект(ов)</Badge>
                       <Badge>{selectedClient.paymentsCount} операция(й)</Badge>
+                      <Badge className="bg-blue-100 text-blue-700">Бонусы {formatMoney(selectedClient.bonusBalance)} ₽</Badge>
                       {selectedClient.worksWithContract ? <Badge className="bg-blue-100 text-blue-700">Работает по договору</Badge> : null}
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -369,6 +373,8 @@ export default function Clients() {
                   <div className="grid gap-3 md:grid-cols-2">
                     <InfoRow icon={Phone} label="Телефон" value={selectedClient.phone} href={selectedClient.phone ? `tel:${selectedClient.phone}` : ""} />
                     <InfoRow icon={Mail} label="Email" value={selectedClient.email} href={selectedClient.email ? `mailto:${selectedClient.email}` : ""} />
+                    <InfoRow icon={Gift} label="Бонусный счёт" value={`${formatMoney(selectedClient.bonusBalance)} ₽`} />
+                    <InfoRow icon={Ticket} label="Промокод" value={selectedClient.promoCode || "Недоступен без телефона"} />
                     <div className="md:col-span-2">
                       <InfoRow icon={MapPin} label="Адрес" value={selectedClient.address} />
                     </div>

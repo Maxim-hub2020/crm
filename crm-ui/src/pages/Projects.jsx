@@ -5,6 +5,7 @@ import {
   Check,
   Copy,
   FileText,
+  Gift,
   LayoutGrid,
   List,
   ListTodo,
@@ -100,6 +101,7 @@ function createEmptyProjectForm(status = "active") {
     floor: "",
     description: "",
     total_amount: "",
+    bonus_promo_code: "",
     custom_fields: {},
     works_with_contract: false,
     status,
@@ -152,6 +154,7 @@ function buildProjectUpdatePayload(form) {
     categories: "",
     status: form.status,
     total_amount: cleanAmountValue(form.total_amount) || null,
+    bonus_promo_code: normalizePromoCodeInput(form.bonus_promo_code),
     custom_fields: normalizeCustomFieldValues(form.custom_fields),
   };
 }
@@ -201,6 +204,7 @@ function normalizeProjectForm(project, fallbackStatus = "active") {
     floor: project?.floor || "",
     description: project?.description || "",
     total_amount: formatAmountInput(project?.total_amount || ""),
+    bonus_promo_code: project?.bonus_promo_code || "",
     custom_fields: normalizeCustomFieldValues(project?.custom_fields || {}),
     works_with_contract: Boolean(project?.client_info?.works_with_contract ?? project?.works_with_contract),
     status: project?.status || fallbackStatus,
@@ -225,6 +229,10 @@ function cleanAmountValue(value) {
 function formatAmountInput(value) {
   const digits = cleanAmountValue(value);
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+}
+
+function normalizePromoCodeInput(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 5);
 }
 
 function projectDisplayName(project) {
@@ -342,6 +350,7 @@ function projectSearchText(project, statusMap) {
       project.client_phone,
       project.client_email,
       project.object_address,
+      project.bonus_promo_code,
       project.apartment,
       project.entrance,
       project.floor,
@@ -672,6 +681,43 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function ProjectBonusSummary({ project, client }) {
+  const clientBalance = Number(client?.bonus_balance ?? project?.client_info?.bonus_balance ?? 0);
+  const accruedAmount = Number(project?.bonus_accrued_amount || 0);
+  const referralAmount = Number(project?.referral_bonus_used || 0);
+  const promoCode = project?.bonus_promo_code || "";
+
+  if (!project && !clientBalance) return null;
+
+  return (
+    <div className="rounded-[24px] border border-blue-100 bg-blue-50/60 px-4 py-4">
+      <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-blue-500">
+        <Gift size={14} />
+        Бонусы клиента
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-blue-100">
+          <div className="text-xs font-bold text-slate-400">Бонусный счёт</div>
+          <div className="mt-1 text-lg font-black text-slate-900">{formatMoney(clientBalance)} ₽</div>
+        </div>
+        <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-blue-100">
+          <div className="text-xs font-bold text-slate-400">Начислено за заказ</div>
+          <div className="mt-1 text-lg font-black text-emerald-600">{formatMoney(accruedAmount)} ₽</div>
+        </div>
+        <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-blue-100">
+          <div className="text-xs font-bold text-slate-400">По промокоду</div>
+          <div className="mt-1 text-lg font-black text-blue-600">
+            {referralAmount ? `${formatMoney(referralAmount)} ₽` : promoCode || "Не применён"}
+          </div>
+          {project?.referred_by_client_name ? (
+            <div className="mt-1 text-xs font-semibold text-slate-400">Рекомендатель: {project.referred_by_client_name}</div>
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -1136,6 +1182,10 @@ export default function Projects() {
       setDetailAutosaveState("idle");
       return;
     }
+    if (payload.bonus_promo_code && payload.bonus_promo_code.length !== 5) {
+      setDetailAutosaveState("idle");
+      return;
+    }
 
     setDetailAutosaveState("pending");
     window.clearTimeout(detailAutosaveTimerRef.current);
@@ -1152,6 +1202,10 @@ export default function Projects() {
         setProjects((prev) => prev.map((project) => (project.id === updated.id ? updated : project)));
         if (updated.client_info) {
           setClients((prev) => prev.map((client) => (client.id === updated.client_info.id ? updated.client_info : client)));
+        }
+        if (Number(updated.referral_bonus_used || 0) || Number(updated.bonus_accrued_amount || 0)) {
+          const refreshedClients = await fetchClients();
+          setClients(refreshedClients);
         }
         detailSnapshotRef.current = JSON.stringify(buildProjectUpdatePayload(normalizeProjectForm(updated, defaultStatusValue)));
         setDetailError("");
@@ -1483,6 +1537,11 @@ export default function Projects() {
         setCreateError(phoneError);
         return;
       }
+      const promoCode = normalizePromoCodeInput(createForm.bonus_promo_code);
+      if (promoCode && promoCode.length !== 5) {
+        setCreateError("Промокод должен состоять из последних 5 цифр телефона.");
+        return;
+      }
 
       const created = await createProject({
         title: createForm.title.trim(),
@@ -1500,6 +1559,7 @@ export default function Projects() {
         categories: "",
         status: createForm.status,
         total_amount: cleanAmountValue(createForm.total_amount) || null,
+        bonus_promo_code: promoCode,
         custom_fields: normalizeCustomFieldValues(createForm.custom_fields),
       });
 
@@ -1511,6 +1571,10 @@ export default function Projects() {
             ? prev.map((client) => (client.id === created.client_info.id ? created.client_info : client))
             : [created.client_info, ...prev];
         });
+      }
+      if (created.bonus_promo_code || Number(created.referral_bonus_used || 0)) {
+        const refreshedClients = await fetchClients();
+        setClients(refreshedClients);
       }
       closeCreateModal();
       openProject(created);
@@ -1644,6 +1708,9 @@ export default function Projects() {
         const created = await createPayment(payload);
         setPayments((prev) => [created, ...prev]);
       }
+      const [refreshedProjects, refreshedClients] = await Promise.all([fetchProjects(), fetchClients()]);
+      setProjects(refreshedProjects);
+      setClients(refreshedClients);
       setPaymentForm(createEmptyPaymentForm());
       setEditingPaymentId(null);
     } catch (error) {
@@ -2399,6 +2466,16 @@ export default function Projects() {
                 placeholder="Например, 120 000"
               />
             </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Бонусы / промокод</Label>
+              <Input
+                value={createForm.bonus_promo_code}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, bonus_promo_code: normalizePromoCodeInput(event.target.value) }))}
+                inputMode="numeric"
+                maxLength={5}
+                placeholder="Последние 5 цифр телефона клиента-рекомендателя"
+              />
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -2609,6 +2686,17 @@ export default function Projects() {
                     placeholder="Например, 120 000"
                   />
                 </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Бонусы / промокод</Label>
+                  <Input
+                    value={detailForm.bonus_promo_code}
+                    onChange={(event) => setDetailForm((prev) => ({ ...prev, bonus_promo_code: normalizePromoCodeInput(event.target.value) }))}
+                    inputMode="numeric"
+                    maxLength={5}
+                    disabled={Boolean(Number(activeProject.referral_bonus_used || 0))}
+                    placeholder="Последние 5 цифр телефона клиента-рекомендателя"
+                  />
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -2636,6 +2724,8 @@ export default function Projects() {
                   }))
                 }
               />
+
+              <ProjectBonusSummary project={activeProject} client={activeProjectClient} />
 
               {detailForm.works_with_contract ? (
                 <div className="flex justify-end rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">

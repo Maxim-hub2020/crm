@@ -15,10 +15,12 @@ from rest_framework.response import Response
 from rest_framework import status as drf_status
 
 from .ai_assistant import CRMAssistantService, GeminiConfigurationError, GeminiRequestError
+from .bonuses import ensure_project_bonus_accrual
 from .models import (
     Account,
     ChatIntegrationSettings,
     Client,
+    ClientBonusTransaction,
     DocumentTemplate,
     FinanceCategory,
     Payment,
@@ -35,6 +37,7 @@ from .serializers import (
     AdminUserSerializer,
     AccountSerializer,
     ChatIntegrationSettingsSerializer,
+    ClientBonusTransactionSerializer,
     ClientSerializer,
     DocumentTemplateSerializer,
     FinanceCategorySerializer,
@@ -409,7 +412,32 @@ class PaymentViewSet(viewsets.ModelViewSet):
         return qs.filter(project__manager=self.request.user)
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        payment = serializer.save(created_by=self.request.user)
+        ensure_project_bonus_accrual(payment.project, actor=self.request.user)
+
+    def perform_update(self, serializer):
+        payment = serializer.save()
+        ensure_project_bonus_accrual(payment.project, actor=self.request.user)
+
+
+class ClientBonusTransactionViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = ClientBonusTransactionSerializer
+    permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
+
+    def get_queryset(self):
+        workspace = current_workspace(self.request.user)
+        qs = ClientBonusTransaction.objects.select_related("client", "related_client", "project").filter(workspace=workspace)
+        if not self.request.user.is_admin():
+            qs = qs.filter(Q(project__isnull=True) | Q(project__manager=self.request.user))
+
+        client_id = self.request.query_params.get("client")
+        if client_id:
+            qs = qs.filter(client_id=client_id)
+        project_id = self.request.query_params.get("project")
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+
+        return qs.order_by("-created_at", "-id")
 
 
 class ProjectCommentViewSet(viewsets.ModelViewSet):

@@ -13,7 +13,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from .ai_assistant import CRMAssistantService, GeminiClient, GeminiRequestError, humanize_gemini_error
 from .live_assistant import AssistantLiveConsumer, _build_low_latency_system_instruction, _build_reference_cache, _has_live_assistant_access
-from .models import Account, ChatIntegrationSettings, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, ProjectStatus, SubscriptionInvoice, Task, User, Workspace
+from .models import Account, ChatIntegrationSettings, Client, ClientBonusTransaction, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, ProjectStatus, SubscriptionInvoice, Task, User, Workspace
 from .subscription import activate_subscription_invoice, ensure_subscription_defaults, issue_subscription_invoice
 
 
@@ -424,6 +424,38 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
             self.assertEqual(stored_value["name"], "measurement.jpg")
             self.assertTrue(os.path.exists(os.path.join(media_root, stored_value["path"])))
 
+    def test_project_promo_code_transfers_referrer_bonus_to_project_client(self):
+        api_client = self.auth_client_for(self.manager)
+        referrer = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Referrer",
+            phone="+79000001234",
+            bonus_balance=Decimal("1800.00"),
+        )
+
+        response = api_client.post(
+            "/api/projects/",
+            {
+                "title": "Referral project",
+                "client_name": "New Client",
+                "client_phone": "+79000009999",
+                "total_amount": "120000",
+                "bonus_promo_code": "01234",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        referrer.refresh_from_db()
+        project = Project.objects.get(id=response.data["id"])
+        project.client.refresh_from_db()
+        self.assertEqual(referrer.bonus_balance, Decimal("0.00"))
+        self.assertEqual(project.client.bonus_balance, Decimal("1800.00"))
+        self.assertEqual(project.bonus_promo_code, "01234")
+        self.assertEqual(project.referred_by_client_id, referrer.id)
+        self.assertEqual(project.referral_bonus_used, Decimal("1800.00"))
+        self.assertEqual(ClientBonusTransaction.objects.filter(project=project, promo_code="01234").count(), 2)
+
     def test_project_rejects_unknown_status(self):
         client = self.auth_client_for(self.manager)
 
@@ -699,6 +731,97 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["category_name"], self.income_category.name)
         self.assertEqual(response.data["category_type"], FinanceCategory.Type.INCOME)
         self.assertEqual(response.data["account_name"], self.account.name)
+
+    def test_bonus_is_accrued_once_after_advance_for_large_project(self):
+        project_client = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Bonus Client",
+            phone="+79000000003",
+        )
+        project = Project.objects.create(
+            manager=self.manager,
+            client=project_client,
+            client_name=project_client.name,
+            client_phone=project_client.phone,
+            total_amount=Decimal("100000.00"),
+        )
+        advance_category, _ = FinanceCategory.objects.get_or_create(
+            workspace=self.manager.workspace,
+            name="Аванс",
+            type=FinanceCategory.Type.INCOME,
+        )
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/payments/",
+            {
+                "project": project.id,
+                "category": advance_category.id,
+                "account": self.account.id,
+                "amount": "30000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        project.refresh_from_db()
+        project_client.refresh_from_db()
+        self.assertEqual(project.bonus_accrued_amount, Decimal("3000.00"))
+        self.assertIsNotNone(project.bonus_accrued_at)
+        self.assertEqual(project_client.bonus_balance, Decimal("3000.00"))
+
+        second_response = client.post(
+            "/api/payments/",
+            {
+                "project": project.id,
+                "category": advance_category.id,
+                "account": self.account.id,
+                "amount": "10000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(second_response.status_code, status.HTTP_201_CREATED)
+        project_client.refresh_from_db()
+        self.assertEqual(project_client.bonus_balance, Decimal("3000.00"))
+        self.assertEqual(ClientBonusTransaction.objects.filter(project=project, type=ClientBonusTransaction.Type.ACCRUAL).count(), 1)
+
+    def test_bonus_is_not_accrued_for_project_up_to_threshold(self):
+        project_client = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Small Bonus Client",
+            phone="+79000000004",
+        )
+        project = Project.objects.create(
+            manager=self.manager,
+            client=project_client,
+            client_name=project_client.name,
+            client_phone=project_client.phone,
+            total_amount=Decimal("50000.00"),
+        )
+        advance_category, _ = FinanceCategory.objects.get_or_create(
+            workspace=self.manager.workspace,
+            name="Аванс",
+            type=FinanceCategory.Type.INCOME,
+        )
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/payments/",
+            {
+                "project": project.id,
+                "category": advance_category.id,
+                "account": self.account.id,
+                "amount": "10000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        project.refresh_from_db()
+        project_client.refresh_from_db()
+        self.assertEqual(project.bonus_accrued_amount, Decimal("0.00"))
+        self.assertEqual(project_client.bonus_balance, Decimal("0.00"))
 
     def test_manager_can_read_finance_settings(self):
         client = self.auth_client_for(self.manager)

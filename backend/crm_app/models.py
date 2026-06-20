@@ -101,6 +101,7 @@ class Client(models.Model):
     email = models.EmailField(blank=True, null=True)
     address = models.CharField(max_length=300, blank=True, null=True)
     works_with_contract = models.BooleanField(default=False)
+    bonus_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -150,6 +151,17 @@ class Project(models.Model):
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
     status = models.CharField(max_length=50, default="active", db_index=True)
     custom_fields = models.JSONField(blank=True, default=dict)
+    bonus_promo_code = models.CharField(max_length=5, blank=True, default="")
+    referred_by_client = models.ForeignKey(
+        Client,
+        on_delete=models.SET_NULL,
+        related_name="referred_projects",
+        blank=True,
+        null=True,
+    )
+    referral_bonus_used = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    bonus_accrued_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    bonus_accrued_at = models.DateTimeField(blank=True, null=True)
 
     # MVP: CSV. Можно заменить на ManyToMany позже.
     categories = models.CharField(max_length=200, blank=True, default="")  # "mirrors,furniture,shower"
@@ -173,6 +185,52 @@ class Project(models.Model):
             queryset = Project.objects.filter(workspace=self.workspace) if self.workspace_id else Project.objects.all()
             max_number = queryset.aggregate(models.Max("order_number")).get("order_number__max") or 0
             self.order_number = max_number + 1
+        super().save(*args, **kwargs)
+
+
+class ClientBonusTransaction(models.Model):
+    class Type(models.TextChoices):
+        ACCRUAL = "accrual", "Accrual"
+        PROMO_DEBIT = "promo_debit", "Promo debit"
+        PROMO_CREDIT = "promo_credit", "Promo credit"
+
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="client_bonus_transactions",
+        blank=True,
+        null=True,
+        db_index=True,
+    )
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="bonus_transactions")
+    project = models.ForeignKey(Project, on_delete=models.SET_NULL, related_name="bonus_transactions", blank=True, null=True)
+    related_client = models.ForeignKey(
+        Client,
+        on_delete=models.SET_NULL,
+        related_name="related_bonus_transactions",
+        blank=True,
+        null=True,
+    )
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, related_name="created_bonus_transactions", blank=True, null=True)
+    type = models.CharField(max_length=20, choices=Type.choices)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    balance_after = models.DecimalField(max_digits=12, decimal_places=2)
+    promo_code = models.CharField(max_length=5, blank=True, default="")
+    comment = models.CharField(max_length=300, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["workspace", "client", "-created_at"]),
+            models.Index(fields=["workspace", "project"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.workspace_id and self.client_id:
+            self.workspace = self.client.workspace
+        if not self.workspace_id:
+            self.workspace = default_workspace()
         super().save(*args, **kwargs)
 
 

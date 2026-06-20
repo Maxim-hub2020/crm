@@ -5,6 +5,7 @@ from .models import (
     AuditLog,
     ChatIntegrationSettings,
     Client,
+    ClientBonusTransaction,
     CRMMemorySnapshot,
     DocumentTemplate,
     FinanceCategory,
@@ -20,6 +21,7 @@ from .models import (
 admin.site.register(User)
 admin.site.register(Workspace)
 admin.site.register(Client)
+admin.site.register(ClientBonusTransaction)
 admin.site.register(ProjectStatus)
 admin.site.register(Project)
 admin.site.register(Payment)
