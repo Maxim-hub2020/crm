@@ -1,5 +1,6 @@
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Camera,
   Calendar,
   Check,
   Copy,
@@ -44,6 +45,7 @@ import {
   updatePayment,
   updateTask,
   updateProject,
+  uploadProjectCustomFieldFile,
 } from "../api";
 import {
   Badge,
@@ -157,8 +159,26 @@ function normalizeCustomFieldValues(values = {}) {
 
   return Object.fromEntries(
     Object.entries(values)
-      .map(([key, value]) => [String(key), String(value ?? "").trim()])
-      .filter(([, value]) => value)
+      .map(([key, value]) => {
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          const cleanValue = {
+            name: String(value.name || value.original_name || "").trim(),
+            original_name: String(value.original_name || value.name || "").trim(),
+            url: String(value.url || "").trim(),
+            path: String(value.path || "").trim(),
+            content_type: String(value.content_type || "").trim(),
+            size: Number(value.size || 0) || 0,
+          };
+          return [String(key), cleanValue];
+        }
+        return [String(key), String(value ?? "").trim()];
+      })
+      .filter(([, value]) => {
+        if (value && typeof value === "object") {
+          return Boolean(value.name || value.original_name || value.url || value.path);
+        }
+        return Boolean(value);
+      })
   );
 }
 
@@ -217,6 +237,13 @@ function projectOrderLabel(project) {
 
 function normalizeSearchText(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function customFieldValueSearchText(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return [value.name, value.original_name, value.url, value.content_type].filter(Boolean).join(" ");
+  }
+  return String(value || "");
 }
 
 function phoneDigits(value) {
@@ -321,7 +348,7 @@ function projectSearchText(project, statusMap) {
       project.entrance,
       project.floor,
       project.description,
-      ...Object.values(project.custom_fields || {}),
+      ...Object.values(project.custom_fields || {}).map(customFieldValueSearchText),
       status?.label,
       status?.short,
     ]
@@ -513,17 +540,129 @@ function customFieldInputProps(field) {
   return { placeholder: "Введите значение" };
 }
 
-function ProjectCustomFieldsGrid({ fields, values, onChange }) {
+function customFieldFileDisplay(value) {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const name = value.name || value.original_name || "Файл";
+    return {
+      name,
+      url: value.url || "",
+      size: Number(value.size || 0) || 0,
+    };
+  }
+  return { name: String(value), url: "", size: 0 };
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes || 0);
+  if (!size) return "";
+  if (size < 1024 * 1024) return `${Math.ceil(size / 1024)} КБ`;
+  return `${(size / (1024 * 1024)).toFixed(1).replace(".", ",")} МБ`;
+}
+
+function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUpload, uploadingFiles = {} }) {
   if (!fields.length) return null;
 
   return (
     <div className="rounded-[24px] border border-slate-100 bg-slate-50/70 p-4">
-      <div className="mb-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-        Пользовательские поля
-      </div>
       <div className="grid gap-4 md:grid-cols-2">
         {fields.map((field) => {
           const fieldKey = String(field.id);
+          const isFileField = field.field_type === "file";
+          const fileValue = isFileField ? customFieldFileDisplay(values?.[fieldKey]) : null;
+          const uploadId = `project-custom-field-${projectId || "new"}-${fieldKey}`;
+          const cameraId = `project-custom-camera-${projectId || "new"}-${fieldKey}`;
+          const isUploading = Boolean(uploadingFiles[fieldKey]);
+
+          if (isFileField) {
+            const handleFileChange = (event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file && onFileUpload) {
+                onFileUpload(fieldKey, file);
+              }
+            };
+
+            return (
+              <div key={field.id} className="space-y-2">
+                <Label>{field.name}</Label>
+                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                  {fileValue ? (
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      {fileValue.url ? (
+                        <a
+                          href={fileValue.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-2 text-sm font-bold text-blue-600 hover:text-blue-700"
+                        >
+                          <FileText size={16} />
+                          {fileValue.name}
+                        </a>
+                      ) : (
+                        <div className="inline-flex items-center gap-2 text-sm font-bold text-slate-700">
+                          <FileText size={16} />
+                          {fileValue.name}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        {fileValue.size ? (
+                          <span className="text-xs font-semibold text-slate-400">{formatFileSize(fileValue.size)}</span>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="rounded-full p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                          onClick={() => onChange(fieldKey, "")}
+                          aria-label="Убрать файл"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm font-semibold text-slate-400">Файл не прикреплён</div>
+                  )}
+
+                  {projectId && onFileUpload ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <input id={uploadId} className="sr-only" type="file" onChange={handleFileChange} />
+                      <input
+                        id={cameraId}
+                        className="sr-only"
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={handleFileChange}
+                      />
+                      <label
+                        htmlFor={uploadId}
+                        className={`btn-hover inline-flex cursor-pointer items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 ${
+                          isUploading ? "pointer-events-none opacity-60" : ""
+                        }`}
+                      >
+                        <FileText size={16} />
+                        {isUploading ? "Загружаем..." : "Прикрепить файл"}
+                      </label>
+                      <label
+                        htmlFor={cameraId}
+                        className={`btn-hover inline-flex cursor-pointer items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-black ${
+                          isUploading ? "pointer-events-none opacity-60" : ""
+                        }`}
+                      >
+                        <Camera size={16} />
+                        Сфотографировать
+                      </label>
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-2xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-500">
+                      Файл можно прикрепить после создания проекта.
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div key={field.id} className="space-y-2">
               <Label>{field.name}</Label>
@@ -680,6 +819,7 @@ export default function Projects() {
   const loadedProjectIdRef = useRef(null);
   const [documentLoading, setDocumentLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [customFieldUploads, setCustomFieldUploads] = useState({});
   const [projectClientOpen, setProjectClientOpen] = useState(false);
   const [projectClientForm, setProjectClientForm] = useState(createClientEditForm());
   const [projectClientSaving, setProjectClientSaving] = useState(false);
@@ -1149,6 +1289,7 @@ export default function Projects() {
     setAddressDetailsOpen(false);
     setAddressSuggestions([]);
     setAddressSuggestError("");
+    setCustomFieldUploads({});
     setProjectClientOpen(false);
     setProjectClientError("");
     setProjectClientForm(createClientEditForm());
@@ -1156,6 +1297,45 @@ export default function Projects() {
     loadedProjectIdRef.current = null;
     detailSnapshotRef.current = "";
     window.clearTimeout(detailAutosaveTimerRef.current);
+  }
+
+  async function handleCustomFieldFileUpload(fieldId, file) {
+    if (!activeProject?.id || !file) return;
+
+    const fieldKey = String(fieldId);
+    setCustomFieldUploads((prev) => ({ ...prev, [fieldKey]: true }));
+    setDetailError("");
+
+    try {
+      const result = await uploadProjectCustomFieldFile(activeProject.id, fieldKey, file);
+      const updatedProject = result.project;
+
+      if (updatedProject) {
+        setProjects((prev) => prev.map((project) => (project.id === updatedProject.id ? updatedProject : project)));
+        setDetailForm((prev) => ({
+          ...prev,
+          custom_fields: normalizeCustomFieldValues(updatedProject.custom_fields || {}),
+        }));
+      } else if (result.value) {
+        setDetailForm((prev) => ({
+          ...prev,
+          custom_fields: {
+            ...(prev.custom_fields || {}),
+            [fieldKey]: result.value,
+          },
+        }));
+      }
+
+      setDetailAutosaveState("idle");
+    } catch (error) {
+      setDetailError(extractApiErrorMessage(error, "Не удалось прикрепить файл."));
+    } finally {
+      setCustomFieldUploads((prev) => {
+        const next = { ...prev };
+        delete next[fieldKey];
+        return next;
+      });
+    }
   }
 
   function openProjectClientCard() {
@@ -2390,6 +2570,9 @@ export default function Projects() {
               <ProjectCustomFieldsGrid
                 fields={customFields}
                 values={detailForm.custom_fields}
+                projectId={activeProject.id}
+                onFileUpload={handleCustomFieldFileUpload}
+                uploadingFiles={customFieldUploads}
                 onChange={(fieldId, value) =>
                   setDetailForm((prev) => ({
                     ...prev,

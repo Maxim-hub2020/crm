@@ -394,6 +394,18 @@ export async function deleteDocumentTemplate(templateId) {
   await api.delete(`/api/document-templates/${templateId}/`);
 }
 
+export async function uploadProjectCustomFieldFile(projectId, fieldId, file) {
+  initApiAuth();
+  const formData = new FormData();
+  formData.append("field_id", String(fieldId));
+  formData.append("file", file);
+
+  const { data } = await api.post(`/api/projects/${projectId}/custom-field-files/`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+
 export async function fetchChatSettings() {
   initApiAuth();
   const { data } = await api.get("/api/chat-settings/");

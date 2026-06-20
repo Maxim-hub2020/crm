@@ -193,6 +193,19 @@ class ProjectSerializer(serializers.ModelSerializer):
                 clean_value = str(raw_value).strip()
                 if clean_value and not parse_date(clean_value):
                     raise serializers.ValidationError({key: "Enter a date in YYYY-MM-DD format."})
+            elif field.field_type == ProjectCustomField.FieldType.FILE and isinstance(raw_value, dict):
+                try:
+                    file_size = int(raw_value.get("size") or 0)
+                except (TypeError, ValueError):
+                    file_size = 0
+                clean_value = {
+                    "name": str(raw_value.get("name") or raw_value.get("original_name") or "").strip(),
+                    "original_name": str(raw_value.get("original_name") or raw_value.get("name") or "").strip(),
+                    "url": str(raw_value.get("url") or "").strip(),
+                    "path": str(raw_value.get("path") or "").strip(),
+                    "content_type": str(raw_value.get("content_type") or "").strip(),
+                    "size": file_size,
+                }
             else:
                 clean_value = str(raw_value).strip()
 

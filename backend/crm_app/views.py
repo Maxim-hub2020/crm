@@ -1,9 +1,12 @@
 import json
+import uuid
 from io import BytesIO
 
+from django.core.files.storage import default_storage
 from django.db.models import Q
 from django.http import FileResponse
 from django.utils import timezone
+from django.utils.text import get_valid_filename
 from rest_framework import viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import ValidationError
@@ -245,6 +248,60 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         serializer.save(manager=user, workspace=workspace)
         record_project_created(subscription)
+
+    @action(detail=True, methods=["post"], url_path="custom-field-files", parser_classes=[MultiPartParser, FormParser])
+    def upload_custom_field_file(self, request, pk=None):
+        project = self.get_object()
+        field_id = str(request.data.get("field_id") or "").strip()
+        uploaded_file = request.FILES.get("file")
+
+        if not field_id:
+            return Response({"detail": "Укажите пользовательское поле."}, status=drf_status.HTTP_400_BAD_REQUEST)
+        if not uploaded_file:
+            return Response({"detail": "Прикрепите файл."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+        try:
+            field_pk = int(field_id)
+        except (TypeError, ValueError):
+            return Response({"detail": "Некорректное пользовательское поле."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+        field = ProjectCustomField.objects.filter(
+            id=field_pk,
+            workspace=current_workspace(request.user),
+            field_type=ProjectCustomField.FieldType.FILE,
+        ).first()
+        if not field:
+            return Response({"detail": "Поле файла не найдено."}, status=drf_status.HTTP_404_NOT_FOUND)
+
+        original_name = uploaded_file.name or "file"
+        safe_name = get_valid_filename(original_name) or "file"
+        storage_path = f"project_custom_fields/{project.id}/{field.id}/{uuid.uuid4().hex}-{safe_name}"
+        saved_path = default_storage.save(storage_path, uploaded_file)
+        file_url = default_storage.url(saved_path)
+        if file_url.startswith("/"):
+            file_url = request.build_absolute_uri(file_url)
+
+        file_value = {
+            "name": original_name,
+            "original_name": original_name,
+            "url": file_url,
+            "path": saved_path,
+            "content_type": uploaded_file.content_type or "",
+            "size": uploaded_file.size,
+        }
+
+        custom_fields = dict(project.custom_fields or {})
+        custom_fields[str(field.id)] = file_value
+        project.custom_fields = custom_fields
+        project.save(update_fields=["custom_fields", "updated_at"])
+
+        return Response(
+            {
+                "field_id": str(field.id),
+                "value": file_value,
+                "project": self.get_serializer(project).data,
+            }
+        )
 
     @action(detail=True, methods=["get"], url_path=r"documents/(?P<document_type>contract|act)")
     def document(self, request, pk=None, document_type=None):

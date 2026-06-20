@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import tempfile
 from decimal import Decimal
 from unittest.mock import patch
 from asgiref.sync import async_to_sync
@@ -363,6 +364,34 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(update_response.status_code, status.HTTP_200_OK)
         self.assertEqual(update_response.data["custom_fields"], {str(custom_field.id): "clear"})
         self.assertEqual(Project.objects.get(id=create_response.data["id"]).custom_fields, {str(custom_field.id): "clear"})
+
+    def test_project_custom_field_file_can_be_uploaded(self):
+        client = self.auth_client_for(self.manager)
+        custom_field = ProjectCustomField.objects.create(
+            workspace=self.manager.workspace,
+            name="Photo",
+            field_type=ProjectCustomField.FieldType.FILE,
+            sort_order=20,
+        )
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            upload = SimpleUploadedFile("measurement.jpg", b"fake-image-bytes", content_type="image/jpeg")
+            response = client.post(
+                f"/api/projects/{self.manager_project.id}/custom-field-files/",
+                {"field_id": str(custom_field.id), "file": upload},
+                format="multipart",
+            )
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(response.data["field_id"], str(custom_field.id))
+            self.assertEqual(response.data["value"]["name"], "measurement.jpg")
+            self.assertEqual(response.data["value"]["content_type"], "image/jpeg")
+            self.assertIn("/media/project_custom_fields/", response.data["value"]["url"])
+
+            self.manager_project.refresh_from_db()
+            stored_value = self.manager_project.custom_fields[str(custom_field.id)]
+            self.assertEqual(stored_value["name"], "measurement.jpg")
+            self.assertTrue(os.path.exists(os.path.join(media_root, stored_value["path"])))
 
     def test_project_rejects_unknown_status(self):
         client = self.auth_client_for(self.manager)
