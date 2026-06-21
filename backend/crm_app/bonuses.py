@@ -126,7 +126,7 @@ def _change_bonus_balance(*, client, amount, transaction_type, project=None, rel
 
 def ensure_project_bonus_accrual(project, actor=None):
     with transaction.atomic():
-        project = Project.objects.select_for_update().select_related("client", "workspace").get(pk=project.pk)
+        project = Project.objects.select_for_update().get(pk=project.pk)
         total_amount = _money(project.total_amount)
 
         if project.bonus_accrued_at or project.bonus_accrued_amount:
@@ -158,7 +158,7 @@ def apply_project_bonus_promo_code(project, actor=None):
         return None
 
     with transaction.atomic():
-        project = Project.objects.select_for_update().select_related("client", "workspace", "referred_by_client").get(pk=project.pk)
+        project = Project.objects.select_for_update().get(pk=project.pk)
         if project.referral_bonus_used and project.referred_by_client_id:
             return None
         if not project.client_id:
