@@ -50,5 +50,6 @@ urlpatterns = [
     path("chat-settings/", chat_settings_view),
     path("assistant/chat/", assistant_chat_view),
     path("assistant/voice/", assistant_voice_view),
+    path("projects", ProjectViewSet.as_view({"get": "list", "post": "create"}), name="projects-no-slash"),
     path("", include(router.urls)),
 ]

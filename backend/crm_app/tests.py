@@ -274,6 +274,24 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["order_number"], created_project.order_number)
         self.assertEqual(response.data["order_number_label"], f"{created_project.order_number:04d}")
 
+    def test_project_create_without_trailing_slash_still_returns_json(self):
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/projects",
+            {
+                "title": "No slash project",
+                "client_name": "No Slash Client",
+                "client_phone": "+70000000999",
+                "categories": "mirrors",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertEqual(response.data["title"], "No slash project")
+
     def test_projects_receive_sequential_order_numbers(self):
         self.assertEqual(self.manager_project.order_number, 1)
         self.assertEqual(self.other_project.order_number, 2)
