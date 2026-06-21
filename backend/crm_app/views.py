@@ -17,7 +17,7 @@ from rest_framework.response import Response
 from rest_framework import status as drf_status
 
 from .ai_assistant import CRMAssistantService, GeminiConfigurationError, GeminiRequestError
-from .bonuses import ensure_project_bonus_accrual, preview_project_bonus_promo_code
+from .bonuses import ensure_project_bonus_accrual, preview_project_bonus_promo_code, reverse_project_bonus_effects
 from .models import (
     Account,
     ChatIntegrationSettings,
@@ -295,6 +295,10 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         serializer.save(manager=user, workspace=workspace)
         record_project_created(subscription)
+
+    def perform_destroy(self, instance):
+        reverse_project_bonus_effects(instance, actor=self.request.user)
+        instance.delete()
 
     @action(detail=True, methods=["post"], url_path="custom-field-files", parser_classes=[MultiPartParser, FormParser])
     def upload_custom_field_file(self, request, pk=None):

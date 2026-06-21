@@ -2,6 +2,7 @@ import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -178,7 +179,7 @@ def apply_project_bonus_promo_code(project, actor=None):
         if transfer_amount <= 0:
             raise ValidationError({"bonus_promo_code": "Бонусами можно покрыть до 10% стоимости проекта."})
 
-        _change_bonus_balance(
+        debit_transaction = _change_bonus_balance(
             client=referrer,
             amount=-transfer_amount,
             transaction_type=ClientBonusTransaction.Type.PROMO_DEBIT,
@@ -188,19 +189,80 @@ def apply_project_bonus_promo_code(project, actor=None):
             actor=actor,
             comment=f"Списание по промокоду для проекта №{project.order_number or project.id}.",
         )
-        credit_transaction = _change_bonus_balance(
-            client=project.client,
-            amount=transfer_amount,
-            transaction_type=ClientBonusTransaction.Type.PROMO_CREDIT,
-            project=project,
-            related_client=referrer,
-            promo_code=code,
-            actor=actor,
-            comment=f"Зачисление по промокоду клиента {referrer.name}.",
-        )
 
         project.referred_by_client = referrer
         project.referral_bonus_used = transfer_amount
         project.bonus_promo_code = code
         project.save(update_fields=["referred_by_client", "referral_bonus_used", "bonus_promo_code", "updated_at"])
-        return credit_transaction
+        return debit_transaction
+
+
+def _bonus_transactions_sum(*, project, transaction_type, client=None):
+    queryset = ClientBonusTransaction.objects.filter(project=project, type=transaction_type)
+    if client is not None:
+        queryset = queryset.filter(client=client)
+    return _money(queryset.aggregate(total=Sum("amount")).get("total") or 0)
+
+
+def reverse_project_bonus_effects(project, actor=None):
+    with transaction.atomic():
+        project = Project.objects.select_for_update().select_related("client", "referred_by_client").get(pk=project.pk)
+        if Payment.objects.filter(project=project).exists():
+            raise ValidationError({"project": "Нельзя удалить проект с финансовыми операциями. Сначала удалите операции проекта."})
+
+        promo_code = project.bonus_promo_code or ""
+        project_label = project.order_number or project.id
+
+        if project.client_id:
+            legacy_promo_credit = _bonus_transactions_sum(
+                project=project,
+                transaction_type=ClientBonusTransaction.Type.PROMO_CREDIT,
+                client=project.client,
+            )
+            legacy_promo_credit_reversal = _bonus_transactions_sum(
+                project=project,
+                transaction_type=ClientBonusTransaction.Type.PROMO_CREDIT_REVERSAL,
+                client=project.client,
+            )
+            legacy_credit_to_reverse = _money(legacy_promo_credit + legacy_promo_credit_reversal)
+            if legacy_credit_to_reverse > 0:
+                _change_bonus_balance(
+                    client=project.client,
+                    amount=-legacy_credit_to_reverse,
+                    transaction_type=ClientBonusTransaction.Type.PROMO_CREDIT_REVERSAL,
+                    project=project,
+                    related_client=project.referred_by_client,
+                    promo_code=promo_code,
+                    actor=actor,
+                    comment=f"Сторно старого зачисления по промокоду при удалении проекта №{project_label}.",
+                )
+
+            if project.bonus_accrued_amount:
+                _change_bonus_balance(
+                    client=project.client,
+                    amount=-project.bonus_accrued_amount,
+                    transaction_type=ClientBonusTransaction.Type.ACCRUAL_REVERSAL,
+                    project=project,
+                    related_client=project.referred_by_client,
+                    promo_code=promo_code,
+                    actor=actor,
+                    comment=f"Сторно начисления 3% при удалении проекта №{project_label}.",
+                )
+                project.bonus_accrued_amount = Decimal("0.00")
+                project.bonus_accrued_at = None
+
+        if project.referred_by_client_id and project.referral_bonus_used:
+            _change_bonus_balance(
+                client=project.referred_by_client,
+                amount=project.referral_bonus_used,
+                transaction_type=ClientBonusTransaction.Type.PROMO_REFUND,
+                project=project,
+                related_client=project.client,
+                promo_code=promo_code,
+                actor=actor,
+                comment=f"Возврат списания по промокоду при удалении проекта №{project_label}.",
+            )
+            project.referral_bonus_used = Decimal("0.00")
+            project.referred_by_client = None
+
+        project.save(update_fields=["referral_bonus_used", "referred_by_client", "bonus_accrued_amount", "bonus_accrued_at", "updated_at"])

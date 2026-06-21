@@ -462,7 +462,7 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
             self.assertEqual(stored_value["name"], "measurement.jpg")
             self.assertTrue(os.path.exists(os.path.join(media_root, stored_value["path"])))
 
-    def test_project_promo_code_transfers_referrer_bonus_to_project_client(self):
+    def test_project_promo_code_debits_referrer_without_crediting_project_client(self):
         api_client = self.auth_client_for(self.manager)
         referrer = Client.objects.create(
             workspace=self.manager.workspace,
@@ -488,11 +488,15 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         project = Project.objects.get(id=response.data["id"])
         project.client.refresh_from_db()
         self.assertEqual(referrer.bonus_balance, Decimal("8000.00"))
-        self.assertEqual(project.client.bonus_balance, Decimal("12000.00"))
+        self.assertEqual(project.client.bonus_balance, Decimal("0.00"))
         self.assertEqual(project.bonus_promo_code, "01234")
         self.assertEqual(project.referred_by_client_id, referrer.id)
         self.assertEqual(project.referral_bonus_used, Decimal("12000.00"))
-        self.assertEqual(ClientBonusTransaction.objects.filter(project=project, promo_code="01234").count(), 2)
+        self.assertEqual(ClientBonusTransaction.objects.filter(project=project, promo_code="01234").count(), 1)
+        self.assertEqual(
+            ClientBonusTransaction.objects.filter(project=project, type=ClientBonusTransaction.Type.PROMO_CREDIT).count(),
+            0,
+        )
 
     def test_bonus_promo_preview_returns_discount_before_project_creation(self):
         api_client = self.auth_client_for(self.manager)
@@ -539,6 +543,99 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("bonus_promo_code", response.data)
+
+    def test_project_delete_without_payments_reverses_promo_debit(self):
+        api_client = self.auth_client_for(self.manager)
+        referrer = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Referrer",
+            phone="+79000001234",
+            bonus_balance=Decimal("20000.00"),
+        )
+        create_response = api_client.post(
+            "/api/projects/",
+            {
+                "title": "Referral project",
+                "client_name": "New Client",
+                "client_phone": "+79000009999",
+                "total_amount": "120000",
+                "bonus_promo_code": "01234",
+            },
+            format="json",
+        )
+        project_id = create_response.data["id"]
+        referrer.refresh_from_db()
+        self.assertEqual(referrer.bonus_balance, Decimal("8000.00"))
+
+        response = api_client.delete(f"/api/projects/{project_id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        referrer.refresh_from_db()
+        self.assertEqual(referrer.bonus_balance, Decimal("20000.00"))
+        self.assertFalse(Project.objects.filter(id=project_id).exists())
+        self.assertEqual(
+            ClientBonusTransaction.objects.filter(client=referrer, promo_code="01234").count(),
+            2,
+        )
+        self.assertTrue(
+            ClientBonusTransaction.objects.filter(
+                client=referrer,
+                promo_code="01234",
+                type=ClientBonusTransaction.Type.PROMO_REFUND,
+                amount=Decimal("12000.00"),
+            ).exists()
+        )
+
+    def test_project_delete_with_payments_is_blocked(self):
+        api_client = self.auth_client_for(self.manager)
+        project = Project.objects.create(
+            manager=self.manager,
+            client_name="Paid Project",
+            client_phone="+79000009999",
+            total_amount=Decimal("120000.00"),
+        )
+        Payment.objects.create(
+            project=project,
+            created_by=self.manager,
+            amount=Decimal("10000.00"),
+            type=Payment.Type.ADVANCE,
+        )
+
+        response = api_client.delete(f"/api/projects/{project.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(Project.objects.filter(id=project.id).exists())
+
+    def test_project_delete_without_payments_reverses_accrued_bonus(self):
+        api_client = self.auth_client_for(self.manager)
+        project_client = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Bonus Client",
+            phone="+79000000003",
+            bonus_balance=Decimal("3000.00"),
+        )
+        project = Project.objects.create(
+            manager=self.manager,
+            client=project_client,
+            client_name=project_client.name,
+            client_phone=project_client.phone,
+            total_amount=Decimal("100000.00"),
+            bonus_accrued_amount=Decimal("3000.00"),
+            bonus_accrued_at=timezone.now(),
+        )
+
+        response = api_client.delete(f"/api/projects/{project.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        project_client.refresh_from_db()
+        self.assertEqual(project_client.bonus_balance, Decimal("0.00"))
+        self.assertTrue(
+            ClientBonusTransaction.objects.filter(
+                client=project_client,
+                type=ClientBonusTransaction.Type.ACCRUAL_REVERSAL,
+                amount=Decimal("-3000.00"),
+            ).exists()
+        )
 
     def test_project_create_rejects_promo_without_bonus_as_json_error(self):
         api_client = self.auth_client_for(self.manager)
@@ -904,6 +1001,61 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(second_response.status_code, status.HTTP_201_CREATED)
         project_client.refresh_from_db()
         self.assertEqual(project_client.bonus_balance, Decimal("3000.00"))
+        self.assertEqual(ClientBonusTransaction.objects.filter(project=project, type=ClientBonusTransaction.Type.ACCRUAL).count(), 1)
+
+    def test_promo_project_accrues_three_percent_after_advance(self):
+        referrer = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Referrer",
+            phone="+79000001234",
+            bonus_balance=Decimal("20000.00"),
+        )
+        advance_category, _ = FinanceCategory.objects.get_or_create(
+            workspace=self.manager.workspace,
+            name="Аванс",
+            type=FinanceCategory.Type.INCOME,
+        )
+        api_client = self.auth_client_for(self.manager)
+
+        project_response = api_client.post(
+            "/api/projects/",
+            {
+                "title": "Referral project",
+                "client_name": "New Client",
+                "client_phone": "+79000009999",
+                "total_amount": "120000",
+                "bonus_promo_code": "01234",
+            },
+            format="json",
+        )
+
+        self.assertEqual(project_response.status_code, status.HTTP_201_CREATED)
+        project = Project.objects.get(id=project_response.data["id"])
+        project.client.refresh_from_db()
+        referrer.refresh_from_db()
+        self.assertEqual(referrer.bonus_balance, Decimal("8000.00"))
+        self.assertEqual(project.client.bonus_balance, Decimal("0.00"))
+
+        payment_response = api_client.post(
+            "/api/payments/",
+            {
+                "project": project.id,
+                "category": advance_category.id,
+                "account": self.account.id,
+                "amount": "30000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(payment_response.status_code, status.HTTP_201_CREATED)
+        project.refresh_from_db()
+        project.client.refresh_from_db()
+        referrer.refresh_from_db()
+        self.assertEqual(referrer.bonus_balance, Decimal("8000.00"))
+        self.assertEqual(project.client.bonus_balance, Decimal("3600.00"))
+        self.assertEqual(project.referral_bonus_used, Decimal("12000.00"))
+        self.assertEqual(project.bonus_accrued_amount, Decimal("3600.00"))
+        self.assertEqual(ClientBonusTransaction.objects.filter(project=project, type=ClientBonusTransaction.Type.PROMO_CREDIT).count(), 0)
         self.assertEqual(ClientBonusTransaction.objects.filter(project=project, type=ClientBonusTransaction.Type.ACCRUAL).count(), 1)
 
     def test_bonus_is_accrued_when_advance_category_has_wrong_type(self):

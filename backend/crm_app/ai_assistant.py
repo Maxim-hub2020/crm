@@ -10,7 +10,9 @@ from urllib import request as urllib_request
 
 from django.db.models import Q, Sum
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 
+from .bonuses import reverse_project_bonus_effects
 from .models import Account, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectStatus, Task, User
 from .models import CRMMemorySnapshot
 from .phones import PHONE_VALIDATION_ERROR, normalize_russian_phone, phone_digits
@@ -3608,6 +3610,14 @@ class CRMAssistantService:
             return clarification
 
         project_name = project.client_name
+        try:
+            reverse_project_bonus_effects(project, actor=self.user)
+        except ValidationError as exc:
+            return {
+                "ok": False,
+                "needs_clarification": True,
+                "summary": str(getattr(exc, "detail", exc)),
+            }
         project.delete()
         return {
             "ok": True,

@@ -191,8 +191,11 @@ class Project(models.Model):
 class ClientBonusTransaction(models.Model):
     class Type(models.TextChoices):
         ACCRUAL = "accrual", "Accrual"
+        ACCRUAL_REVERSAL = "accrual_reversal", "Accrual reversal"
         PROMO_DEBIT = "promo_debit", "Promo debit"
         PROMO_CREDIT = "promo_credit", "Promo credit"
+        PROMO_REFUND = "promo_refund", "Promo refund"
+        PROMO_CREDIT_REVERSAL = "promo_credit_reverse", "Promo credit reversal"
 
     workspace = models.ForeignKey(
         Workspace,
