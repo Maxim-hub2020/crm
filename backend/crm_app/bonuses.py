@@ -5,12 +5,14 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from .models import Client, ClientBonusTransaction, FinanceCategory, Payment, Project
+from .models import Client, ClientBonusTransaction, Payment, Project
 
 BONUS_ORDER_THRESHOLD = Decimal("50000")
 BONUS_RATE = Decimal("0.03")
 BONUS_REDEMPTION_RATE = Decimal("0.10")
 MONEY_QUANT = Decimal("0.01")
+ADVANCE_KEYWORDS = ("аванс", "предоплат")
+ADVANCE_NEGATIVE_KEYWORDS = ("возврат", "вернул", "вернули", "отмена", "refund")
 
 
 def normalize_bonus_promo_code(value):
@@ -81,12 +83,20 @@ def preview_project_bonus_promo_code(*, workspace, promo_code, total_amount, exc
     }
 
 
+def _has_advance_text(*values):
+    text = " ".join(str(value or "") for value in values).casefold()
+    if not any(keyword in text for keyword in ADVANCE_KEYWORDS):
+        return False
+    return not any(keyword in text for keyword in ADVANCE_NEGATIVE_KEYWORDS)
+
+
 def _has_advance_payment(project):
-    category_names = Payment.objects.filter(
-        project=project,
-        category__type=FinanceCategory.Type.INCOME,
-    ).values_list("category__name", flat=True)
-    return any("аванс" in str(name or "").casefold() or "предоплат" in str(name or "").casefold() for name in category_names)
+    payments = (
+        Payment.objects.select_related("category")
+        .filter(project=project, amount__gt=0, paid_at__lte=timezone.now())
+        .order_by("id")
+    )
+    return any(_has_advance_text(payment.category.name if payment.category else "", payment.comment) for payment in payments)
 
 
 def _change_bonus_balance(*, client, amount, transaction_type, project=None, related_client=None, promo_code="", actor=None, comment=""):

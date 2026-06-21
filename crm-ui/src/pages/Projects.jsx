@@ -5,7 +5,6 @@ import {
   Check,
   Copy,
   FileText,
-  Gift,
   LayoutGrid,
   List,
   ListTodo,
@@ -693,43 +692,6 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
             </div>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-function ProjectBonusSummary({ project, client }) {
-  const clientBalance = Number(client?.bonus_balance ?? project?.client_info?.bonus_balance ?? 0);
-  const accruedAmount = Number(project?.bonus_accrued_amount || 0);
-  const referralAmount = Number(project?.referral_bonus_used || 0);
-  const promoCode = project?.bonus_promo_code || "";
-
-  if (!project && !clientBalance) return null;
-
-  return (
-    <div className="rounded-[24px] border border-blue-100 bg-blue-50/60 px-4 py-4">
-      <div className="mb-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-blue-500">
-        <Gift size={14} />
-        Бонусы клиента
-      </div>
-      <div className="grid gap-3 md:grid-cols-3">
-        <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-blue-100">
-          <div className="text-xs font-bold text-slate-400">Бонусный счёт</div>
-          <div className="mt-1 text-lg font-black text-slate-900">{formatMoney(clientBalance)} ₽</div>
-        </div>
-        <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-blue-100">
-          <div className="text-xs font-bold text-slate-400">Начислено за заказ</div>
-          <div className="mt-1 text-lg font-black text-emerald-600">{formatMoney(accruedAmount)} ₽</div>
-        </div>
-        <div className="rounded-2xl bg-white px-4 py-3 ring-1 ring-blue-100">
-          <div className="text-xs font-bold text-slate-400">По промокоду, до 10%</div>
-          <div className="mt-1 text-lg font-black text-blue-600">
-            {referralAmount ? `${formatMoney(referralAmount)} ₽` : promoCode || "Не применён"}
-          </div>
-          {project?.referred_by_client_name ? (
-            <div className="mt-1 text-xs font-semibold text-slate-400">Рекомендатель: {project.referred_by_client_name}</div>
-          ) : null}
-        </div>
       </div>
     </div>
   );
@@ -2909,8 +2871,6 @@ export default function Projects() {
                   }))
                 }
               />
-
-              <ProjectBonusSummary project={activeProject} client={activeProjectClient} />
 
               {detailForm.works_with_contract ? (
                 <div className="flex justify-end rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">

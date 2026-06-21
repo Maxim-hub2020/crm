@@ -894,6 +894,76 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(project_client.bonus_balance, Decimal("3000.00"))
         self.assertEqual(ClientBonusTransaction.objects.filter(project=project, type=ClientBonusTransaction.Type.ACCRUAL).count(), 1)
 
+    def test_bonus_is_accrued_when_advance_category_has_wrong_type(self):
+        project_client = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Wrong Type Bonus Client",
+            phone="+79000000013",
+        )
+        project = Project.objects.create(
+            manager=self.manager,
+            client=project_client,
+            client_name=project_client.name,
+            client_phone=project_client.phone,
+            total_amount=Decimal("100000.00"),
+        )
+        advance_category, _ = FinanceCategory.objects.get_or_create(
+            workspace=self.manager.workspace,
+            name="Аванс",
+            type=FinanceCategory.Type.EXPENSE,
+        )
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/payments/",
+            {
+                "project": project.id,
+                "category": advance_category.id,
+                "account": self.account.id,
+                "amount": "30000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        project.refresh_from_db()
+        project_client.refresh_from_db()
+        self.assertEqual(project.bonus_accrued_amount, Decimal("3000.00"))
+        self.assertEqual(project_client.bonus_balance, Decimal("3000.00"))
+
+    def test_bonus_is_accrued_when_comment_marks_prepayment(self):
+        project_client = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Comment Bonus Client",
+            phone="+79000000014",
+        )
+        project = Project.objects.create(
+            manager=self.manager,
+            client=project_client,
+            client_name=project_client.name,
+            client_phone=project_client.phone,
+            total_amount=Decimal("100000.00"),
+        )
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/payments/",
+            {
+                "project": project.id,
+                "category": self.income_category.id,
+                "account": self.account.id,
+                "amount": "30000",
+                "comment": "Предоплата по проекту",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        project.refresh_from_db()
+        project_client.refresh_from_db()
+        self.assertEqual(project.bonus_accrued_amount, Decimal("3000.00"))
+        self.assertEqual(project_client.bonus_balance, Decimal("3000.00"))
+
     def test_bonus_is_not_accrued_for_project_up_to_threshold(self):
         project_client = Client.objects.create(
             workspace=self.manager.workspace,
