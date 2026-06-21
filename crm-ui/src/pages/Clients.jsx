@@ -394,7 +394,6 @@ export default function Clients() {
                         type="tel"
                         inputMode="numeric"
                         autoComplete="tel"
-                        pattern="[0-9+()\\-\\s]*"
                         value={editForm.phone}
                         onChange={(event) => setEditForm((prev) => ({ ...prev, phone: event.target.value }))}
                         placeholder="+7..."
@@ -470,7 +469,6 @@ export default function Clients() {
                 type="tel"
                 inputMode="numeric"
                 autoComplete="tel"
-                pattern="[0-9+()\\-\\s]*"
                 value={createForm.phone}
                 onChange={(event) => setCreateForm((prev) => ({ ...prev, phone: event.target.value }))}
                 placeholder="+7..."

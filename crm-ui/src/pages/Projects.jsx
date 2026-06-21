@@ -2539,7 +2539,6 @@ export default function Projects() {
                   type="tel"
                   inputMode="numeric"
                   autoComplete="tel"
-                  pattern="[0-9+()\\-\\s]*"
                   value={createForm.client_query}
                   onChange={(event) => handleCreateClientQuery(event.target.value)}
                   placeholder="Введите телефон клиента"
@@ -2581,7 +2580,6 @@ export default function Projects() {
                         type="tel"
                         inputMode="numeric"
                         autoComplete="tel"
-                        pattern="[0-9+()\\-\\s]*"
                         value={createForm.client_phone}
                         onChange={(event) => setCreateForm((prev) => ({ ...prev, client_phone: event.target.value }))}
                         placeholder="+7..."
@@ -3320,7 +3318,6 @@ export default function Projects() {
                 type="tel"
                 inputMode="numeric"
                 autoComplete="tel"
-                pattern="[0-9+()\\-\\s]*"
                 value={projectClientForm.phone}
                 onChange={(event) => setProjectClientForm((prev) => ({ ...prev, phone: event.target.value }))}
                 placeholder="+7..."

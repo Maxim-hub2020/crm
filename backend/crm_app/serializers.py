@@ -1,3 +1,4 @@
+import logging
 import re
 
 from django.db import transaction
@@ -26,6 +27,7 @@ from .subscription import has_trial_access, is_subscription_active
 from .tenancy import current_workspace
 
 PHONE_VALIDATION_ERROR = "Телефон должен быть в формате +7 999 123-45-67, 8 999 123-45-67 или 10 цифр."
+logger = logging.getLogger(__name__)
 
 
 def normalize_client_phone(value):
@@ -276,21 +278,31 @@ class ProjectSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         return getattr(request, "user", None)
 
+    def _run_project_side_effects(self, project):
+        try:
+            ensure_project_bonus_accrual(project, actor=self._actor())
+        except Exception:
+            logger.exception("Project bonus accrual failed for project_id=%s", project.pk)
+
     def create(self, validated_data):
         with transaction.atomic():
             project = super().create(self._resolve_client(validated_data))
             apply_project_bonus_promo_code(project, actor=self._actor())
-            ensure_project_bonus_accrual(project, actor=self._actor())
             project.refresh_from_db()
-            return project
+
+        self._run_project_side_effects(project)
+        project.refresh_from_db()
+        return project
 
     def update(self, instance, validated_data):
         with transaction.atomic():
             project = super().update(instance, self._resolve_client(validated_data))
             apply_project_bonus_promo_code(project, actor=self._actor())
-            ensure_project_bonus_accrual(project, actor=self._actor())
             project.refresh_from_db()
-            return project
+
+        self._run_project_side_effects(project)
+        project.refresh_from_db()
+        return project
 
     def get_order_number_label(self, obj):
         return f"{obj.order_number:04d}" if obj.order_number else ""

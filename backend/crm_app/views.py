@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from io import BytesIO
 
@@ -59,6 +60,8 @@ from .subscription import (
     record_project_created,
 )
 from .tenancy import current_workspace
+
+logger = logging.getLogger(__name__)
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticatedAny])
@@ -249,6 +252,16 @@ def assistant_voice_view(request):
 class ProjectViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectSerializer
     permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
+
+    def handle_exception(self, exc):
+        try:
+            return super().handle_exception(exc)
+        except Exception:
+            logger.exception("Unhandled project API error")
+            return Response(
+                {"detail": "Не удалось сохранить проект из-за внутренней ошибки сервера. Подробности записаны в лог backend."},
+                status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     def get_queryset(self):
         workspace = current_workspace(self.request.user)

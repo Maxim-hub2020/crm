@@ -495,7 +495,6 @@ export default function Settings() {
               type="tel"
               inputMode="numeric"
               autoComplete="tel"
-              pattern="[0-9+()\\-\\s]*"
               value={managerForm.phone}
               onChange={(event) => setManagerForm((prev) => ({ ...prev, phone: event.target.value }))}
               placeholder="Телефон"

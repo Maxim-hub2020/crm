@@ -292,6 +292,26 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response["Content-Type"], "application/json")
         self.assertEqual(response.data["title"], "No slash project")
 
+    @patch("crm_app.serializers.ensure_project_bonus_accrual", side_effect=RuntimeError("bonus subsystem unavailable"))
+    def test_project_create_survives_bonus_accrual_failure(self, _mocked_accrual):
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/projects/",
+            {
+                "title": "Bonus-safe project",
+                "client_name": "Bonus Safe Client",
+                "client_phone": "+70000000998",
+                "total_amount": "120000",
+                "categories": "mirrors",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["title"], "Bonus-safe project")
+        self.assertTrue(Project.objects.filter(title="Bonus-safe project").exists())
+
     def test_projects_receive_sequential_order_numbers(self):
         self.assertEqual(self.manager_project.order_number, 1)
         self.assertEqual(self.other_project.order_number, 2)
