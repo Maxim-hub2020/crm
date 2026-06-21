@@ -1,5 +1,5 @@
 import re
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.db import transaction
 from django.utils import timezone
@@ -30,7 +30,55 @@ def promo_code_for_phone(phone):
 
 
 def _money(value):
-    return Decimal(value or 0).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+    if isinstance(value, str):
+        value = value.strip().replace(" ", "").replace(",", ".")
+    try:
+        return Decimal(value or 0).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValidationError({"total_amount": "Укажите корректную сумму проекта."})
+
+
+def preview_project_bonus_promo_code(*, workspace, promo_code, total_amount, exclude_client_id=None, exclude_phone=""):
+    code = normalize_bonus_promo_code(promo_code)
+    project_total = _money(total_amount)
+    if project_total <= 0:
+        raise ValidationError({"bonus_promo_code": "Укажите сумму проекта, чтобы проверить промокод."})
+
+    if exclude_phone and promo_code_for_phone(exclude_phone) == code:
+        raise ValidationError({"bonus_promo_code": "Нельзя использовать промокод этого же клиента."})
+
+    queryset = Client.objects.filter(workspace=workspace)
+    if exclude_client_id:
+        queryset = queryset.exclude(pk=exclude_client_id)
+
+    candidates = [client for client in queryset if promo_code_for_phone(client.phone) == code]
+    if not candidates:
+        raise ValidationError({"bonus_promo_code": "Клиент с таким промокодом не найден."})
+    if len(candidates) > 1:
+        raise ValidationError({"bonus_promo_code": "Найдено несколько клиентов с таким промокодом. Уточните телефон."})
+
+    referrer = candidates[0]
+    available_bonus = _money(referrer.bonus_balance)
+    if available_bonus <= 0:
+        raise ValidationError({"bonus_promo_code": "На этом промокоде нет бонусов для списания."})
+
+    max_redeem_amount = _money(project_total * BONUS_REDEMPTION_RATE)
+    redeem_amount = min(available_bonus, max_redeem_amount)
+    if redeem_amount <= 0:
+        raise ValidationError({"bonus_promo_code": "Бонусами можно покрыть до 10% стоимости проекта."})
+
+    discounted_total = max(Decimal("0.00"), _money(project_total - redeem_amount))
+    return {
+        "ok": True,
+        "promo_code": code,
+        "referrer_client_id": referrer.id,
+        "referrer_name": referrer.name,
+        "available_bonus": str(available_bonus),
+        "max_redeem_amount": str(max_redeem_amount),
+        "redeem_amount": str(redeem_amount),
+        "original_total_amount": str(project_total),
+        "discounted_total_amount": str(discounted_total),
+    }
 
 
 def _has_advance_payment(project):
@@ -106,27 +154,17 @@ def apply_project_bonus_promo_code(project, actor=None):
         if not project.client_id:
             raise ValidationError({"bonus_promo_code": "Сначала укажите клиента проекта."})
 
-        candidates = [
-            client
-            for client in Client.objects.filter(workspace=project.workspace).exclude(pk=project.client_id)
-            if promo_code_for_phone(client.phone) == code
-        ]
-        if not candidates:
-            raise ValidationError({"bonus_promo_code": "Клиент с таким промокодом не найден."})
-        if len(candidates) > 1:
-            raise ValidationError({"bonus_promo_code": "Найдено несколько клиентов с таким промокодом. Уточните телефон."})
+        preview = preview_project_bonus_promo_code(
+            workspace=project.workspace,
+            promo_code=code,
+            total_amount=project.total_amount,
+            exclude_client_id=project.client_id,
+            exclude_phone=project.client.phone if project.client else "",
+        )
 
-        referrer = Client.objects.select_for_update().get(pk=candidates[0].pk)
+        referrer = Client.objects.select_for_update().get(pk=preview["referrer_client_id"])
         available_bonus = _money(referrer.bonus_balance)
-        if available_bonus <= 0:
-            raise ValidationError({"bonus_promo_code": "У клиента-рекомендателя нет доступных бонусов."})
-
-        project_total = _money(project.total_amount)
-        if project_total <= 0:
-            raise ValidationError({"bonus_promo_code": "Укажите сумму проекта, чтобы применить бонусы."})
-
-        project_limit = _money(project_total * BONUS_REDEMPTION_RATE)
-        transfer_amount = min(available_bonus, project_limit)
+        transfer_amount = min(available_bonus, _money(preview["redeem_amount"]))
         if transfer_amount <= 0:
             raise ValidationError({"bonus_promo_code": "Бонусами можно покрыть до 10% стоимости проекта."})
 

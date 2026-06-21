@@ -456,6 +456,76 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(project.referral_bonus_used, Decimal("12000.00"))
         self.assertEqual(ClientBonusTransaction.objects.filter(project=project, promo_code="01234").count(), 2)
 
+    def test_bonus_promo_preview_returns_discount_before_project_creation(self):
+        api_client = self.auth_client_for(self.manager)
+        Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Referrer",
+            phone="+79000001234",
+            bonus_balance=Decimal("20000.00"),
+        )
+
+        response = api_client.post(
+            "/api/bonus-promo-preview/",
+            {
+                "bonus_promo_code": "01234",
+                "total_amount": "120000",
+                "client_phone": "+79000009999",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["redeem_amount"], "12000.00")
+        self.assertEqual(response.data["discounted_total_amount"], "108000.00")
+        self.assertEqual(response.data["referrer_name"], "Referrer")
+
+    def test_bonus_promo_preview_rejects_code_without_bonus_balance(self):
+        api_client = self.auth_client_for(self.manager)
+        Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Empty Referrer",
+            phone="+79000004140",
+            bonus_balance=Decimal("0.00"),
+        )
+
+        response = api_client.post(
+            "/api/bonus-promo-preview/",
+            {
+                "bonus_promo_code": "04140",
+                "total_amount": "120000",
+                "client_phone": "+79000009999",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("bonus_promo_code", response.data)
+
+    def test_project_create_rejects_promo_without_bonus_as_json_error(self):
+        api_client = self.auth_client_for(self.manager)
+        Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Empty Referrer",
+            phone="+79000004140",
+            bonus_balance=Decimal("0.00"),
+        )
+
+        response = api_client.post(
+            "/api/projects/",
+            {
+                "title": "Referral project",
+                "client_name": "New Client",
+                "client_phone": "+79000009999",
+                "total_amount": "120000",
+                "bonus_promo_code": "04140",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("bonus_promo_code", response.data)
+
     def test_project_rejects_unknown_status(self):
         client = self.auth_client_for(self.manager)
 

@@ -42,6 +42,7 @@ import {
   fetchProjectStatuses,
   fetchTasks,
   hasDadataAddressSuggestions,
+  previewBonusPromo,
   updateClient,
   updatePayment,
   updateTask,
@@ -418,10 +419,21 @@ function daysInWork(value) {
 
 function projectAmount(project, paymentsByProject) {
   const plannedAmount = Number(project?.total_amount || 0);
-  if (plannedAmount > 0) return plannedAmount;
+  if (plannedAmount > 0) return Math.max(0, plannedAmount - projectReferralBonus(project));
 
   const rows = paymentsByProject.get(project.id) || [];
   return rows.reduce((sum, payment) => sum + paymentSignedAmount(payment), 0);
+}
+
+function projectReferralBonus(project) {
+  const plannedAmount = Number(project?.total_amount || 0);
+  const bonusAmount = Number(project?.referral_bonus_used || 0);
+  if (plannedAmount <= 0 || bonusAmount <= 0) return 0;
+  return Math.min(plannedAmount, bonusAmount);
+}
+
+function projectDiscountedAmount(project) {
+  return Math.max(0, Number(project?.total_amount || 0) - projectReferralBonus(project));
 }
 
 function paymentDisplaySignedAmount(payment) {
@@ -753,6 +765,8 @@ function ColumnHeader({ status, count, totalAmount }) {
 
 function ProjectKanbanCard({ project, amount, ageDays, showAgeDays = true, isDragging = false, onClick }) {
   const orderLabel = projectOrderLabel(project);
+  const bonusUsed = projectReferralBonus(project);
+  const plannedAmount = Number(project?.total_amount || 0);
 
   return (
     <button
@@ -774,7 +788,12 @@ function ProjectKanbanCard({ project, amount, ageDays, showAgeDays = true, isDra
       </div>
       <div className="mt-1.5 text-sm text-slate-500">{project.client_name || "Клиент не назначен"}</div>
       <div className="mt-4 flex items-end justify-between gap-3">
-        <div className="text-[1.05rem] font-black tracking-tight text-blue-600">{formatMoney(amount)} ₽</div>
+        <div>
+          {bonusUsed > 0 ? (
+            <div className="text-xs font-bold text-slate-400 line-through">{formatMoney(plannedAmount)} ₽</div>
+          ) : null}
+          <div className="text-[1.05rem] font-black tracking-tight text-blue-600">{formatMoney(amount)} ₽</div>
+        </div>
         {showAgeDays ? (
           <span className={`rounded-full px-3 py-1 text-sm font-semibold ${ageBadgeClass(ageDays)}`}>
             {ageDays || 0} дн.
@@ -787,6 +806,8 @@ function ProjectKanbanCard({ project, amount, ageDays, showAgeDays = true, isDra
 
 function ProjectDragGhost({ project, amount, ageDays, left, top, width }) {
   const orderLabel = projectOrderLabel(project);
+  const bonusUsed = projectReferralBonus(project);
+  const plannedAmount = Number(project?.total_amount || 0);
 
   return (
     <div
@@ -809,7 +830,12 @@ function ProjectDragGhost({ project, amount, ageDays, left, top, width }) {
       </div>
       <div className="mt-1.5 text-sm text-slate-500">{project.client_name || "Клиент не назначен"}</div>
       <div className="mt-4 flex items-end justify-between gap-3">
-        <div className="text-[1.05rem] font-black tracking-tight text-blue-600">{formatMoney(amount)} ₽</div>
+        <div>
+          {bonusUsed > 0 ? (
+            <div className="text-xs font-bold text-slate-400 line-through">{formatMoney(plannedAmount)} ₽</div>
+          ) : null}
+          <div className="text-[1.05rem] font-black tracking-tight text-blue-600">{formatMoney(amount)} ₽</div>
+        </div>
         <span className={`rounded-full px-3 py-1 text-sm font-semibold ${ageBadgeClass(ageDays)}`}>
           {ageDays || 0} дн.
         </span>
@@ -847,6 +873,9 @@ export default function Projects() {
   const [createForm, setCreateForm] = useState(createEmptyProjectForm());
   const [createSaving, setCreateSaving] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [createBonusPreview, setCreateBonusPreview] = useState(null);
+  const [createBonusPreviewError, setCreateBonusPreviewError] = useState("");
+  const [createBonusPreviewLoading, setCreateBonusPreviewLoading] = useState(false);
 
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [detailForm, setDetailForm] = useState(createEmptyProjectForm());
@@ -1155,6 +1184,68 @@ export default function Projects() {
   }, [activeProjectId, tasks]);
 
   useEffect(() => {
+    if (!openCreate) return;
+
+    const promoCode = normalizePromoCodeInput(createForm.bonus_promo_code);
+    const totalAmount = cleanAmountValue(createForm.total_amount);
+
+    if (!promoCode || promoCode.length < 5) {
+      setCreateBonusPreview(null);
+      setCreateBonusPreviewError("");
+      setCreateBonusPreviewLoading(false);
+      return;
+    }
+
+    if (!totalAmount) {
+      setCreateBonusPreview(null);
+      setCreateBonusPreviewError("Укажите сумму проекта, чтобы проверить промокод.");
+      setCreateBonusPreviewLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setCreateBonusPreviewLoading(true);
+    setCreateBonusPreview(null);
+    setCreateBonusPreviewError("");
+
+    const timerId = window.setTimeout(async () => {
+      try {
+        const preview = await previewBonusPromo({
+          bonus_promo_code: promoCode,
+          total_amount: totalAmount,
+          client: createForm.client || undefined,
+          client_phone: createForm.client_phone || createForm.client_query || "",
+        });
+        if (!cancelled) {
+          setCreateBonusPreview(preview);
+          setCreateBonusPreviewError("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCreateBonusPreview(null);
+          setCreateBonusPreviewError(extractApiErrorMessage(error, "Промокод не подходит или бонусов нет."));
+        }
+      } finally {
+        if (!cancelled) {
+          setCreateBonusPreviewLoading(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+    };
+  }, [
+    createForm.bonus_promo_code,
+    createForm.client,
+    createForm.client_phone,
+    createForm.client_query,
+    createForm.total_amount,
+    openCreate,
+  ]);
+
+  useEffect(() => {
     if (!activeProject) {
       loadedProjectIdRef.current = null;
       return;
@@ -1305,6 +1396,9 @@ export default function Projects() {
 
   function openCreateModal(status = defaultStatusValue) {
     setCreateError("");
+    setCreateBonusPreview(null);
+    setCreateBonusPreviewError("");
+    setCreateBonusPreviewLoading(false);
     setCreateForm(createEmptyProjectForm(status));
     setOpenCreate(true);
   }
@@ -1312,6 +1406,9 @@ export default function Projects() {
   function closeCreateModal() {
     setOpenCreate(false);
     setCreateError("");
+    setCreateBonusPreview(null);
+    setCreateBonusPreviewError("");
+    setCreateBonusPreviewLoading(false);
     setCreateForm(createEmptyProjectForm(defaultStatusValue));
   }
 
@@ -1564,6 +1661,18 @@ export default function Projects() {
       }
       if (promoCode && !cleanAmountValue(createForm.total_amount)) {
         setCreateError("Укажите сумму проекта: бонусами можно покрыть до 10% стоимости.");
+        return;
+      }
+      if (promoCode && createBonusPreviewLoading) {
+        setCreateError("Проверяем промокод, подождите секунду.");
+        return;
+      }
+      if (promoCode && createBonusPreviewError) {
+        setCreateError(createBonusPreviewError);
+        return;
+      }
+      if (promoCode && !createBonusPreview) {
+        setCreateError("Проверьте промокод перед созданием проекта.");
         return;
       }
 
@@ -2301,7 +2410,9 @@ export default function Projects() {
         <div className="space-y-4">
           {filteredProjects.map((project) => {
             const rows = paymentsByProject.get(project.id) || [];
-            const total = rows.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+            const total = projectAmount(project, paymentsByProject);
+            const bonusUsed = projectReferralBonus(project);
+            const plannedAmount = Number(project?.total_amount || 0);
             const latestPayment = rows[0];
             const statusMeta = statusMap.get(project.status);
 
@@ -2346,7 +2457,12 @@ export default function Projects() {
                     <div className="grid min-w-[240px] gap-3 lg:grid-cols-2 xl:grid-cols-1">
                       <div className="rounded-[28px] bg-slate-50 px-5 py-4 ring-1 ring-slate-200/70">
                         <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Сумма</div>
-                        <div className="mt-2 text-2xl font-black text-slate-900">{formatMoney(total)}</div>
+                        {bonusUsed > 0 ? (
+                          <div className="mt-2 text-sm font-bold text-slate-400 line-through">{formatMoney(plannedAmount)} ₽</div>
+                        ) : null}
+                        <div className={`${bonusUsed > 0 ? "mt-0.5" : "mt-2"} text-2xl font-black text-slate-900`}>
+                          {formatMoney(total)} ₽
+                        </div>
                       </div>
                       <Button type="button" className="justify-center" onClick={() => openProject(project)}>
                         <Plus size={16} />
@@ -2513,6 +2629,32 @@ export default function Projects() {
                 maxLength={5}
                 placeholder="Последние 5 цифр телефона, покрывает до 10% проекта"
               />
+              {createBonusPreviewLoading ? (
+                <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-500">
+                  Проверяем промокод...
+                </div>
+              ) : null}
+              {createBonusPreviewError ? (
+                <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                  {createBonusPreviewError}
+                </div>
+              ) : null}
+              {createBonusPreview ? (
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                  <div className="font-black">Промокод найден: {createBonusPreview.referrer_name}</div>
+                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                    <span className="font-bold text-slate-400 line-through">
+                      {formatMoney(createBonusPreview.original_total_amount)} ₽
+                    </span>
+                    <span className="text-lg font-black text-emerald-700">
+                      {formatMoney(createBonusPreview.discounted_total_amount)} ₽
+                    </span>
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-emerald-700">
+                      Бонусами: −{formatMoney(createBonusPreview.redeem_amount)} ₽
+                    </span>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -2545,8 +2687,8 @@ export default function Projects() {
             <Button type="button" variant="secondary" onClick={closeCreateModal}>
               Отмена
             </Button>
-            <Button type="submit" disabled={createSaving}>
-              {createSaving ? "Создаём..." : "Создать"}
+            <Button type="submit" disabled={createSaving || createBonusPreviewLoading}>
+              {createSaving ? "Создаём..." : createBonusPreviewLoading ? "Проверяем..." : "Создать"}
             </Button>
           </div>
         </form>
@@ -2723,6 +2865,13 @@ export default function Projects() {
                     inputMode="numeric"
                     placeholder="Например, 120 000"
                   />
+                  {projectReferralBonus(activeProject) > 0 ? (
+                    <div className="rounded-2xl bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
+                      <span className="mr-2 text-slate-400 line-through">{formatMoney(activeProject.total_amount)} ₽</span>
+                      <span className="text-lg font-black">{formatMoney(projectDiscountedAmount(activeProject))} ₽</span>
+                      <span className="ml-2">с учётом бонусов −{formatMoney(projectReferralBonus(activeProject))} ₽</span>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>Бонусы / промокод</Label>

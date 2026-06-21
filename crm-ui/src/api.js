@@ -288,6 +288,12 @@ export async function deleteClient(clientId) {
   await api.delete(`/api/clients/${clientId}/`);
 }
 
+export async function previewBonusPromo(payload) {
+  initApiAuth();
+  const { data } = await api.post("/api/bonus-promo-preview/", payload);
+  return data;
+}
+
 export async function fetchProjectStatuses() {
   initApiAuth();
   const { data } = await api.get("/api/project-statuses/");

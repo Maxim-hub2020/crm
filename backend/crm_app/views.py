@@ -15,7 +15,7 @@ from rest_framework.response import Response
 from rest_framework import status as drf_status
 
 from .ai_assistant import CRMAssistantService, GeminiConfigurationError, GeminiRequestError
-from .bonuses import ensure_project_bonus_accrual
+from .bonuses import ensure_project_bonus_accrual, preview_project_bonus_promo_code
 from .models import (
     Account,
     ChatIntegrationSettings,
@@ -110,6 +110,28 @@ def billing_activate_invoice_view(request):
             "summary": billing_summary_payload(request.user),
         }
     )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+def bonus_promo_preview_view(request):
+    try:
+        preview = preview_project_bonus_promo_code(
+            workspace=current_workspace(request.user),
+            promo_code=request.data.get("bonus_promo_code") or request.data.get("promo_code"),
+            total_amount=request.data.get("total_amount"),
+            exclude_client_id=request.data.get("client") or request.data.get("client_id") or None,
+            exclude_phone=request.data.get("client_phone") or "",
+        )
+    except ValidationError as exc:
+        detail = getattr(exc, "detail", None)
+        if isinstance(detail, dict):
+            return Response(detail, status=drf_status.HTTP_400_BAD_REQUEST)
+        if isinstance(detail, list) and detail:
+            return Response({"detail": str(detail[0])}, status=drf_status.HTTP_400_BAD_REQUEST)
+        return Response({"detail": str(exc)}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    return Response(preview)
 
 
 @api_view(["GET", "PATCH"])
