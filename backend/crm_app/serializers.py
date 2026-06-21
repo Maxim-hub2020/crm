@@ -1,5 +1,4 @@
 import logging
-import re
 
 from django.db import transaction
 from rest_framework import serializers
@@ -23,25 +22,18 @@ from .models import (
     Task,
     User,
 )
+from .phones import PHONE_VALIDATION_ERROR, normalize_russian_phone, phone_digits
 from .subscription import has_trial_access, is_subscription_active
 from .tenancy import current_workspace
 
-PHONE_VALIDATION_ERROR = "Телефон должен быть в формате +7 999 123-45-67, 8 999 123-45-67 или 10 цифр."
 logger = logging.getLogger(__name__)
 
 
 def normalize_client_phone(value):
-    raw_value = str(value or "").strip()
-    if not raw_value:
-        return ""
-
-    digits = re.sub(r"\D", "", raw_value)
-    if len(digits) == 10:
-        return f"+7{digits}"
-    if len(digits) == 11 and digits[0] in ("7", "8"):
-        return f"+7{digits[1:]}"
-
-    raise serializers.ValidationError(PHONE_VALIDATION_ERROR)
+    try:
+        return normalize_russian_phone(value)
+    except ValueError:
+        raise serializers.ValidationError(PHONE_VALIDATION_ERROR)
 
 class MeSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
@@ -147,6 +139,16 @@ class ProjectSerializer(serializers.ModelSerializer):
         client = current_client
         if phone:
             phone_match = Client.objects.filter(workspace=workspace, phone=phone).first()
+            if not phone_match:
+                normalized_digits = phone_digits(phone)
+                phone_match = next(
+                    (
+                        candidate
+                        for candidate in Client.objects.filter(workspace=workspace).exclude(phone="").only("id", "phone")
+                        if phone_digits(candidate.phone) == normalized_digits
+                    ),
+                    None,
+                )
             if phone_match:
                 client = phone_match
 

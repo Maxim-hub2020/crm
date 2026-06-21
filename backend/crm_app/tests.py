@@ -348,7 +348,7 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         self.assertTrue(response.data["client"])
         created_client = Client.objects.get(id=response.data["client"])
         self.assertEqual(created_client.name, "Contract Client")
-        self.assertEqual(created_client.phone, "+70000000077")
+        self.assertEqual(created_client.phone, "+7-000-000-00-77")
         self.assertEqual(response.data["object_address"], "Moscow")
         self.assertEqual(response.data["object_lat"], "55.755864")
         self.assertEqual(response.data["object_lon"], "37.617698")
@@ -384,8 +384,8 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["client_phone"], "+79000000077")
-        self.assertTrue(Client.objects.filter(phone="+79000000077").exists())
+        self.assertEqual(response.data["client_phone"], "+7-900-000-00-77")
+        self.assertTrue(Client.objects.filter(phone="+7-900-000-00-77").exists())
 
     def test_project_rejects_invalid_client_phone(self):
         client = self.auth_client_for(self.manager)
@@ -587,7 +587,7 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
         self.admin = self.create_user("admin.user", role=User.Role.ADMIN)
         self.client_card = Client.objects.create(
             name="Client One",
-            phone="+70000000001",
+            phone="+7-000-000-00-01",
             email="one@example.com",
             address="Moscow",
         )
@@ -632,7 +632,7 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.client_card.refresh_from_db()
         self.assertEqual(self.client_card.name, "Updated Client")
-        self.assertEqual(self.client_card.phone, "+70000000099")
+        self.assertEqual(self.client_card.phone, "+7-000-000-00-99")
         self.assertEqual(self.client_card.email, "updated@example.com")
         self.assertEqual(self.client_card.address, "Updated address")
         self.assertTrue(self.client_card.works_with_contract)
@@ -648,7 +648,19 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.client_card.refresh_from_db()
-        self.assertEqual(self.client_card.phone, "+79000000055")
+        self.assertEqual(self.client_card.phone, "+7-900-000-00-55")
+
+    def test_client_search_matches_normalized_phone_digits(self):
+        self.client_card.phone = "+7-900-123-45-67"
+        self.client_card.save(update_fields=["phone"])
+        api_client = self.auth_client_for(self.manager)
+
+        for query in ("8900123", "+79001234567", "900-123"):
+            response = api_client.get("/api/clients/", {"q": query})
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(len(response.data), 1)
+            self.assertEqual(response.data[0]["id"], self.client_card.id)
 
     def test_client_rejects_invalid_phone(self):
         api_client = self.auth_client_for(self.manager)
@@ -704,7 +716,7 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
         project.refresh_from_db()
         self.assertIsNone(project.client_id)
         self.assertEqual(project.client_name, "Client One")
-        self.assertEqual(project.client_phone, "+70000000001")
+        self.assertEqual(project.client_phone, "+7-000-000-00-01")
 
 
 class TestChatSettingsApi(AuthenticatedApiMixin, APITestCase):
@@ -2232,7 +2244,7 @@ class TestLowLatencyAssistant(AuthenticatedApiMixin, APITestCase):
         )
 
         self.assertTrue(result["ok"])
-        created_project = Project.objects.get(client_phone="+70000000011")
+        created_project = Project.objects.get(client_phone="+7-000-000-00-11")
         self.assertEqual(created_project.title, "Зеркало в ванную")
         self.assertEqual(created_project.status, "design")
 

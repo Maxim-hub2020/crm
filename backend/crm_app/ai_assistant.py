@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from .models import Account, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectStatus, Task, User
 from .models import CRMMemorySnapshot
+from .phones import PHONE_VALIDATION_ERROR, normalize_russian_phone, phone_digits
 from .tenancy import current_workspace
 
 
@@ -3305,10 +3306,22 @@ class CRMAssistantService:
 
     def _get_or_create_client_from_arguments(self, arguments, client_name):
         phone = str(arguments.get("client_phone") or "").strip()
+        if phone:
+            phone = normalize_russian_phone(phone)
         email = str(arguments.get("client_email") or "").strip() or None
         address = str(arguments.get("client_address") or "").strip() or None
 
         client = Client.objects.filter(workspace=self.workspace, phone=phone).first() if phone else None
+        if phone and client is None:
+            normalized_digits = phone_digits(phone)
+            client = next(
+                (
+                    candidate
+                    for candidate in Client.objects.filter(workspace=self.workspace).exclude(phone="").only("id", "phone")
+                    if phone_digits(candidate.phone) == normalized_digits
+                ),
+                None,
+            )
         if client is None and client_name:
             client = Client.objects.filter(workspace=self.workspace, name__iexact=client_name, phone="").first()
 
@@ -3326,6 +3339,9 @@ class CRMAssistantService:
             if client_name and client.name != client_name:
                 client.name = client_name
                 changed_fields.append("name")
+            if phone and client.phone != phone and not Client.objects.exclude(pk=client.pk).filter(workspace=self.workspace, phone=phone).exists():
+                client.phone = phone
+                changed_fields.append("phone")
             if email and client.email != email:
                 client.email = email
                 changed_fields.append("email")
@@ -3395,7 +3411,10 @@ class CRMAssistantService:
             arguments["object_lat"] = normalized_address.get("lat") or ""
             arguments["object_lon"] = normalized_address.get("lon") or ""
 
-        client = self._get_or_create_client_from_arguments(arguments, client_name)
+        try:
+            client = self._get_or_create_client_from_arguments(arguments, client_name)
+        except ValueError:
+            return self._clarification(PHONE_VALIDATION_ERROR, [])
         project = Project.objects.create(
             workspace=self.workspace,
             manager=manager,
@@ -3460,7 +3479,10 @@ class CRMAssistantService:
         if not client_name:
             return self._clarification("Чтобы создать клиента, мне нужно имя или название клиента.", [])
 
-        client = self._get_or_create_client_from_arguments(arguments, client_name)
+        try:
+            client = self._get_or_create_client_from_arguments(arguments, client_name)
+        except ValueError:
+            return self._clarification(PHONE_VALIDATION_ERROR, [])
 
         return {
             "ok": True,
@@ -3501,6 +3523,12 @@ class CRMAssistantService:
                     updates[field] = value or None
                 else:
                     updates[field] = value
+
+        if updates.get("client_phone"):
+            try:
+                updates["client_phone"] = normalize_russian_phone(updates["client_phone"])
+            except ValueError:
+                return self._clarification(PHONE_VALIDATION_ERROR, [])
 
         if "object_address" in arguments:
             normalized_address = self._normalize_ai_project_address(arguments.get("object_address"))

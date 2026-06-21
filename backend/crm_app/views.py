@@ -4,7 +4,8 @@ import uuid
 from io import BytesIO
 
 from django.core.files.storage import default_storage
-from django.db.models import Q
+from django.db.models import F, Q, Value
+from django.db.models.functions import Replace
 from django.http import FileResponse
 from django.utils import timezone
 from django.utils.text import get_valid_filename
@@ -34,6 +35,7 @@ from .models import (
     User,
 )
 from .permissions import HasActiveSubscription, HasAssistantSubscription, IsAdmin, IsAuthenticatedAny
+from .phones import phone_search_digits
 from .serializers import (
     AdminUserSerializer,
     AccountSerializer,
@@ -62,6 +64,13 @@ from .subscription import (
 from .tenancy import current_workspace
 
 logger = logging.getLogger(__name__)
+
+
+def phone_digits_expression(field_name):
+    expression = F(field_name)
+    for char in ("+", "-", " ", "(", ")"):
+        expression = Replace(expression, Value(char), Value(""))
+    return expression
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticatedAny])
@@ -414,9 +423,14 @@ class ClientViewSet(viewsets.ModelViewSet):
         qs = Client.objects.filter(workspace=workspace).order_by("name", "id")
         query = (self.request.query_params.get("q") or "").strip()
         if query:
+            phone_query = phone_search_digits(query)
+            phone_filter = Q(phone__icontains=query)
+            if phone_query:
+                qs = qs.annotate(phone_digits=phone_digits_expression("phone"))
+                phone_filter |= Q(phone_digits__icontains=phone_query)
             qs = qs.filter(
                 Q(name__icontains=query)
-                | Q(phone__icontains=query)
+                | phone_filter
                 | Q(email__icontains=query)
                 | Q(address__icontains=query)
             )

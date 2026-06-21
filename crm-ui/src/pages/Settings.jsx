@@ -41,6 +41,7 @@ import {
   uploadDocumentTemplate,
 } from "../api";
 import { Input, Select } from "../components/ui.jsx";
+import { formatRussianPhoneInput } from "../utils/phone.js";
 
 const STATUS_COLOR = "sky";
 
@@ -496,7 +497,10 @@ export default function Settings() {
               inputMode="numeric"
               autoComplete="tel"
               value={managerForm.phone}
-              onChange={(event) => setManagerForm((prev) => ({ ...prev, phone: event.target.value }))}
+              onChange={(event) => setManagerForm((prev) => ({ ...prev, phone: formatRussianPhoneInput(event.target.value) }))}
+              onFocus={() => {
+                if (!managerForm.phone) setManagerForm((prev) => ({ ...prev, phone: "+7-" }));
+              }}
               placeholder="Телефон"
             />
             <Input

@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 
 import { createClient, deleteClient, extractApiErrorMessage, fetchClients, fetchPayments, fetchProjects, updateClient } from "../api";
 import { Badge, Button, Input, Label, Modal } from "../components/ui.jsx";
-import { clientPhoneValidationError, normalizeOptionalClientPhone } from "../utils/phone.js";
+import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone } from "../utils/phone.js";
 
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
@@ -395,7 +395,10 @@ export default function Clients() {
                         inputMode="numeric"
                         autoComplete="tel"
                         value={editForm.phone}
-                        onChange={(event) => setEditForm((prev) => ({ ...prev, phone: event.target.value }))}
+                        onChange={(event) => setEditForm((prev) => ({ ...prev, phone: formatRussianPhoneInput(event.target.value) }))}
+                        onFocus={() => {
+                          if (!editForm.phone) setEditForm((prev) => ({ ...prev, phone: "+7-" }));
+                        }}
                         placeholder="+7..."
                       />
                     </div>
@@ -470,7 +473,10 @@ export default function Clients() {
                 inputMode="numeric"
                 autoComplete="tel"
                 value={createForm.phone}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, phone: event.target.value }))}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, phone: formatRussianPhoneInput(event.target.value) }))}
+                onFocus={() => {
+                  if (!createForm.phone) setCreateForm((prev) => ({ ...prev, phone: "+7-" }));
+                }}
                 placeholder="+7..."
               />
             </div>

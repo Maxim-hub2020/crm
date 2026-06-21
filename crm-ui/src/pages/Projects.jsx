@@ -60,7 +60,7 @@ import {
   Modal,
   Select,
 } from "../components/ui.jsx";
-import { clientPhoneValidationError, normalizeOptionalClientPhone, phoneDigits } from "../utils/phone.js";
+import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits } from "../utils/phone.js";
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
 
@@ -1400,13 +1400,14 @@ export default function Projects() {
   }
 
   function handleCreateClientQuery(value) {
-    const digits = phoneDigits(value);
+    const formattedValue = formatRussianPhoneInput(value);
+    const digits = phoneDigits(formattedValue);
     setCreateForm((prev) => ({
       ...prev,
       client: "",
-      client_query: value,
-      client_phone: digits ? value : prev.client_phone,
-      client_name: digits ? prev.client_name : value,
+      client_query: formattedValue,
+      client_phone: digits ? formattedValue : "",
+      client_name: digits ? prev.client_name : "",
     }));
   }
 
@@ -2503,6 +2504,9 @@ export default function Projects() {
                   autoComplete="tel"
                   value={createForm.client_query}
                   onChange={(event) => handleCreateClientQuery(event.target.value)}
+                  onFocus={() => {
+                    if (!createForm.client_query) handleCreateClientQuery("+7-");
+                  }}
                   placeholder="Введите телефон клиента"
                 />
               )}
@@ -2543,7 +2547,15 @@ export default function Projects() {
                         inputMode="numeric"
                         autoComplete="tel"
                         value={createForm.client_phone}
-                        onChange={(event) => setCreateForm((prev) => ({ ...prev, client_phone: event.target.value }))}
+                        onChange={(event) => {
+                          const phone = formatRussianPhoneInput(event.target.value);
+                          setCreateForm((prev) => ({ ...prev, client_phone: phone, client_query: phone || prev.client_query }));
+                        }}
+                        onFocus={() => {
+                          if (!createForm.client_phone) {
+                            setCreateForm((prev) => ({ ...prev, client_phone: "+7-", client_query: "+7-" }));
+                          }
+                        }}
                         placeholder="+7..."
                       />
                     </div>
@@ -3279,7 +3291,10 @@ export default function Projects() {
                 inputMode="numeric"
                 autoComplete="tel"
                 value={projectClientForm.phone}
-                onChange={(event) => setProjectClientForm((prev) => ({ ...prev, phone: event.target.value }))}
+                onChange={(event) => setProjectClientForm((prev) => ({ ...prev, phone: formatRussianPhoneInput(event.target.value) }))}
+                onFocus={() => {
+                  if (!projectClientForm.phone) setProjectClientForm((prev) => ({ ...prev, phone: "+7-" }));
+                }}
                 placeholder="+7..."
               />
             </div>
