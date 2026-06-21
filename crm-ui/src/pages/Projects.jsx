@@ -1043,6 +1043,10 @@ export default function Projects() {
   }, [clients]);
 
   const createClientLookup = useMemo(() => {
+    if (createForm.client) {
+      return { queryReady: false, matches: [] };
+    }
+
     const textQuery = normalizeSearchText(createForm.client_query || createForm.client_name || createForm.client_phone);
     const digitsQuery = phoneDigits(createForm.client_query || createForm.client_phone);
     const queryReady = textQuery.length >= 2 || digitsQuery.length >= 3;
@@ -1315,12 +1319,24 @@ export default function Projects() {
     setCreateForm((prev) => ({
       ...prev,
       client: client.client_id || "",
-      client_query: client.client_phone || client.client_name || prev.client_query,
+      client_query: "",
       client_name: client.client_name || prev.client_name,
       client_phone: client.client_phone || prev.client_phone,
       client_email: client.client_email || prev.client_email,
       object_address: client.object_address || prev.object_address,
       works_with_contract: Boolean(client.works_with_contract),
+    }));
+  }
+
+  function clearCreateClientSelection() {
+    setCreateForm((prev) => ({
+      ...prev,
+      client: "",
+      client_query: "",
+      client_name: "",
+      client_phone: "",
+      client_email: "",
+      works_with_contract: false,
     }));
   }
 
@@ -2377,32 +2393,46 @@ export default function Projects() {
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>Клиент</Label>
-              <Input
-                type="tel"
-                inputMode="numeric"
-                autoComplete="tel"
-                pattern="[0-9+()\\-\\s]*"
-                value={createForm.client_query}
-                onChange={(event) => handleCreateClientQuery(event.target.value)}
-                placeholder="Введите телефон клиента"
-              />
-            </div>
-            {createClientLookup.queryReady && (
-              <div className="space-y-2 md:col-span-2">
-                {selectedCreateClient ? (
-                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
-                    <span>Выбран клиент: {selectedCreateClient.client_name || "Клиент без имени"}</span>
+              {selectedCreateClient ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
+                  <div className="min-w-0">
+                    <div className="truncate text-base font-black">{selectedCreateClient.client_name || "Клиент без имени"}</div>
+                    <div className="mt-0.5 text-xs font-bold text-blue-500">Выбран клиент</div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
                     {phoneHref(selectedCreateClient.client_phone) && (
                       <a
-                        className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-black text-blue-600"
+                        className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-black text-blue-600 shadow-sm transition hover:bg-blue-100"
                         href={phoneHref(selectedCreateClient.client_phone)}
                       >
                         <Phone size={13} />
                         Позвонить
                       </a>
                     )}
+                    <button
+                      type="button"
+                      className="rounded-full bg-white/70 px-3 py-1.5 text-xs font-black text-slate-500 transition hover:bg-white hover:text-slate-800"
+                      onClick={clearCreateClientSelection}
+                    >
+                      Сменить
+                    </button>
                   </div>
-                ) : createClientLookup.matches.length > 0 ? (
+                </div>
+              ) : (
+                <Input
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  pattern="[0-9+()\\-\\s]*"
+                  value={createForm.client_query}
+                  onChange={(event) => handleCreateClientQuery(event.target.value)}
+                  placeholder="Введите телефон клиента"
+                />
+              )}
+            </div>
+            {createClientLookup.queryReady && (
+              <div className="space-y-2 md:col-span-2">
+                {createClientLookup.matches.length > 0 ? (
                   createClientLookup.matches.map((client) => (
                     <button
                       key={client.key}
