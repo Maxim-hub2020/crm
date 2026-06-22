@@ -1176,6 +1176,10 @@ export default function Projects() {
     return { queryReady: true, matches };
   }, [activeProject, activeProjectClient?.id, clientDirectory, projectClientQuery]);
 
+  const projectClientQueryHasPhone = phoneDigits(projectClientQuery).length > 0;
+  const projectClientCanCreate =
+    projectClientLookup.queryReady && projectClientLookup.matches.length === 0 && projectClientQuery.trim().length > 0;
+
   const draggedProject = useMemo(
     () => projects.find((project) => project.id === dragPreview?.projectId) || null,
     [dragPreview?.projectId, projects]
@@ -2942,7 +2946,10 @@ export default function Projects() {
                           type="text"
                           inputMode="search"
                           value={projectClientQuery}
-                          onChange={(event) => setProjectClientQuery(formatClientLookupInput(event.target.value))}
+                          onChange={(event) => {
+                            setProjectClientQuery(formatClientLookupInput(event.target.value));
+                            setProjectNewClientName("");
+                          }}
                           placeholder="Введите имя или телефон клиента"
                         />
                         {projectClientLookup.queryReady && projectClientLookup.matches.length > 0 ? (
@@ -2969,22 +2976,42 @@ export default function Projects() {
                             ))}
                           </div>
                         ) : null}
-                        <div className="rounded-2xl bg-white px-3 py-3 ring-1 ring-slate-200">
-                          <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Новый клиент</div>
-                          <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                            <Input
-                              value={projectNewClientName}
-                              onChange={(event) => setProjectNewClientName(event.target.value)}
-                              placeholder="Имя клиента"
-                            />
-                            <Button type="button" className="justify-center" onClick={createAndAttachProjectClient} disabled={projectClientAttaching}>
-                              {projectClientAttaching ? "Прикрепляем..." : "Создать и прикрепить"}
-                            </Button>
+                        {projectClientCanCreate ? (
+                          <div className="rounded-2xl bg-white px-3 py-3 ring-1 ring-slate-200">
+                            <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+                              Клиент не найден
+                            </div>
+                            <div className="mt-2 text-sm font-semibold text-slate-500">
+                              Можно создать новую карточку и сразу привязать её к проекту.
+                            </div>
+                            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                              {projectClientQueryHasPhone ? (
+                                <Input
+                                  value={projectNewClientName}
+                                  onChange={(event) => setProjectNewClientName(event.target.value)}
+                                  placeholder="Имя клиента"
+                                />
+                              ) : (
+                                <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-black text-slate-800">
+                                  {projectClientQuery.trim()}
+                                </div>
+                              )}
+                              <Button
+                                type="button"
+                                className="justify-center"
+                                onClick={createAndAttachProjectClient}
+                                disabled={projectClientAttaching}
+                              >
+                                {projectClientAttaching ? "Прикрепляем..." : "Создать клиента"}
+                              </Button>
+                            </div>
+                            {projectClientQueryHasPhone ? (
+                              <div className="mt-2 text-xs font-semibold text-slate-400">
+                                Телефон возьмём из строки поиска.
+                              </div>
+                            ) : null}
                           </div>
-                          <div className="mt-2 text-xs font-semibold text-slate-400">
-                            Телефон возьмём из поля поиска, если он там указан.
-                          </div>
-                        </div>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
