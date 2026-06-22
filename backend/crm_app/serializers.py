@@ -143,6 +143,12 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     def _resolve_client(self, attrs):
         instance = self.instance
+        if instance is not None and "client" in attrs and attrs.get("client") is None:
+            attrs["client_name"] = str(attrs.get("client_name", "") or "").strip()
+            attrs["client_phone"] = str(attrs.get("client_phone", "") or "").strip()
+            attrs["client_email"] = attrs.get("client_email", None)
+            return attrs
+
         current_client = attrs.get("client") or getattr(instance, "client", None)
         workspace = self._workspace() or getattr(current_client, "workspace", None) or getattr(instance, "workspace", None)
 
@@ -282,6 +288,9 @@ class ProjectSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if "custom_fields" in attrs:
             attrs["custom_fields"] = self._normalize_custom_fields(attrs.get("custom_fields"))
+        is_detaching_client = self.instance is not None and "client" in attrs and attrs.get("client") is None
+        if is_detaching_client:
+            return attrs
         has_client = attrs.get("client") or getattr(self.instance, "client", None)
         has_name = str(attrs.get("client_name", getattr(self.instance, "client_name", "")) or "").strip()
         has_phone = str(attrs.get("client_phone", getattr(self.instance, "client_phone", "")) or "").strip()

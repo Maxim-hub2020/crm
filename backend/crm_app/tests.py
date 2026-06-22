@@ -394,6 +394,39 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["client_phone"], "+7-900-000-00-77")
         self.assertTrue(Client.objects.filter(phone="+7-900-000-00-77").exists())
 
+    def test_project_client_can_be_detached(self):
+        client = self.auth_client_for(self.manager)
+        client_card = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Linked Client",
+            phone="+7-900-000-00-77",
+        )
+        project = Project.objects.create(
+            manager=self.manager,
+            client=client_card,
+            title="Linked Project",
+            client_name=client_card.name,
+            client_phone=client_card.phone,
+        )
+
+        response = client.patch(
+            f"/api/projects/{project.id}/",
+            {
+                "client": None,
+                "client_name": "",
+                "client_phone": "",
+                "client_email": None,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        project.refresh_from_db()
+        self.assertIsNone(project.client)
+        self.assertEqual(project.client_name, "")
+        self.assertEqual(project.client_phone, "")
+        self.assertTrue(Client.objects.filter(pk=client_card.pk).exists())
+
     def test_project_rejects_invalid_client_phone(self):
         client = self.auth_client_for(self.manager)
 

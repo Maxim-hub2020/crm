@@ -889,6 +889,7 @@ export default function Projects() {
   const [projectClientOpen, setProjectClientOpen] = useState(false);
   const [projectClientForm, setProjectClientForm] = useState(createClientEditForm());
   const [projectClientSaving, setProjectClientSaving] = useState(false);
+  const [projectClientDetaching, setProjectClientDetaching] = useState(false);
   const [projectClientError, setProjectClientError] = useState("");
 
   const [comments, setComments] = useState([]);
@@ -1464,6 +1465,7 @@ export default function Projects() {
     setProjectClientOpen(false);
     setProjectClientError("");
     setProjectClientForm(createClientEditForm());
+    setProjectClientDetaching(false);
     selectedAddressValueRef.current = "";
     loadedProjectIdRef.current = null;
     detailSnapshotRef.current = "";
@@ -1525,6 +1527,39 @@ export default function Projects() {
     if (projectClientSaving) return;
     setProjectClientOpen(false);
     setProjectClientError("");
+  }
+
+  async function detachProjectClient() {
+    if (!activeProject?.id || !activeProjectClient?.id || projectClientDetaching) return;
+
+    setProjectClientDetaching(true);
+    setDetailError("");
+    setProjectClientError("");
+    window.clearTimeout(detailAutosaveTimerRef.current);
+    detailAutosaveRequestRef.current += 1;
+
+    const payload = {
+      ...buildProjectUpdatePayload(detailForm),
+      client: null,
+      client_name: "",
+      client_phone: "",
+      client_email: null,
+    };
+
+    try {
+      const updated = await updateProject(activeProject.id, payload);
+      const nextForm = normalizeProjectForm(updated, defaultStatusValue);
+      setProjects((prev) => prev.map((project) => (project.id === updated.id ? updated : project)));
+      setDetailForm(nextForm);
+      selectedAddressValueRef.current = nextForm.object_address.trim();
+      detailSnapshotRef.current = JSON.stringify(buildProjectUpdatePayload(nextForm));
+      setProjectClientOpen(false);
+      setDetailAutosaveState("idle");
+    } catch (error) {
+      setDetailError(extractApiErrorMessage(error, "Не удалось открепить клиента от проекта."));
+    } finally {
+      setProjectClientDetaching(false);
+    }
   }
 
   async function submitProjectClient(event) {
@@ -2726,36 +2761,51 @@ export default function Projects() {
                 <div className="space-y-2 md:col-span-2">
                   <Label>Клиент</Label>
                   <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <button
-                      type="button"
-                      className="min-w-0 text-left"
-                      onClick={openProjectClientCard}
-                    >
-                      <div className="truncate text-base font-black text-slate-900 transition hover:text-blue-600">
-                        {detailForm.client_name || "Клиент не указан"}
-                      </div>
-                      <div className="mt-1 text-xs font-semibold text-slate-400">
-                        Открыть карточку клиента
-                      </div>
-                    </button>
-                    {phoneHref(detailForm.client_phone) ? (
-                      <a
-                        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
-                        href={phoneHref(detailForm.client_phone)}
-                        title="Позвонить клиенту"
-                        aria-label="Позвонить клиенту"
-                      >
-                        <Phone size={18} />
-                      </a>
-                    ) : (
-                      <span
-                        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-slate-300 ring-1 ring-slate-200"
-                        title="Телефон клиента не указан"
-                        aria-label="Телефон клиента не указан"
-                      >
-                        <Phone size={18} />
-                      </span>
-                    )}
+                    <div className="min-w-0 flex-1">
+                      {activeProjectClient?.id ? (
+                        <button type="button" className="min-w-0 text-left" onClick={openProjectClientCard}>
+                          <div className="truncate text-base font-black text-slate-900 transition hover:text-blue-600">
+                            {detailForm.client_name || "Клиент не указан"}
+                          </div>
+                          <div className="mt-1 text-xs font-semibold text-slate-400">Открыть карточку клиента</div>
+                        </button>
+                      ) : (
+                        <div className="min-w-0">
+                          <div className="truncate text-base font-black text-slate-900">{detailForm.client_name || "Клиент не привязан"}</div>
+                          <div className="mt-1 text-xs font-semibold text-slate-400">Проект без карточки клиента</div>
+                        </div>
+                      )}
+                      {activeProjectClient?.id ? (
+                        <button
+                          type="button"
+                          className="mt-2 inline-flex rounded-full bg-white px-3 py-1 text-xs font-black text-red-600 ring-1 ring-red-100 transition hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+                          onClick={detachProjectClient}
+                          disabled={projectClientDetaching}
+                        >
+                          {projectClientDetaching ? "Открепляем..." : "Открепить клиента"}
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="shrink-0">
+                      {phoneHref(detailForm.client_phone) ? (
+                        <a
+                          className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
+                          href={phoneHref(detailForm.client_phone)}
+                          title="Позвонить клиенту"
+                          aria-label="Позвонить клиенту"
+                        >
+                          <Phone size={18} />
+                        </a>
+                      ) : (
+                        <span
+                          className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-300 ring-1 ring-slate-200"
+                          title="Телефон клиента не указан"
+                          aria-label="Телефон клиента не указан"
+                        >
+                          <Phone size={18} />
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div className="space-y-2 md:col-span-2">
