@@ -143,32 +143,74 @@ def _change_bonus_balance(*, client, amount, transaction_type, project=None, rel
     )
 
 
+def _bonus_accrual_totals_by_client(project):
+    rows = (
+        ClientBonusTransaction.objects.filter(
+            project=project,
+            type__in=[
+                ClientBonusTransaction.Type.ACCRUAL,
+                ClientBonusTransaction.Type.ACCRUAL_REVERSAL,
+            ],
+        )
+        .values("client")
+        .annotate(total=Sum("amount"))
+    )
+    return {row["client"]: _money(row["total"] or 0) for row in rows if row["client"]}
+
+
 def ensure_project_bonus_accrual(project, actor=None):
     with transaction.atomic():
-        project = Project.objects.select_for_update().get(pk=project.pk)
+        project = Project.objects.select_for_update().select_related("client").get(pk=project.pk)
         total_amount = _money(project.total_amount)
 
-        if project.bonus_accrued_at or project.bonus_accrued_amount:
-            return None
-        if not project.client_id or total_amount <= BONUS_ORDER_THRESHOLD:
-            return None
-        if not _has_advance_payment(project):
-            return None
+        target_bonus = Decimal("0.00")
+        target_by_client = {}
+        if project.client_id and total_amount > BONUS_ORDER_THRESHOLD and _has_advance_payment(project):
+            target_bonus = _money(total_amount * BONUS_RATE)
+            target_by_client[project.client_id] = target_bonus
 
-        bonus_amount = _money(total_amount * BONUS_RATE)
-        transaction_row = _change_bonus_balance(
-            client=project.client,
-            amount=bonus_amount,
-            transaction_type=ClientBonusTransaction.Type.ACCRUAL,
-            project=project,
-            actor=actor,
-            comment=f"Начисление 3% после аванса по проекту №{project.order_number or project.id}.",
-        )
+        current_by_client = _bonus_accrual_totals_by_client(project)
+        if project.client_id:
+            current_by_client.setdefault(project.client_id, Decimal("0.00"))
 
-        project.bonus_accrued_amount = bonus_amount
-        project.bonus_accrued_at = timezone.now()
+        changed_rows = []
+        project_label = project.order_number or project.id
+        for client_id in sorted(set(current_by_client) | set(target_by_client)):
+            current_amount = _money(current_by_client.get(client_id, 0))
+            desired_amount = _money(target_by_client.get(client_id, 0))
+            delta = _money(desired_amount - current_amount)
+            if delta == 0:
+                continue
+
+            client = Client.objects.select_for_update().get(pk=client_id)
+            if delta > 0:
+                transaction_type = ClientBonusTransaction.Type.ACCRUAL
+                comment = (
+                    f"Начисление 3% после аванса по проекту №{project_label}."
+                    if current_amount <= 0
+                    else f"Корректировка бонусов до 3% по проекту №{project_label}."
+                )
+            else:
+                transaction_type = ClientBonusTransaction.Type.ACCRUAL_REVERSAL
+                comment = f"Сторно бонусов по проекту №{project_label}."
+
+            changed_rows.append(
+                _change_bonus_balance(
+                    client=client,
+                    amount=delta,
+                    transaction_type=transaction_type,
+                    project=project,
+                    actor=actor,
+                    comment=comment,
+                )
+            )
+
+        project.bonus_accrued_amount = target_bonus
+        project.bonus_accrued_at = project.bonus_accrued_at if target_bonus > 0 else None
+        if target_bonus > 0 and not project.bonus_accrued_at:
+            project.bonus_accrued_at = timezone.now()
         project.save(update_fields=["bonus_accrued_amount", "bonus_accrued_at", "updated_at"])
-        return transaction_row
+        return changed_rows
 
 
 def apply_project_bonus_promo_code(project, actor=None):
@@ -255,19 +297,26 @@ def reverse_project_bonus_effects(project, actor=None):
                     comment=f"Сторно старого зачисления по промокоду при удалении проекта №{project_label}.",
                 )
 
-            if project.bonus_accrued_amount:
-                _change_bonus_balance(
-                    client=project.client,
-                    amount=-project.bonus_accrued_amount,
-                    transaction_type=ClientBonusTransaction.Type.ACCRUAL_REVERSAL,
-                    project=project,
-                    related_client=project.referred_by_client,
-                    promo_code=promo_code,
-                    actor=actor,
-                    comment=f"Сторно начисления 3% при удалении проекта №{project_label}.",
-                )
-                project.bonus_accrued_amount = Decimal("0.00")
-                project.bonus_accrued_at = None
+        accrual_totals = _bonus_accrual_totals_by_client(project)
+        if not accrual_totals and project.client_id and project.bonus_accrued_amount:
+            accrual_totals[project.client_id] = _money(project.bonus_accrued_amount)
+        for client_id, net_amount in accrual_totals.items():
+            if net_amount <= 0:
+                continue
+            accrual_client = Client.objects.select_for_update().get(pk=client_id)
+            _change_bonus_balance(
+                client=accrual_client,
+                amount=-net_amount,
+                transaction_type=ClientBonusTransaction.Type.ACCRUAL_REVERSAL,
+                project=project,
+                related_client=project.referred_by_client,
+                promo_code=promo_code,
+                actor=actor,
+                comment=f"Сторно начисления 3% при удалении проекта №{project_label}.",
+            )
+        if project.bonus_accrued_amount or accrual_totals:
+            project.bonus_accrued_amount = Decimal("0.00")
+            project.bonus_accrued_at = None
 
         if project.referred_by_client_id and project.referral_bonus_used:
             _change_bonus_balance(

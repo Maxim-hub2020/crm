@@ -4,6 +4,7 @@ import uuid
 from io import BytesIO
 
 from django.core.files.storage import default_storage
+from django.db import transaction
 from django.db.models import F, Q, Value
 from django.db.models.functions import Replace
 from django.http import FileResponse
@@ -478,12 +479,25 @@ class PaymentViewSet(viewsets.ModelViewSet):
         return qs.filter(project__manager=self.request.user)
 
     def perform_create(self, serializer):
-        payment = serializer.save(created_by=self.request.user)
-        ensure_project_bonus_accrual(payment.project, actor=self.request.user)
+        with transaction.atomic():
+            payment = serializer.save(created_by=self.request.user)
+            ensure_project_bonus_accrual(payment.project, actor=self.request.user)
 
     def perform_update(self, serializer):
-        payment = serializer.save()
-        ensure_project_bonus_accrual(payment.project, actor=self.request.user)
+        previous_project_id = serializer.instance.project_id
+        with transaction.atomic():
+            payment = serializer.save()
+            project_ids = {previous_project_id, payment.project_id}
+            for project_id in project_ids:
+                if project_id:
+                    ensure_project_bonus_accrual(Project.objects.get(pk=project_id), actor=self.request.user)
+
+    def perform_destroy(self, instance):
+        project_id = instance.project_id
+        with transaction.atomic():
+            instance.delete()
+            if project_id:
+                ensure_project_bonus_accrual(Project.objects.get(pk=project_id), actor=self.request.user)
 
 
 class ClientBonusTransactionViewSet(viewsets.ReadOnlyModelViewSet):

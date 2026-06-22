@@ -1251,6 +1251,150 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(ClientBonusTransaction.objects.filter(project=project, type=ClientBonusTransaction.Type.PROMO_CREDIT).count(), 0)
         self.assertEqual(ClientBonusTransaction.objects.filter(project=project, type=ClientBonusTransaction.Type.ACCRUAL).count(), 1)
 
+    def test_bonus_accrual_is_recalculated_when_project_total_changes(self):
+        project_client = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Recalculated Bonus Client",
+            phone="+79000000016",
+        )
+        project = Project.objects.create(
+            manager=self.manager,
+            client=project_client,
+            client_name=project_client.name,
+            client_phone=project_client.phone,
+            total_amount=Decimal("100000.00"),
+        )
+        api_client = self.auth_client_for(self.manager)
+
+        payment_response = api_client.post(
+            "/api/payments/",
+            {
+                "project": project.id,
+                "category": self.income_category.id,
+                "account": self.account.id,
+                "amount": "30000",
+            },
+            format="json",
+        )
+        self.assertEqual(payment_response.status_code, status.HTTP_201_CREATED)
+        project_client.refresh_from_db()
+        self.assertEqual(project_client.bonus_balance, Decimal("3000.00"))
+
+        project_response = api_client.patch(
+            f"/api/projects/{project.id}/",
+            {"total_amount": "120000.00"},
+            format="json",
+        )
+
+        self.assertEqual(project_response.status_code, status.HTTP_200_OK)
+        project.refresh_from_db()
+        project_client.refresh_from_db()
+        self.assertEqual(project.bonus_accrued_amount, Decimal("3600.00"))
+        self.assertEqual(project_client.bonus_balance, Decimal("3600.00"))
+        self.assertTrue(
+            ClientBonusTransaction.objects.filter(
+                project=project,
+                client=project_client,
+                type=ClientBonusTransaction.Type.ACCRUAL,
+                amount=Decimal("600.00"),
+            ).exists()
+        )
+
+    def test_bonus_accrual_is_reversed_when_advance_payment_is_deleted(self):
+        project_client = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Deleted Advance Bonus Client",
+            phone="+79000000017",
+        )
+        project = Project.objects.create(
+            manager=self.manager,
+            client=project_client,
+            client_name=project_client.name,
+            client_phone=project_client.phone,
+            total_amount=Decimal("100000.00"),
+        )
+        api_client = self.auth_client_for(self.manager)
+        payment_response = api_client.post(
+            "/api/payments/",
+            {
+                "project": project.id,
+                "category": self.income_category.id,
+                "account": self.account.id,
+                "amount": "30000",
+            },
+            format="json",
+        )
+        self.assertEqual(payment_response.status_code, status.HTTP_201_CREATED)
+
+        delete_response = api_client.delete(f"/api/payments/{payment_response.data['id']}/")
+
+        self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
+        project.refresh_from_db()
+        project_client.refresh_from_db()
+        self.assertEqual(project.bonus_accrued_amount, Decimal("0.00"))
+        self.assertIsNone(project.bonus_accrued_at)
+        self.assertEqual(project_client.bonus_balance, Decimal("0.00"))
+        self.assertTrue(
+            ClientBonusTransaction.objects.filter(
+                project=project,
+                client=project_client,
+                type=ClientBonusTransaction.Type.ACCRUAL_REVERSAL,
+                amount=Decimal("-3000.00"),
+            ).exists()
+        )
+
+    def test_bonus_accrual_moves_when_project_client_changes(self):
+        old_client = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Old Bonus Client",
+            phone="+79000000018",
+        )
+        new_client = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="New Bonus Client",
+            phone="+79000000019",
+        )
+        project = Project.objects.create(
+            manager=self.manager,
+            client=old_client,
+            client_name=old_client.name,
+            client_phone=old_client.phone,
+            total_amount=Decimal("100000.00"),
+        )
+        api_client = self.auth_client_for(self.manager)
+        payment_response = api_client.post(
+            "/api/payments/",
+            {
+                "project": project.id,
+                "category": self.income_category.id,
+                "account": self.account.id,
+                "amount": "30000",
+            },
+            format="json",
+        )
+        self.assertEqual(payment_response.status_code, status.HTTP_201_CREATED)
+        old_client.refresh_from_db()
+        self.assertEqual(old_client.bonus_balance, Decimal("3000.00"))
+
+        project_response = api_client.patch(
+            f"/api/projects/{project.id}/",
+            {
+                "client": new_client.id,
+                "client_name": new_client.name,
+                "client_phone": new_client.phone,
+            },
+            format="json",
+        )
+
+        self.assertEqual(project_response.status_code, status.HTTP_200_OK)
+        old_client.refresh_from_db()
+        new_client.refresh_from_db()
+        project.refresh_from_db()
+        self.assertEqual(old_client.bonus_balance, Decimal("0.00"))
+        self.assertEqual(new_client.bonus_balance, Decimal("3000.00"))
+        self.assertEqual(project.client_id, new_client.id)
+        self.assertEqual(project.bonus_accrued_amount, Decimal("3000.00"))
+
     def test_bonus_is_accrued_when_advance_category_has_wrong_type(self):
         project_client = Client.objects.create(
             workspace=self.manager.workspace,
