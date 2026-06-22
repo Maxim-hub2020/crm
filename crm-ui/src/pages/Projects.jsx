@@ -2709,7 +2709,7 @@ export default function Projects() {
         onClose={closeProject}
         widthClassName="max-w-5xl"
         bodyClassName="min-h-0"
-        positionClassName="items-start pb-3 pt-2 sm:pt-6"
+        positionClassName="items-start"
         overlayClassName="bg-slate-950/30 backdrop-blur-md backdrop-saturate-75"
       >
         {activeProject && (
