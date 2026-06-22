@@ -1,6 +1,5 @@
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Camera,
   Calendar,
   Check,
   Copy,
@@ -10,6 +9,7 @@ import {
   ListTodo,
   MapPin,
   MessageSquare,
+  Paperclip,
   Pencil,
   Phone,
   Plus,
@@ -565,10 +565,18 @@ function customFieldFileDisplay(value) {
     return {
       name,
       url: value.url || "",
+      contentType: value.content_type || value.contentType || "",
       size: Number(value.size || 0) || 0,
     };
   }
-  return { name: String(value), url: "", size: 0 };
+  return { name: String(value), url: "", contentType: "", size: 0 };
+}
+
+function isPreviewableImage(fileValue) {
+  if (!fileValue?.url) return false;
+  const contentType = String(fileValue.contentType || "").toLowerCase();
+  const name = String(fileValue.name || "").toLowerCase();
+  return contentType.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(name);
 }
 
 function formatFileSize(bytes) {
@@ -578,7 +586,7 @@ function formatFileSize(bytes) {
   return `${(size / (1024 * 1024)).toFixed(1).replace(".", ",")} МБ`;
 }
 
-function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUpload, uploadingFiles = {} }) {
+function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUpload, onFilePreview, uploadingFiles = {} }) {
   if (!fields.length) return null;
 
   return (
@@ -589,7 +597,6 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
           const isFileField = field.field_type === "file";
           const fileValue = isFileField ? customFieldFileDisplay(values?.[fieldKey]) : null;
           const uploadId = `project-custom-field-${projectId || "new"}-${fieldKey}`;
-          const cameraId = `project-custom-camera-${projectId || "new"}-${fieldKey}`;
           const isUploading = Boolean(uploadingFiles[fieldKey]);
 
           if (isFileField) {
@@ -604,32 +611,41 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
             return (
               <div key={field.id} className="space-y-2">
                 <Label>{field.name}</Label>
-                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
                   {fileValue ? (
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      {fileValue.url ? (
+                    <div className="flex min-w-0 items-center justify-between gap-2">
+                      {fileValue.url && isPreviewableImage(fileValue) ? (
+                        <button
+                          type="button"
+                          onClick={() => onFilePreview?.(fileValue)}
+                          className="inline-flex min-w-0 items-center gap-2 text-left text-sm font-bold text-blue-600 hover:text-blue-700"
+                        >
+                          <FileText size={16} className="shrink-0" />
+                          <span className="truncate">{fileValue.name}</span>
+                        </button>
+                      ) : fileValue.url ? (
                         <a
                           href={fileValue.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-2 text-sm font-bold text-blue-600 hover:text-blue-700"
+                          className="inline-flex min-w-0 items-center gap-2 text-sm font-bold text-blue-600 hover:text-blue-700"
                         >
-                          <FileText size={16} />
-                          {fileValue.name}
+                          <FileText size={16} className="shrink-0" />
+                          <span className="truncate">{fileValue.name}</span>
                         </a>
                       ) : (
-                        <div className="inline-flex items-center gap-2 text-sm font-bold text-slate-700">
-                          <FileText size={16} />
-                          {fileValue.name}
+                        <div className="inline-flex min-w-0 items-center gap-2 text-sm font-bold text-slate-700">
+                          <FileText size={16} className="shrink-0" />
+                          <span className="truncate">{fileValue.name}</span>
                         </div>
                       )}
-                      <div className="flex items-center gap-2">
+                      <div className="flex shrink-0 items-center gap-1">
                         {fileValue.size ? (
-                          <span className="text-xs font-semibold text-slate-400">{formatFileSize(fileValue.size)}</span>
+                          <span className="hidden text-xs font-semibold text-slate-400 sm:inline">{formatFileSize(fileValue.size)}</span>
                         ) : null}
                         <button
                           type="button"
-                          className="rounded-full p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-red-50 hover:text-red-600"
                           onClick={() => onChange(fieldKey, "")}
                           aria-label="Убрать файл"
                         >
@@ -642,37 +658,21 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
                   )}
 
                   {projectId && onFileUpload ? (
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="flex shrink-0 gap-2">
                       <input id={uploadId} className="sr-only" type="file" onChange={handleFileChange} />
-                      <input
-                        id={cameraId}
-                        className="sr-only"
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        onChange={handleFileChange}
-                      />
                       <label
                         htmlFor={uploadId}
-                        className={`btn-hover inline-flex cursor-pointer items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 ${
+                        className={`inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-slate-900 text-white shadow-sm transition hover:bg-black ${
                           isUploading ? "pointer-events-none opacity-60" : ""
                         }`}
+                        title={isUploading ? "Загружаем..." : "Прикрепить файл"}
+                        aria-label={isUploading ? "Загружаем файл" : "Прикрепить файл"}
                       >
-                        <FileText size={16} />
-                        {isUploading ? "Загружаем..." : "Прикрепить файл"}
-                      </label>
-                      <label
-                        htmlFor={cameraId}
-                        className={`btn-hover inline-flex cursor-pointer items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-black ${
-                          isUploading ? "pointer-events-none opacity-60" : ""
-                        }`}
-                      >
-                        <Camera size={16} />
-                        Сфотографировать
+                        <Paperclip size={16} />
                       </label>
                     </div>
                   ) : (
-                    <div className="mt-3 rounded-2xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-500">
+                    <div className="col-span-2 mt-1 rounded-2xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-500">
                       Файл можно прикрепить после создания проекта.
                     </div>
                   )}
@@ -855,6 +855,7 @@ export default function Projects() {
   const [documentLoading, setDocumentLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [customFieldUploads, setCustomFieldUploads] = useState({});
+  const [customFieldPreview, setCustomFieldPreview] = useState(null);
   const [projectClientOpen, setProjectClientOpen] = useState(false);
   const [projectClientForm, setProjectClientForm] = useState(createClientEditForm());
   const [projectClientSaving, setProjectClientSaving] = useState(false);
@@ -1429,6 +1430,7 @@ export default function Projects() {
     setAddressSuggestions([]);
     setAddressSuggestError("");
     setCustomFieldUploads({});
+    setCustomFieldPreview(null);
     setProjectClientOpen(false);
     setProjectClientError("");
     setProjectClientForm(createClientEditForm());
@@ -2676,7 +2678,7 @@ export default function Projects() {
         onClose={closeProject}
         widthClassName="max-w-5xl"
         bodyClassName="min-h-0"
-        positionClassName="items-start pt-4 sm:pt-6"
+        positionClassName="items-start pb-3 pt-2 sm:pt-6"
         overlayClassName="bg-slate-950/30 backdrop-blur-md backdrop-saturate-75"
       >
         {activeProject && (
@@ -2872,6 +2874,7 @@ export default function Projects() {
                 values={detailForm.custom_fields}
                 projectId={activeProject.id}
                 onFileUpload={handleCustomFieldFileUpload}
+                onFilePreview={setCustomFieldPreview}
                 uploadingFiles={customFieldUploads}
                 onChange={(fieldId, value) =>
                   setDetailForm((prev) => ({
@@ -3265,6 +3268,36 @@ export default function Projects() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={Boolean(customFieldPreview)}
+        title={customFieldPreview?.name || "Просмотр файла"}
+        onClose={() => setCustomFieldPreview(null)}
+        widthClassName="max-w-5xl"
+        bodyClassName="bg-slate-950/95 p-3 sm:p-5"
+        positionClassName="items-center"
+        overlayClassName="bg-slate-950/70 backdrop-blur-sm"
+      >
+        {customFieldPreview ? (
+          <div className="space-y-4">
+            <div className="overflow-hidden rounded-[24px] bg-black">
+              <img
+                src={customFieldPreview.url}
+                alt={customFieldPreview.name || "Файл проекта"}
+                className="mx-auto max-h-[68dvh] w-auto max-w-full object-contain"
+              />
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button type="button" variant="secondary" onClick={() => setCustomFieldPreview(null)}>
+                Вернуться в CRM
+              </Button>
+              <Button type="button" onClick={() => window.open(customFieldPreview.url, "_blank", "noopener,noreferrer")}>
+                Открыть оригинал
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
 
       <Modal

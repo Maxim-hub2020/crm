@@ -80,10 +80,10 @@ export function Modal({
     <div className={`fixed inset-0 z-50 flex justify-center overflow-y-auto p-2 sm:p-4 ${overlayClassName} ${positionClassName}`}>
       <div className="absolute inset-0" onClick={onClose} />
       <div
-        className={`relative z-10 flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-3xl bg-white shadow-2xl sm:rounded-[32px] ${widthClassName}`}
+        className={`relative z-10 flex max-h-[88dvh] w-full flex-col overflow-hidden rounded-3xl bg-white shadow-2xl sm:max-h-[92dvh] sm:rounded-[32px] ${widthClassName}`}
       >
-        <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-5 py-3.5 sm:px-7">
-          <h2 className="truncate pr-4 text-lg font-bold uppercase tracking-tight text-gray-900 sm:text-xl">{title}</h2>
+        <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-2.5 sm:px-7 sm:py-3.5">
+          <h2 className="truncate pr-3 text-base font-bold uppercase tracking-tight text-gray-900 sm:pr-4 sm:text-xl">{title}</h2>
           <button
             className="rounded-full bg-gray-100 p-2 text-gray-500 transition hover:bg-gray-200"
             onClick={onClose}
@@ -92,7 +92,7 @@ export function Modal({
             <X size={18} />
           </button>
         </div>
-        <div className={`flex-1 overflow-y-auto px-5 py-4 sm:px-7 ${bodyClassName}`}>{children}</div>
+        <div className={`flex-1 overflow-y-auto px-4 py-3 sm:px-7 sm:py-4 ${bodyClassName}`}>{children}</div>
       </div>
     </div>
   );
