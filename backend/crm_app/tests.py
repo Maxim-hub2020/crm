@@ -3,8 +3,10 @@ import json
 import os
 import tempfile
 from decimal import Decimal
+from io import StringIO
 from unittest.mock import patch
 from asgiref.sync import async_to_sync
+from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.utils import timezone
@@ -1538,6 +1540,38 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         project_client.refresh_from_db()
         self.assertEqual(project.bonus_accrued_amount, Decimal("0.00"))
         self.assertEqual(project_client.bonus_balance, Decimal("0.00"))
+
+    def test_bonus_backfill_reconciles_client_by_name(self):
+        project_client = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Максим",
+            phone="+79140707007",
+        )
+        project = Project.objects.create(
+            manager=self.manager,
+            client=project_client,
+            client_name=project_client.name,
+            client_phone=project_client.phone,
+            total_amount=Decimal("36938.00"),
+        )
+        Payment.objects.create(
+            project=project,
+            created_by=self.manager,
+            category=self.income_category,
+            account=self.account,
+            amount=Decimal("10000.00"),
+            type=Payment.Type.ADVANCE,
+            method=Payment.Method.TRANSFER,
+        )
+
+        output = StringIO()
+        call_command("backfill_client_bonuses", client_name="Максим", stdout=output)
+
+        project.refresh_from_db()
+        project_client.refresh_from_db()
+        self.assertIn("Checked 1 projects, changed bonuses for 1", output.getvalue())
+        self.assertEqual(project.bonus_accrued_amount, Decimal("1108.14"))
+        self.assertEqual(project_client.bonus_balance, Decimal("1108.14"))
 
     def test_manager_can_read_finance_settings(self):
         client = self.auth_client_for(self.manager)

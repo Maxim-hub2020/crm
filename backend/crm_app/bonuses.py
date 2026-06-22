@@ -160,7 +160,7 @@ def _bonus_accrual_totals_by_client(project):
 
 def ensure_project_bonus_accrual(project, actor=None):
     with transaction.atomic():
-        project = Project.objects.select_for_update().select_related("client").get(pk=project.pk)
+        project = Project.objects.select_for_update().get(pk=project.pk)
         total_amount = _money(project.total_amount)
 
         target_bonus = Decimal("0.00")
@@ -266,7 +266,7 @@ def _bonus_transactions_sum(*, project, transaction_type, client=None):
 
 def reverse_project_bonus_effects(project, actor=None):
     with transaction.atomic():
-        project = Project.objects.select_for_update().select_related("client", "referred_by_client").get(pk=project.pk)
+        project = Project.objects.select_for_update().get(pk=project.pk)
         if Payment.objects.filter(project=project).exists():
             raise ValidationError({"project": "Нельзя удалить проект с финансовыми операциями. Сначала удалите операции проекта."})
 
