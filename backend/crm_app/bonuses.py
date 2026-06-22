@@ -8,7 +8,7 @@ from rest_framework.exceptions import ValidationError
 
 from .models import Client, ClientBonusTransaction, FinanceCategory, Payment, Project
 
-BONUS_ORDER_THRESHOLD = Decimal("50000")
+BONUS_ORDER_THRESHOLD = Decimal("30000")
 BONUS_RATE = Decimal("0.03")
 BONUS_REDEMPTION_RATE = Decimal("0.10")
 MONEY_QUANT = Decimal("0.01")
@@ -165,7 +165,7 @@ def ensure_project_bonus_accrual(project, actor=None):
 
         target_bonus = Decimal("0.00")
         target_by_client = {}
-        if project.client_id and total_amount > BONUS_ORDER_THRESHOLD and _has_advance_payment(project):
+        if project.client_id and total_amount >= BONUS_ORDER_THRESHOLD and _has_advance_payment(project):
             target_bonus = _money(total_amount * BONUS_RATE)
             target_by_client[project.client_id] = target_bonus
 

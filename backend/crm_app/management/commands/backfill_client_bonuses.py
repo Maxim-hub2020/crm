@@ -31,7 +31,7 @@ class Command(BaseCommand):
         queryset = (
             Project.objects.select_related("client", "workspace")
             .filter(
-                Q(client__isnull=False, total_amount__gt=50000)
+                Q(client__isnull=False, total_amount__gte=30000)
                 | Q(bonus_accrued_amount__gt=0)
                 | Q(bonus_accrued_at__isnull=False)
             )

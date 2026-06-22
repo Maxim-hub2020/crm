@@ -1465,7 +1465,44 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(project.bonus_accrued_amount, Decimal("3000.00"))
         self.assertEqual(project_client.bonus_balance, Decimal("3000.00"))
 
-    def test_bonus_is_not_accrued_for_project_up_to_threshold(self):
+    def test_bonus_is_accrued_for_project_at_new_threshold(self):
+        project_client = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Threshold Bonus Client",
+            phone="+79000000020",
+        )
+        project = Project.objects.create(
+            manager=self.manager,
+            client=project_client,
+            client_name=project_client.name,
+            client_phone=project_client.phone,
+            total_amount=Decimal("30000.00"),
+        )
+        advance_category, _ = FinanceCategory.objects.get_or_create(
+            workspace=self.manager.workspace,
+            name="Аванс",
+            type=FinanceCategory.Type.INCOME,
+        )
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/payments/",
+            {
+                "project": project.id,
+                "category": advance_category.id,
+                "account": self.account.id,
+                "amount": "10000",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        project.refresh_from_db()
+        project_client.refresh_from_db()
+        self.assertEqual(project.bonus_accrued_amount, Decimal("900.00"))
+        self.assertEqual(project_client.bonus_balance, Decimal("900.00"))
+
+    def test_bonus_is_not_accrued_for_project_below_threshold(self):
         project_client = Client.objects.create(
             workspace=self.manager.workspace,
             name="Small Bonus Client",
@@ -1476,7 +1513,7 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
             client=project_client,
             client_name=project_client.name,
             client_phone=project_client.phone,
-            total_amount=Decimal("50000.00"),
+            total_amount=Decimal("29999.99"),
         )
         advance_category, _ = FinanceCategory.objects.get_or_create(
             workspace=self.manager.workspace,
