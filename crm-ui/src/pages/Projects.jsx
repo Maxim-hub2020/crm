@@ -876,6 +876,7 @@ export default function Projects() {
   const [createForm, setCreateForm] = useState(createEmptyProjectForm());
   const [createSaving, setCreateSaving] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [createBonusEnabled, setCreateBonusEnabled] = useState(false);
   const [createBonusPreview, setCreateBonusPreview] = useState(null);
   const [createBonusPreviewError, setCreateBonusPreviewError] = useState("");
   const [createBonusPreviewLoading, setCreateBonusPreviewLoading] = useState(false);
@@ -883,6 +884,7 @@ export default function Projects() {
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [detailForm, setDetailForm] = useState(createEmptyProjectForm());
   const [detailTab, setDetailTab] = useState("comments");
+  const [detailBonusEnabled, setDetailBonusEnabled] = useState(false);
   const [detailAutosaveState, setDetailAutosaveState] = useState("idle");
   const detailSnapshotRef = useRef("");
   const detailAutosaveTimerRef = useRef(null);
@@ -1219,7 +1221,12 @@ export default function Projects() {
   }, [activeProjectId, tasks]);
 
   useEffect(() => {
-    if (!openCreate) return;
+    if (!openCreate || !createBonusEnabled) {
+      setCreateBonusPreview(null);
+      setCreateBonusPreviewError("");
+      setCreateBonusPreviewLoading(false);
+      return;
+    }
 
     const promoCode = normalizePromoCodeInput(createForm.bonus_promo_code);
     const totalAmount = cleanAmountValue(createForm.total_amount);
@@ -1277,6 +1284,7 @@ export default function Projects() {
     createForm.client_phone,
     createForm.client_query,
     createForm.total_amount,
+    createBonusEnabled,
     openCreate,
   ]);
 
@@ -1296,6 +1304,7 @@ export default function Projects() {
       setDetailError("");
       setProjectClientQuery("");
       setProjectNewClientName("");
+      setDetailBonusEnabled(Boolean(nextForm.bonus_promo_code || Number(activeProject.referral_bonus_used || 0)));
     }
     detailSnapshotRef.current = JSON.stringify(buildProjectUpdatePayload(nextForm));
   }, [activeProject, defaultStatusValue]);
@@ -1433,6 +1442,7 @@ export default function Projects() {
 
   function openCreateModal(status = defaultStatusValue) {
     setCreateError("");
+    setCreateBonusEnabled(false);
     setCreateBonusPreview(null);
     setCreateBonusPreviewError("");
     setCreateBonusPreviewLoading(false);
@@ -1443,6 +1453,7 @@ export default function Projects() {
   function closeCreateModal() {
     setOpenCreate(false);
     setCreateError("");
+    setCreateBonusEnabled(false);
     setCreateBonusPreview(null);
     setCreateBonusPreviewError("");
     setCreateBonusPreviewLoading(false);
@@ -1500,6 +1511,7 @@ export default function Projects() {
     setTaskError("");
     setTaskForm(createEmptyTaskForm());
     setDetailAutosaveState("idle");
+    setDetailBonusEnabled(false);
     setAddressDetailsOpen(false);
     setAddressSuggestions([]);
     setAddressSuggestError("");
@@ -1817,7 +1829,7 @@ export default function Projects() {
         setCreateError(phoneError);
         return;
       }
-      const promoCode = normalizePromoCodeInput(createForm.bonus_promo_code);
+      const promoCode = createBonusEnabled ? normalizePromoCodeInput(createForm.bonus_promo_code) : "";
       if (promoCode && promoCode.length !== 5) {
         setCreateError("Промокод должен состоять из последних 5 цифр телефона.");
         return;
@@ -2613,8 +2625,6 @@ export default function Projects() {
                           {project.object_address || "Адрес не указан"}
                         </div>
                       </div>
-
-                      {project.description && <div className="max-w-3xl text-sm leading-6 text-slate-600">{project.description}</div>}
                     </div>
 
                     <div className="grid min-w-[240px] gap-3 lg:grid-cols-2 xl:grid-cols-1">
@@ -2792,51 +2802,59 @@ export default function Projects() {
                 placeholder="Например, 120 000"
               />
             </div>
-            <div className="space-y-2 md:col-span-2">
-              <Label>Бонусы / промокод</Label>
-              <Input
-                value={createForm.bonus_promo_code}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, bonus_promo_code: normalizePromoCodeInput(event.target.value) }))}
-                inputMode="numeric"
-                maxLength={5}
-                placeholder="Последние 5 цифр телефона, покрывает до 10% проекта"
-              />
-              {createBonusPreviewLoading ? (
-                <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-500">
-                  Проверяем промокод...
-                </div>
-              ) : null}
-              {createBonusPreviewError ? (
-                <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-                  {createBonusPreviewError}
-                </div>
-              ) : null}
-              {createBonusPreview ? (
-                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                  <div className="font-black">Промокод найден: {createBonusPreview.referrer_name}</div>
-                  <div className="mt-2 flex flex-wrap items-center gap-3">
-                    <span className="font-bold text-slate-400 line-through">
-                      {formatMoney(createBonusPreview.original_total_amount)} ₽
-                    </span>
-                    <span className="text-lg font-black text-emerald-700">
-                      {formatMoney(createBonusPreview.discounted_total_amount)} ₽
-                    </span>
-                    <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-emerald-700">
-                      Бонусами: −{formatMoney(createBonusPreview.redeem_amount)} ₽
-                    </span>
-                  </div>
-                </div>
+            <div className="space-y-3 md:col-span-2">
+              <label className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-black text-slate-700 ring-1 ring-slate-200/70">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                  checked={createBonusEnabled}
+                  onChange={(event) => {
+                    setCreateBonusEnabled(event.target.checked);
+                    if (!event.target.checked) {
+                      setCreateForm((prev) => ({ ...prev, bonus_promo_code: "" }));
+                    }
+                  }}
+                />
+                <span>Использовать бонусы / промокод</span>
+              </label>
+              {createBonusEnabled ? (
+                <>
+                  <Input
+                    value={createForm.bonus_promo_code}
+                    onChange={(event) => setCreateForm((prev) => ({ ...prev, bonus_promo_code: normalizePromoCodeInput(event.target.value) }))}
+                    inputMode="numeric"
+                    maxLength={5}
+                    placeholder="Последние 5 цифр телефона"
+                  />
+                  {createBonusPreviewLoading ? (
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-500">
+                      Проверяем промокод...
+                    </div>
+                  ) : null}
+                  {createBonusPreviewError ? (
+                    <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                      {createBonusPreviewError}
+                    </div>
+                  ) : null}
+                  {createBonusPreview ? (
+                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                      <div className="font-black">Промокод найден: {createBonusPreview.referrer_name}</div>
+                      <div className="mt-2 flex flex-wrap items-center gap-3">
+                        <span className="font-bold text-slate-400 line-through">
+                          {formatMoney(createBonusPreview.original_total_amount)} ₽
+                        </span>
+                        <span className="text-lg font-black text-emerald-700">
+                          {formatMoney(createBonusPreview.discounted_total_amount)} ₽
+                        </span>
+                        <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-emerald-700">
+                          Бонусами: −{formatMoney(createBonusPreview.redeem_amount)} ₽
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
+                </>
               ) : null}
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Комментарий / описание</Label>
-            <textarea
-              className="min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
-              value={createForm.description}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, description: event.target.value }))}
-            />
           </div>
 
           <ProjectCustomFieldsGrid
@@ -3136,26 +3154,33 @@ export default function Projects() {
                     </div>
                   ) : null}
                 </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Бонусы / промокод</Label>
-                  <Input
-                    value={detailForm.bonus_promo_code}
-                    onChange={(event) => setDetailForm((prev) => ({ ...prev, bonus_promo_code: normalizePromoCodeInput(event.target.value) }))}
-                    inputMode="numeric"
-                    maxLength={5}
-                    disabled={Boolean(Number(activeProject.referral_bonus_used || 0))}
-                    placeholder="Последние 5 цифр телефона, покрывает до 10% проекта"
-                  />
+                <div className="space-y-3 md:col-span-2">
+                  <label className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-black text-slate-700 ring-1 ring-slate-200/70">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-slate-300 text-blue-600 disabled:opacity-50"
+                      checked={detailBonusEnabled || Boolean(Number(activeProject.referral_bonus_used || 0))}
+                      disabled={Boolean(Number(activeProject.referral_bonus_used || 0))}
+                      onChange={(event) => {
+                        setDetailBonusEnabled(event.target.checked);
+                        if (!event.target.checked) {
+                          setDetailForm((prev) => ({ ...prev, bonus_promo_code: "" }));
+                        }
+                      }}
+                    />
+                    <span>Использовать бонусы / промокод</span>
+                  </label>
+                  {detailBonusEnabled || Boolean(Number(activeProject.referral_bonus_used || 0)) ? (
+                    <Input
+                      value={detailForm.bonus_promo_code}
+                      onChange={(event) => setDetailForm((prev) => ({ ...prev, bonus_promo_code: normalizePromoCodeInput(event.target.value) }))}
+                      inputMode="numeric"
+                      maxLength={5}
+                      disabled={Boolean(Number(activeProject.referral_bonus_used || 0))}
+                      placeholder="Последние 5 цифр телефона"
+                    />
+                  ) : null}
                 </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Описание</Label>
-                <textarea
-                  className="min-h-20 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
-                  value={detailForm.description}
-                  onChange={(event) => setDetailForm((prev) => ({ ...prev, description: event.target.value }))}
-                />
               </div>
 
               <ProjectCustomFieldsGrid
