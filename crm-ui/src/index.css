@@ -45,6 +45,26 @@
 }
 
 @layer components {
+  .crm-modal-overlay {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 2.75rem);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.75rem);
+  }
+
+  .crm-modal-panel {
+    max-height: calc(var(--app-height, 100dvh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 4rem);
+  }
+
+  @media (min-width: 640px) {
+    .crm-modal-overlay {
+      padding-top: 1rem;
+      padding-bottom: 1rem;
+    }
+
+    .crm-modal-panel {
+      max-height: 92dvh;
+    }
+  }
+
   .app-shell {
     height: var(--app-height, 100dvh);
     min-height: var(--app-height, 100dvh);

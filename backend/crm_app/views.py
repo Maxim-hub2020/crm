@@ -304,11 +304,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def upload_custom_field_file(self, request, pk=None):
         project = self.get_object()
         field_id = str(request.data.get("field_id") or "").strip()
-        uploaded_file = request.FILES.get("file")
+        uploaded_files = request.FILES.getlist("files") or request.FILES.getlist("file")
 
         if not field_id:
             return Response({"detail": "Укажите пользовательское поле."}, status=drf_status.HTTP_400_BAD_REQUEST)
-        if not uploaded_file:
+        if not uploaded_files:
             return Response({"detail": "Прикрепите файл."}, status=drf_status.HTTP_400_BAD_REQUEST)
 
         try:
@@ -324,32 +324,45 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if not field:
             return Response({"detail": "Поле файла не найдено."}, status=drf_status.HTTP_404_NOT_FOUND)
 
-        original_name = uploaded_file.name or "file"
-        safe_name = get_valid_filename(original_name) or "file"
-        storage_path = f"project_custom_fields/{project.id}/{field.id}/{uuid.uuid4().hex}-{safe_name}"
-        saved_path = default_storage.save(storage_path, uploaded_file)
-        file_url = default_storage.url(saved_path)
-        if file_url.startswith("/"):
-            file_url = request.build_absolute_uri(file_url)
+        file_values = []
+        for uploaded_file in uploaded_files:
+            original_name = uploaded_file.name or "file"
+            safe_name = get_valid_filename(original_name) or "file"
+            storage_path = f"project_custom_fields/{project.id}/{field.id}/{uuid.uuid4().hex}-{safe_name}"
+            saved_path = default_storage.save(storage_path, uploaded_file)
+            file_url = default_storage.url(saved_path)
+            if file_url.startswith("/"):
+                file_url = request.build_absolute_uri(file_url)
 
-        file_value = {
-            "name": original_name,
-            "original_name": original_name,
-            "url": file_url,
-            "path": saved_path,
-            "content_type": uploaded_file.content_type or "",
-            "size": uploaded_file.size,
-        }
+            file_values.append(
+                {
+                    "name": original_name,
+                    "original_name": original_name,
+                    "url": file_url,
+                    "path": saved_path,
+                    "content_type": uploaded_file.content_type or "",
+                    "size": uploaded_file.size,
+                }
+            )
 
         custom_fields = dict(project.custom_fields or {})
-        custom_fields[str(field.id)] = file_value
+        existing_value = custom_fields.get(str(field.id))
+        if isinstance(existing_value, list):
+            existing_files = [item for item in existing_value if isinstance(item, dict)]
+        elif isinstance(existing_value, dict):
+            existing_files = [existing_value]
+        else:
+            existing_files = []
+
+        custom_fields[str(field.id)] = existing_files + file_values
         project.custom_fields = custom_fields
         project.save(update_fields=["custom_fields", "updated_at"])
 
         return Response(
             {
                 "field_id": str(field.id),
-                "value": file_value,
+                "value": custom_fields[str(field.id)],
+                "uploaded": file_values,
                 "project": self.get_serializer(project).data,
             }
         )

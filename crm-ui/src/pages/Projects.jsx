@@ -564,12 +564,31 @@ function customFieldFileDisplay(value) {
     const name = value.name || value.original_name || "Файл";
     return {
       name,
+      originalName: value.original_name || value.originalName || name,
       url: value.url || "",
+      path: value.path || "",
       contentType: value.content_type || value.contentType || "",
       size: Number(value.size || 0) || 0,
     };
   }
   return { name: String(value), url: "", contentType: "", size: 0 };
+}
+
+function customFieldFileList(value) {
+  if (!value) return [];
+  const values = Array.isArray(value) ? value : [value];
+  return values.map(customFieldFileDisplay).filter(Boolean);
+}
+
+function customFieldFilePayload(fileValue) {
+  return {
+    name: fileValue.name || fileValue.originalName || "Файл",
+    original_name: fileValue.originalName || fileValue.name || "Файл",
+    url: fileValue.url || "",
+    path: fileValue.path || "",
+    content_type: fileValue.contentType || "",
+    size: fileValue.size || 0,
+  };
 }
 
 function isPreviewableImage(fileValue) {
@@ -595,16 +614,16 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
         {fields.map((field) => {
           const fieldKey = String(field.id);
           const isFileField = field.field_type === "file";
-          const fileValue = isFileField ? customFieldFileDisplay(values?.[fieldKey]) : null;
+          const fileValues = isFileField ? customFieldFileList(values?.[fieldKey]) : [];
           const uploadId = `project-custom-field-${projectId || "new"}-${fieldKey}`;
           const isUploading = Boolean(uploadingFiles[fieldKey]);
 
           if (isFileField) {
             const handleFileChange = (event) => {
-              const file = event.target.files?.[0];
+              const files = Array.from(event.target.files || []);
               event.target.value = "";
-              if (file && onFileUpload) {
-                onFileUpload(fieldKey, file);
+              if (files.length && onFileUpload) {
+                onFileUpload(fieldKey, files);
               }
             };
 
@@ -612,61 +631,72 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
               <div key={field.id} className="space-y-2">
                 <Label>{field.name}</Label>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
-                  {fileValue ? (
-                    <div className="flex min-w-0 items-center justify-between gap-2">
-                      {fileValue.url && isPreviewableImage(fileValue) ? (
-                        <button
-                          type="button"
-                          onClick={() => onFilePreview?.(fileValue)}
-                          className="inline-flex min-w-0 items-center gap-2 text-left text-sm font-bold text-blue-600 hover:text-blue-700"
-                        >
-                          <FileText size={16} className="shrink-0" />
-                          <span className="truncate">{fileValue.name}</span>
-                        </button>
-                      ) : fileValue.url ? (
-                        <a
-                          href={fileValue.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex min-w-0 items-center gap-2 text-sm font-bold text-blue-600 hover:text-blue-700"
-                        >
-                          <FileText size={16} className="shrink-0" />
-                          <span className="truncate">{fileValue.name}</span>
-                        </a>
-                      ) : (
-                        <div className="inline-flex min-w-0 items-center gap-2 text-sm font-bold text-slate-700">
-                          <FileText size={16} className="shrink-0" />
-                          <span className="truncate">{fileValue.name}</span>
-                        </div>
-                      )}
-                      <div className="flex shrink-0 items-center gap-1">
-                        {fileValue.size ? (
-                          <span className="hidden text-xs font-semibold text-slate-400 sm:inline">{formatFileSize(fileValue.size)}</span>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-red-50 hover:text-red-600"
-                          onClick={() => onChange(fieldKey, "")}
-                          aria-label="Убрать файл"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
+                  {fileValues.length ? (
+                    <div className="min-w-0 space-y-1">
+                      {fileValues.map((fileValue, fileIndex) => {
+                        const removeFile = () => {
+                          const nextFiles = fileValues.filter((_, index) => index !== fileIndex);
+                          onChange(fieldKey, nextFiles.length ? nextFiles.map(customFieldFilePayload) : "");
+                        };
+
+                        return (
+                          <div key={`${fileValue.url || fileValue.name}-${fileIndex}`} className="flex min-w-0 items-center justify-between gap-2 rounded-xl bg-slate-50 px-2 py-1">
+                            {fileValue.url && isPreviewableImage(fileValue) ? (
+                              <button
+                                type="button"
+                                onClick={() => onFilePreview?.(fileValue)}
+                                className="inline-flex min-w-0 items-center gap-2 text-left text-sm font-bold text-blue-600 hover:text-blue-700"
+                              >
+                                <FileText size={16} className="shrink-0" />
+                                <span className="truncate">{fileValue.name}</span>
+                              </button>
+                            ) : fileValue.url ? (
+                              <a
+                                href={fileValue.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex min-w-0 items-center gap-2 text-sm font-bold text-blue-600 hover:text-blue-700"
+                              >
+                                <FileText size={16} className="shrink-0" />
+                                <span className="truncate">{fileValue.name}</span>
+                              </a>
+                            ) : (
+                              <div className="inline-flex min-w-0 items-center gap-2 text-sm font-bold text-slate-700">
+                                <FileText size={16} className="shrink-0" />
+                                <span className="truncate">{fileValue.name}</span>
+                              </div>
+                            )}
+                            <div className="flex shrink-0 items-center gap-1">
+                              {fileValue.size ? (
+                                <span className="hidden text-xs font-semibold text-slate-400 sm:inline">{formatFileSize(fileValue.size)}</span>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                                onClick={removeFile}
+                                aria-label="Убрать файл"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : (
-                    <div className="text-sm font-semibold text-slate-400">Файл не прикреплён</div>
+                    <div className="text-sm font-semibold text-slate-400">Файлы не прикреплены</div>
                   )}
 
                   {projectId && onFileUpload ? (
                     <div className="flex shrink-0 gap-2">
-                      <input id={uploadId} className="sr-only" type="file" onChange={handleFileChange} />
+                      <input id={uploadId} className="sr-only" type="file" multiple onChange={handleFileChange} />
                       <label
                         htmlFor={uploadId}
                         className={`inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-slate-900 text-white shadow-sm transition hover:bg-black ${
                           isUploading ? "pointer-events-none opacity-60" : ""
                         }`}
-                        title={isUploading ? "Загружаем..." : "Прикрепить файл"}
-                        aria-label={isUploading ? "Загружаем файл" : "Прикрепить файл"}
+                        title={isUploading ? "Загружаем..." : "Прикрепить файлы"}
+                        aria-label={isUploading ? "Загружаем файлы" : "Прикрепить файлы"}
                       >
                         <Paperclip size={16} />
                       </label>
@@ -1440,15 +1470,16 @@ export default function Projects() {
     window.clearTimeout(detailAutosaveTimerRef.current);
   }
 
-  async function handleCustomFieldFileUpload(fieldId, file) {
-    if (!activeProject?.id || !file) return;
+  async function handleCustomFieldFileUpload(fieldId, files) {
+    const fileList = Array.isArray(files) ? files : [files];
+    if (!activeProject?.id || !fileList.some(Boolean)) return;
 
     const fieldKey = String(fieldId);
     setCustomFieldUploads((prev) => ({ ...prev, [fieldKey]: true }));
     setDetailError("");
 
     try {
-      const result = await uploadProjectCustomFieldFile(activeProject.id, fieldKey, file);
+      const result = await uploadProjectCustomFieldFile(activeProject.id, fieldKey, fileList);
       const updatedProject = result.project;
 
       if (updatedProject) {

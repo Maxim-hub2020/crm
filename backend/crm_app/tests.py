@@ -460,14 +460,75 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
 
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             self.assertEqual(response.data["field_id"], str(custom_field.id))
-            self.assertEqual(response.data["value"]["name"], "measurement.jpg")
-            self.assertEqual(response.data["value"]["content_type"], "image/jpeg")
-            self.assertIn("/media/project_custom_fields/", response.data["value"]["url"])
+            self.assertEqual(response.data["value"][0]["name"], "measurement.jpg")
+            self.assertEqual(response.data["value"][0]["content_type"], "image/jpeg")
+            self.assertIn("/media/project_custom_fields/", response.data["value"][0]["url"])
 
             self.manager_project.refresh_from_db()
             stored_value = self.manager_project.custom_fields[str(custom_field.id)]
-            self.assertEqual(stored_value["name"], "measurement.jpg")
-            self.assertTrue(os.path.exists(os.path.join(media_root, stored_value["path"])))
+            self.assertEqual(stored_value[0]["name"], "measurement.jpg")
+            self.assertTrue(os.path.exists(os.path.join(media_root, stored_value[0]["path"])))
+
+    def test_project_custom_field_files_are_appended(self):
+        client = self.auth_client_for(self.manager)
+        custom_field = ProjectCustomField.objects.create(
+            workspace=self.manager.workspace,
+            name="Photos",
+            field_type=ProjectCustomField.FieldType.FILE,
+            sort_order=20,
+        )
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            first_upload = SimpleUploadedFile("measurement.jpg", b"fake-image-bytes", content_type="image/jpeg")
+            first_response = client.post(
+                f"/api/projects/{self.manager_project.id}/custom-field-files/",
+                {"field_id": str(custom_field.id), "file": first_upload},
+                format="multipart",
+            )
+            self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+
+            second_upload = SimpleUploadedFile("drawing.pdf", b"fake-pdf-bytes", content_type="application/pdf")
+            second_response = client.post(
+                f"/api/projects/{self.manager_project.id}/custom-field-files/",
+                {"field_id": str(custom_field.id), "file": second_upload},
+                format="multipart",
+            )
+
+            self.assertEqual(second_response.status_code, status.HTTP_200_OK)
+            self.assertEqual([item["name"] for item in second_response.data["value"]], ["measurement.jpg", "drawing.pdf"])
+
+            self.manager_project.refresh_from_db()
+            stored_value = self.manager_project.custom_fields[str(custom_field.id)]
+            self.assertEqual([item["name"] for item in stored_value], ["measurement.jpg", "drawing.pdf"])
+            self.assertTrue(os.path.exists(os.path.join(media_root, stored_value[0]["path"])))
+            self.assertTrue(os.path.exists(os.path.join(media_root, stored_value[1]["path"])))
+
+    def test_project_custom_field_multiple_files_can_be_uploaded_at_once(self):
+        client = self.auth_client_for(self.manager)
+        custom_field = ProjectCustomField.objects.create(
+            workspace=self.manager.workspace,
+            name="Photos",
+            field_type=ProjectCustomField.FieldType.FILE,
+            sort_order=20,
+        )
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            first_upload = SimpleUploadedFile("measurement.jpg", b"fake-image-bytes", content_type="image/jpeg")
+            second_upload = SimpleUploadedFile("drawing.pdf", b"fake-pdf-bytes", content_type="application/pdf")
+            response = client.post(
+                f"/api/projects/{self.manager_project.id}/custom-field-files/",
+                {"field_id": str(custom_field.id), "files": [first_upload, second_upload]},
+                format="multipart",
+            )
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual([item["name"] for item in response.data["value"]], ["measurement.jpg", "drawing.pdf"])
+
+            self.manager_project.refresh_from_db()
+            stored_value = self.manager_project.custom_fields[str(custom_field.id)]
+            self.assertEqual([item["name"] for item in stored_value], ["measurement.jpg", "drawing.pdf"])
+            self.assertTrue(os.path.exists(os.path.join(media_root, stored_value[0]["path"])))
+            self.assertTrue(os.path.exists(os.path.join(media_root, stored_value[1]["path"])))
 
     def test_project_promo_code_debits_referrer_without_crediting_project_client(self):
         api_client = self.auth_client_for(self.manager)

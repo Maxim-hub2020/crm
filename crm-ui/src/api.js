@@ -400,11 +400,12 @@ export async function deleteDocumentTemplate(templateId) {
   await api.delete(`/api/document-templates/${templateId}/`);
 }
 
-export async function uploadProjectCustomFieldFile(projectId, fieldId, file) {
+export async function uploadProjectCustomFieldFile(projectId, fieldId, files) {
   initApiAuth();
   const formData = new FormData();
   formData.append("field_id", String(fieldId));
-  formData.append("file", file);
+  const fileList = Array.isArray(files) ? files : [files];
+  fileList.filter(Boolean).forEach((file) => formData.append("files", file));
 
   const { data } = await api.post(`/api/projects/${projectId}/custom-field-files/`, formData, {
     headers: { "Content-Type": "multipart/form-data" },
