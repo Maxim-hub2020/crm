@@ -1134,6 +1134,40 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(project_client.bonus_balance, Decimal("3000.00"))
         self.assertEqual(ClientBonusTransaction.objects.filter(project=project, type=ClientBonusTransaction.Type.ACCRUAL).count(), 1)
 
+    def test_bonus_is_accrued_after_first_income_payment_for_large_project(self):
+        project_client = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Income Bonus Client",
+            phone="+79000000015",
+        )
+        project = Project.objects.create(
+            manager=self.manager,
+            client=project_client,
+            client_name=project_client.name,
+            client_phone=project_client.phone,
+            total_amount=Decimal("69465.00"),
+        )
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/payments/",
+            {
+                "project": project.id,
+                "category": self.income_category.id,
+                "account": self.account.id,
+                "amount": "30000",
+                "comment": "",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        project.refresh_from_db()
+        project_client.refresh_from_db()
+        self.assertEqual(project.bonus_accrued_amount, Decimal("2083.95"))
+        self.assertIsNotNone(project.bonus_accrued_at)
+        self.assertEqual(project_client.bonus_balance, Decimal("2083.95"))
+
     def test_promo_project_accrues_three_percent_after_advance(self):
         referrer = Client.objects.create(
             workspace=self.manager.workspace,
