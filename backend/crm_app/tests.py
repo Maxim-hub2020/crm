@@ -815,6 +815,36 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
         self.client_card.refresh_from_db()
         self.assertEqual(self.client_card.phone, "+7-900-000-00-55")
 
+    def test_client_phone_with_duplicated_country_code_is_normalized(self):
+        api_client = self.auth_client_for(self.manager)
+
+        response = api_client.patch(
+            f"/api/clients/{self.client_card.id}/",
+            {"phone": "+7-+7 (900) 000-00-55"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.client_card.refresh_from_db()
+        self.assertEqual(self.client_card.phone, "+7-900-000-00-55")
+
+    def test_client_duplicate_phone_returns_field_error(self):
+        api_client = self.auth_client_for(self.manager)
+        other_client = Client.objects.create(
+            workspace=self.client_card.workspace,
+            name="Client Two",
+            phone="+7-900-000-00-55",
+        )
+
+        response = api_client.patch(
+            f"/api/clients/{self.client_card.id}/",
+            {"phone": other_client.phone},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("phone", response.data)
+
     def test_client_search_matches_normalized_phone_digits(self):
         self.client_card.phone = "+7-900-123-45-67"
         self.client_card.save(update_fields=["phone"])

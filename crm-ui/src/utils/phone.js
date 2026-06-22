@@ -4,6 +4,26 @@ export function phoneDigits(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
+function russianNationalDigits(value, { partial = false } = {}) {
+  const raw = String(value || "").trim();
+  const digits = phoneDigits(raw);
+  if (!digits) return "";
+
+  if (digits.length > 11 && (digits.startsWith("7") || digits.startsWith("8"))) {
+    return digits.slice(-10);
+  }
+
+  if (digits.length === 11 && (digits.startsWith("7") || digits.startsWith("8"))) {
+    return digits.slice(1);
+  }
+
+  if (partial && (raw.startsWith("+7") || raw.startsWith("7") || raw.startsWith("8"))) {
+    return digits.length > 1 ? digits.slice(1, 11) : "";
+  }
+
+  return partial ? digits.slice(0, 10) : digits;
+}
+
 export function formatRussianPhoneDigits(value) {
   const digits = phoneDigits(value).slice(0, 10);
   if (!digits) return "+7-";
@@ -24,15 +44,9 @@ export function formatRussianPhoneDigits(value) {
 
 export function formatRussianPhoneInput(value, { keepEmpty = true } = {}) {
   const raw = String(value || "");
-  const digits = phoneDigits(raw);
-  if (!digits) return keepEmpty ? "" : "+7-";
+  const nationalDigits = russianNationalDigits(raw, { partial: true });
 
-  let nationalDigits = digits;
-  if (digits.startsWith("7") || digits.startsWith("8")) {
-    nationalDigits = digits.slice(1);
-  }
-
-  if (!nationalDigits) return "+7-";
+  if (!nationalDigits) return keepEmpty ? "" : "+7-";
   return formatRussianPhoneDigits(nationalDigits);
 }
 
@@ -40,11 +54,8 @@ export function normalizeRussianPhone(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
 
-  const digits = phoneDigits(raw);
-  if (digits.length === 10) return formatRussianPhoneDigits(digits);
-  if (digits.length === 11 && (digits.startsWith("7") || digits.startsWith("8"))) {
-    return formatRussianPhoneDigits(digits.slice(1));
-  }
+  const nationalDigits = russianNationalDigits(raw);
+  if (nationalDigits.length === 10) return formatRussianPhoneDigits(nationalDigits);
 
   return null;
 }

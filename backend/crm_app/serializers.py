@@ -116,6 +116,20 @@ class ClientSerializer(serializers.ModelSerializer):
     def validate_phone(self, value):
         return normalize_client_phone(value)
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        phone = attrs.get("phone")
+        if phone:
+            request = self.context.get("request")
+            user = getattr(request, "user", None)
+            workspace = current_workspace(user) if user and user.is_authenticated else getattr(self.instance, "workspace", None)
+            duplicate_query = Client.objects.filter(workspace=workspace, phone=phone)
+            if self.instance is not None:
+                duplicate_query = duplicate_query.exclude(pk=self.instance.pk)
+            if duplicate_query.exists():
+                raise serializers.ValidationError({"phone": "Клиент с таким телефоном уже существует."})
+        return attrs
+
 
 class ProjectSerializer(serializers.ModelSerializer):
     client_info = ClientSerializer(source="client", read_only=True)
