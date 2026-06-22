@@ -2,6 +2,7 @@ import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "r
 import {
   Calendar,
   Check,
+  Link,
   Copy,
   FileText,
   LayoutGrid,
@@ -21,6 +22,7 @@ import { useLocation } from "react-router-dom";
 
 import {
   createPayment,
+  createClient,
   createProject,
   createProjectComment,
   createTask,
@@ -259,6 +261,15 @@ function customFieldValueSearchText(value) {
 function phoneHref(value) {
   const normalized = String(value || "").replace(/[^\d+]/g, "");
   return normalized ? `tel:${normalized}` : "";
+}
+
+function formatClientLookupInput(value) {
+  const raw = String(value || "");
+  const digits = phoneDigits(raw);
+  if (digits.length === 1 && (digits === "7" || digits === "8")) {
+    return "+7-";
+  }
+  return /[A-Za-zА-Яа-яЁё]/.test(raw) ? raw : formatRussianPhoneInput(raw);
 }
 
 function cleanAddressForMaps(value) {
@@ -890,6 +901,9 @@ export default function Projects() {
   const [projectClientForm, setProjectClientForm] = useState(createClientEditForm());
   const [projectClientSaving, setProjectClientSaving] = useState(false);
   const [projectClientDetaching, setProjectClientDetaching] = useState(false);
+  const [projectClientAttaching, setProjectClientAttaching] = useState(false);
+  const [projectClientQuery, setProjectClientQuery] = useState("");
+  const [projectNewClientName, setProjectNewClientName] = useState("");
   const [projectClientError, setProjectClientError] = useState("");
 
   const [comments, setComments] = useState([]);
@@ -1094,6 +1108,29 @@ export default function Projects() {
     return clientDirectory.find((client) => String(client.client_id) === String(createForm.client)) || null;
   }, [clientDirectory, createForm.client]);
 
+  const projectClientLookup = useMemo(() => {
+    if (!activeProject || activeProjectClient?.id) {
+      return { queryReady: false, matches: [] };
+    }
+
+    const textQuery = normalizeSearchText(projectClientQuery);
+    const digitsQuery = phoneDigits(projectClientQuery);
+    const queryReady = textQuery.length >= 2 || digitsQuery.length >= 3;
+    if (!queryReady) {
+      return { queryReady: false, matches: [] };
+    }
+
+    const matches = clientDirectory
+      .filter((client) => {
+        const byPhone = digitsQuery.length >= 3 && client.phoneDigits.includes(digitsQuery);
+        const byText = textQuery.length >= 2 && client.searchText.includes(textQuery);
+        return byPhone || byText;
+      })
+      .slice(0, 6);
+
+    return { queryReady: true, matches };
+  }, [activeProject, activeProjectClient?.id, clientDirectory, projectClientQuery]);
+
   const filteredProjects = useMemo(() => {
     const tokens = normalizeSearchText(deferredQuery).split(/\s+/).filter(Boolean);
     if (!tokens.length) return projects;
@@ -1253,6 +1290,8 @@ export default function Projects() {
       selectedAddressValueRef.current = nextForm.object_address.trim();
       setDetailAutosaveState("idle");
       setDetailError("");
+      setProjectClientQuery("");
+      setProjectNewClientName("");
     }
     detailSnapshotRef.current = JSON.stringify(buildProjectUpdatePayload(nextForm));
   }, [activeProject, defaultStatusValue]);
@@ -1466,10 +1505,30 @@ export default function Projects() {
     setProjectClientError("");
     setProjectClientForm(createClientEditForm());
     setProjectClientDetaching(false);
+    setProjectClientAttaching(false);
+    setProjectClientQuery("");
+    setProjectNewClientName("");
     selectedAddressValueRef.current = "";
     loadedProjectIdRef.current = null;
     detailSnapshotRef.current = "";
     window.clearTimeout(detailAutosaveTimerRef.current);
+  }
+
+  function applyUpdatedProject(updated) {
+    const nextForm = normalizeProjectForm(updated, defaultStatusValue);
+    setProjects((prev) => prev.map((project) => (project.id === updated.id ? updated : project)));
+    if (updated.client_info) {
+      setClients((prev) => {
+        const exists = prev.some((client) => client.id === updated.client_info.id);
+        return exists
+          ? prev.map((client) => (client.id === updated.client_info.id ? updated.client_info : client))
+          : [updated.client_info, ...prev];
+      });
+    }
+    setDetailForm(nextForm);
+    selectedAddressValueRef.current = nextForm.object_address.trim();
+    detailSnapshotRef.current = JSON.stringify(buildProjectUpdatePayload(nextForm));
+    setDetailAutosaveState("idle");
   }
 
   async function handleCustomFieldFileUpload(fieldId, files) {
@@ -1548,17 +1607,86 @@ export default function Projects() {
 
     try {
       const updated = await updateProject(activeProject.id, payload);
-      const nextForm = normalizeProjectForm(updated, defaultStatusValue);
-      setProjects((prev) => prev.map((project) => (project.id === updated.id ? updated : project)));
-      setDetailForm(nextForm);
-      selectedAddressValueRef.current = nextForm.object_address.trim();
-      detailSnapshotRef.current = JSON.stringify(buildProjectUpdatePayload(nextForm));
+      applyUpdatedProject(updated);
+      setProjectClientQuery("");
+      setProjectNewClientName("");
       setProjectClientOpen(false);
-      setDetailAutosaveState("idle");
     } catch (error) {
       setDetailError(extractApiErrorMessage(error, "Не удалось открепить клиента от проекта."));
     } finally {
       setProjectClientDetaching(false);
+    }
+  }
+
+  async function attachProjectClient(client) {
+    if (!activeProject?.id || !client?.client_id) return;
+
+    setProjectClientAttaching(true);
+    setDetailError("");
+    window.clearTimeout(detailAutosaveTimerRef.current);
+    detailAutosaveRequestRef.current += 1;
+
+    const nextAddress = detailForm.object_address || client.object_address || "";
+    const payload = {
+      ...buildProjectUpdatePayload(detailForm),
+      client: client.client_id,
+      client_name: client.client_name || "",
+      client_phone: normalizeOptionalClientPhone(client.client_phone) || "",
+      client_email: client.client_email || null,
+      object_address: nextAddress,
+    };
+
+    try {
+      const updated = await updateProject(activeProject.id, payload);
+      applyUpdatedProject(updated);
+      setProjectClientQuery("");
+      setProjectNewClientName("");
+    } catch (error) {
+      setDetailError(extractApiErrorMessage(error, "Не удалось прикрепить клиента к проекту."));
+    } finally {
+      setProjectClientAttaching(false);
+    }
+  }
+
+  async function createAndAttachProjectClient() {
+    if (!activeProject?.id || projectClientAttaching) return;
+
+    const hasPhone = Boolean(phoneDigits(projectClientQuery));
+    const phoneError = hasPhone ? clientPhoneValidationError(projectClientQuery) : "";
+    if (phoneError) {
+      setDetailError(phoneError);
+      return;
+    }
+
+    const inferredName = hasPhone ? "" : projectClientQuery.trim();
+    const name = (projectNewClientName.trim() || inferredName).trim();
+    if (!name) {
+      setDetailError("Укажите имя нового клиента.");
+      return;
+    }
+
+    setProjectClientAttaching(true);
+    setDetailError("");
+    window.clearTimeout(detailAutosaveTimerRef.current);
+    detailAutosaveRequestRef.current += 1;
+
+    try {
+      const created = await createClient({
+        name,
+        phone: hasPhone ? normalizeOptionalClientPhone(projectClientQuery) : "",
+        address: detailForm.object_address || null,
+      });
+      setClients((prev) => [created, ...prev.filter((client) => client.id !== created.id)]);
+      await attachProjectClient({
+        client_id: created.id,
+        client_name: created.name || "",
+        client_phone: created.phone || "",
+        client_email: created.email || "",
+        object_address: created.address || "",
+      });
+    } catch (error) {
+      setDetailError(extractApiErrorMessage(error, "Не удалось создать и прикрепить клиента."));
+      setProjectClientAttaching(false);
     }
   }
 
@@ -2760,52 +2888,105 @@ export default function Projects() {
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>Клиент</Label>
-                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <div className="min-w-0 flex-1">
-                      {activeProjectClient?.id ? (
-                        <button type="button" className="min-w-0 text-left" onClick={openProjectClientCard}>
-                          <div className="truncate text-base font-black text-slate-900 transition hover:text-blue-600">
-                            {detailForm.client_name || "Клиент не указан"}
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        {activeProjectClient?.id ? (
+                          <button type="button" className="min-w-0 text-left" onClick={openProjectClientCard}>
+                            <div className="truncate text-base font-black text-slate-900 transition hover:text-blue-600">
+                              {detailForm.client_name || "Клиент не указан"}
+                            </div>
+                            <div className="mt-1 text-xs font-semibold text-slate-400">Открыть карточку клиента</div>
+                          </button>
+                        ) : (
+                          <div className="min-w-0">
+                            <div className="truncate text-base font-black text-slate-900">{detailForm.client_name || "Клиент не привязан"}</div>
+                            <div className="mt-1 text-xs font-semibold text-slate-400">Выберите клиента из базы или создайте нового</div>
                           </div>
-                          <div className="mt-1 text-xs font-semibold text-slate-400">Открыть карточку клиента</div>
-                        </button>
-                      ) : (
-                        <div className="min-w-0">
-                          <div className="truncate text-base font-black text-slate-900">{detailForm.client_name || "Клиент не привязан"}</div>
-                          <div className="mt-1 text-xs font-semibold text-slate-400">Проект без карточки клиента</div>
+                        )}
+                        {activeProjectClient?.id ? (
+                          <button
+                            type="button"
+                            className="mt-2 inline-flex rounded-full bg-white px-3 py-1 text-xs font-black text-red-600 ring-1 ring-red-100 transition hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
+                            onClick={detachProjectClient}
+                            disabled={projectClientDetaching}
+                          >
+                            {projectClientDetaching ? "Открепляем..." : "Открепить клиента"}
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className="shrink-0">
+                        {phoneHref(detailForm.client_phone) ? (
+                          <a
+                            className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
+                            href={phoneHref(detailForm.client_phone)}
+                            title="Позвонить клиенту"
+                            aria-label="Позвонить клиенту"
+                          >
+                            <Phone size={18} />
+                          </a>
+                        ) : (
+                          <span
+                            className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-300 ring-1 ring-slate-200"
+                            title="Телефон клиента не указан"
+                            aria-label="Телефон клиента не указан"
+                          >
+                            <Phone size={18} />
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {!activeProjectClient?.id ? (
+                      <div className="mt-4 space-y-3">
+                        <Input
+                          type="text"
+                          inputMode="search"
+                          value={projectClientQuery}
+                          onChange={(event) => setProjectClientQuery(formatClientLookupInput(event.target.value))}
+                          placeholder="Введите имя или телефон клиента"
+                        />
+                        {projectClientLookup.queryReady && projectClientLookup.matches.length > 0 ? (
+                          <div className="space-y-2">
+                            {projectClientLookup.matches.map((client) => (
+                              <button
+                                key={client.key}
+                                type="button"
+                                onClick={() => attachProjectClient(client)}
+                                disabled={projectClientAttaching}
+                                className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-blue-200 hover:bg-blue-50 disabled:cursor-wait disabled:opacity-60"
+                              >
+                                <div className="min-w-0">
+                                  <div className="truncate font-black text-slate-800">{client.client_name || "Клиент без имени"}</div>
+                                  <div className="mt-1 truncate text-xs font-semibold text-slate-500">
+                                    {client.client_phone || "телефон не указан"} • {client.object_address || "адрес не указан"}
+                                  </div>
+                                </div>
+                                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-600">
+                                  <Link size={13} />
+                                  Выбрать
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                        <div className="rounded-2xl bg-white px-3 py-3 ring-1 ring-slate-200">
+                          <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Новый клиент</div>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                            <Input
+                              value={projectNewClientName}
+                              onChange={(event) => setProjectNewClientName(event.target.value)}
+                              placeholder="Имя клиента"
+                            />
+                            <Button type="button" className="justify-center" onClick={createAndAttachProjectClient} disabled={projectClientAttaching}>
+                              {projectClientAttaching ? "Прикрепляем..." : "Создать и прикрепить"}
+                            </Button>
+                          </div>
+                          <div className="mt-2 text-xs font-semibold text-slate-400">
+                            Телефон возьмём из поля поиска, если он там указан.
+                          </div>
                         </div>
-                      )}
-                      {activeProjectClient?.id ? (
-                        <button
-                          type="button"
-                          className="mt-2 inline-flex rounded-full bg-white px-3 py-1 text-xs font-black text-red-600 ring-1 ring-red-100 transition hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-                          onClick={detachProjectClient}
-                          disabled={projectClientDetaching}
-                        >
-                          {projectClientDetaching ? "Открепляем..." : "Открепить клиента"}
-                        </button>
-                      ) : null}
-                    </div>
-                    <div className="shrink-0">
-                      {phoneHref(detailForm.client_phone) ? (
-                        <a
-                          className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
-                          href={phoneHref(detailForm.client_phone)}
-                          title="Позвонить клиенту"
-                          aria-label="Позвонить клиенту"
-                        >
-                          <Phone size={18} />
-                        </a>
-                      ) : (
-                        <span
-                          className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-300 ring-1 ring-slate-200"
-                          title="Телефон клиента не указан"
-                          aria-label="Телефон клиента не указан"
-                        >
-                          <Phone size={18} />
-                        </span>
-                      )}
-                    </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
                 <div className="space-y-2 md:col-span-2">

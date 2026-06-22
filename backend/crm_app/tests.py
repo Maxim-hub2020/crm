@@ -427,6 +427,34 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(project.client_phone, "")
         self.assertTrue(Client.objects.filter(pk=client_card.pk).exists())
 
+    def test_project_client_can_be_attached_after_detach(self):
+        client = self.auth_client_for(self.manager)
+        next_client = Client.objects.create(
+            workspace=self.manager.workspace,
+            name="Next Client",
+            phone="+7-900-000-00-78",
+            email="next@example.com",
+        )
+        project = Project.objects.create(
+            manager=self.manager,
+            title="Detached Project",
+            client_name="",
+            client_phone="",
+        )
+
+        response = client.patch(
+            f"/api/projects/{project.id}/",
+            {"client": next_client.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        project.refresh_from_db()
+        self.assertEqual(project.client_id, next_client.id)
+        self.assertEqual(project.client_name, "Next Client")
+        self.assertEqual(project.client_phone, "+7-900-000-00-78")
+        self.assertEqual(project.client_email, "next@example.com")
+
     def test_project_rejects_invalid_client_phone(self):
         client = self.auth_client_for(self.manager)
 
