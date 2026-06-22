@@ -1108,29 +1108,6 @@ export default function Projects() {
     return clientDirectory.find((client) => String(client.client_id) === String(createForm.client)) || null;
   }, [clientDirectory, createForm.client]);
 
-  const projectClientLookup = useMemo(() => {
-    if (!activeProject || activeProjectClient?.id) {
-      return { queryReady: false, matches: [] };
-    }
-
-    const textQuery = normalizeSearchText(projectClientQuery);
-    const digitsQuery = phoneDigits(projectClientQuery);
-    const queryReady = textQuery.length >= 2 || digitsQuery.length >= 3;
-    if (!queryReady) {
-      return { queryReady: false, matches: [] };
-    }
-
-    const matches = clientDirectory
-      .filter((client) => {
-        const byPhone = digitsQuery.length >= 3 && client.phoneDigits.includes(digitsQuery);
-        const byText = textQuery.length >= 2 && client.searchText.includes(textQuery);
-        return byPhone || byText;
-      })
-      .slice(0, 6);
-
-    return { queryReady: true, matches };
-  }, [activeProject, activeProjectClient?.id, clientDirectory, projectClientQuery]);
-
   const filteredProjects = useMemo(() => {
     const tokens = normalizeSearchText(deferredQuery).split(/\s+/).filter(Boolean);
     if (!tokens.length) return projects;
@@ -1175,6 +1152,29 @@ export default function Projects() {
       null
     );
   }, [activeProject, clients, detailForm.client]);
+
+  const projectClientLookup = useMemo(() => {
+    if (!activeProject || activeProjectClient?.id) {
+      return { queryReady: false, matches: [] };
+    }
+
+    const textQuery = normalizeSearchText(projectClientQuery);
+    const digitsQuery = phoneDigits(projectClientQuery);
+    const queryReady = textQuery.length >= 2 || digitsQuery.length >= 3;
+    if (!queryReady) {
+      return { queryReady: false, matches: [] };
+    }
+
+    const matches = clientDirectory
+      .filter((client) => {
+        const byPhone = digitsQuery.length >= 3 && client.phoneDigits.includes(digitsQuery);
+        const byText = textQuery.length >= 2 && client.searchText.includes(textQuery);
+        return byPhone || byText;
+      })
+      .slice(0, 6);
+
+    return { queryReady: true, matches };
+  }, [activeProject, activeProjectClient?.id, clientDirectory, projectClientQuery]);
 
   const draggedProject = useMemo(
     () => projects.find((project) => project.id === dragPreview?.projectId) || null,
