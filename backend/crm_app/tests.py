@@ -186,7 +186,14 @@ class TestDadataAddressApi(AuthenticatedApiMixin, APITestCase):
     def test_dadata_query_defaults_to_rostov_region(self):
         self.assertEqual(
             CRMAssistantService._dadata_query("Далмановский"),
-            "Ростовская область, Ростов-на-Дону, Далмановский",
+            "Ростовская область, Далмановский",
+        )
+
+    @patch.dict(os.environ, {"DADATA_DEFAULT_REGION": "Ростовская область", "DADATA_DEFAULT_CITY": "Ростов-на-Дону"})
+    def test_dadata_query_does_not_restrict_to_rostov_city(self):
+        self.assertEqual(
+            CRMAssistantService._dadata_query("Новочеркасск, Ленина 43"),
+            "Ростовская область, Новочеркасск, Ленина 43",
         )
 
     @patch.dict(os.environ, {"DADATA_API_KEY": "test-token"})
