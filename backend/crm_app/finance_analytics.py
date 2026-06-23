@@ -157,3 +157,157 @@ def build_project_finance_analytics(project):
         "missing_required_expenses": missing_required_expenses,
         "recommendations": recommendations,
     }
+
+
+def _project_label(project):
+    order_label = f"№{project.order_number:04d}" if project.order_number else f"#{project.id}"
+    title = project.title or project.client_name or "Проект"
+    return f"{order_label} · {title}"
+
+
+def _serialize_payment_for_analytics(payment):
+    kind = _payment_kind(payment)
+    amount = _money(payment.amount)
+    signed_amount = -amount if kind == FinanceCategory.Type.EXPENSE else amount
+    project = getattr(payment, "project", None)
+    return {
+        "id": payment.id,
+        "project": payment.project_id,
+        "project_title": _project_label(project) if project else "",
+        "category": payment.category_id,
+        "category_name": getattr(payment.category, "name", "") or "Без категории",
+        "category_type": kind,
+        "account": payment.account_id,
+        "account_name": getattr(payment.account, "name", "") or "",
+        "amount": _decimal_string(amount),
+        "signed_amount": _decimal_string(signed_amount),
+        "comment": payment.comment or "",
+        "paid_at": payment.paid_at.isoformat() if payment.paid_at else "",
+        "is_future": bool(payment.paid_at and payment.paid_at > timezone.now()),
+    }
+
+
+def _serialize_project_analytics(project, analytics):
+    return {
+        "id": project.id,
+        "title": _project_label(project),
+        "client_name": project.client_name,
+        "status": project.status,
+        "expected_income": analytics["expected_income"],
+        "income_paid": analytics["income_paid"],
+        "expense_total": analytics["expense_total"],
+        "margin_amount": analytics["margin_amount"],
+        "margin_percent": analytics["margin_percent"],
+        "paid_in_full": analytics["paid_in_full"],
+        "low_margin": analytics["low_margin"],
+        "needs_attention": analytics["needs_attention"],
+        "missing_required_expenses": analytics["missing_required_expenses"],
+        "recommendations": analytics["recommendations"],
+    }
+
+
+def build_finance_overview(projects_queryset, payments_queryset, filters=None):
+    now = timezone.now()
+    projects = list(projects_queryset.select_related("client").order_by("-created_at", "-id"))
+    payments = list(
+        payments_queryset.select_related("project", "category", "account").order_by("-paid_at", "-id")
+    )
+    current_payments = [payment for payment in payments if not payment.paid_at or payment.paid_at <= now]
+    future_payments = [payment for payment in payments if payment.paid_at and payment.paid_at > now]
+    income_payments = [payment for payment in current_payments if _payment_kind(payment) == FinanceCategory.Type.INCOME]
+    expense_payments = [payment for payment in current_payments if _payment_kind(payment) == FinanceCategory.Type.EXPENSE]
+
+    income_total = _money(sum((payment.amount for payment in income_payments), Decimal("0")))
+    expense_total = _money(sum((payment.amount for payment in expense_payments), Decimal("0")))
+    margin_amount = _money(income_total - expense_total)
+    margin_percent = None
+    if income_total > 0:
+        margin_percent = (margin_amount / income_total * Decimal("100")).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+
+    categories = {}
+    for payment in current_payments:
+        kind = _payment_kind(payment)
+        category_key = f"{kind}:{payment.category_id or 'none'}"
+        if category_key not in categories:
+            categories[category_key] = {
+                "id": payment.category_id,
+                "name": getattr(payment.category, "name", "") or "Без категории",
+                "type": kind,
+                "count": 0,
+                "total": Decimal("0"),
+            }
+        categories[category_key]["count"] += 1
+        categories[category_key]["total"] += payment.amount
+
+    category_rows = sorted(
+        (
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "type": item["type"],
+                "count": item["count"],
+                "total": _decimal_string(item["total"]),
+            }
+            for item in categories.values()
+        ),
+        key=lambda item: (item["type"], -Decimal(item["total"]), item["name"]),
+    )
+
+    project_rows = []
+    for project in projects:
+        analytics = build_project_finance_analytics(project)
+        project_rows.append(_serialize_project_analytics(project, analytics))
+
+    at_risk_projects = sorted(
+        [project for project in project_rows if project["needs_attention"]],
+        key=lambda project: (
+            not project["low_margin"],
+            len(project["missing_required_expenses"]),
+            Decimal(project["margin_percent"] or "999"),
+        ),
+    )
+
+    recommendations = []
+    if margin_percent is not None and margin_percent < MARGIN_WARNING_PERCENT:
+        recommendations.append("Общая маржа по выбранным операциям ниже 30%. Проверьте расходы и цены по проектам.")
+    if at_risk_projects:
+        recommendations.append(f"Есть проекты, требующие проверки: {len(at_risk_projects)}.")
+    if future_payments:
+        recommendations.append(f"Есть будущие операции: {len(future_payments)}. Они не входят в текущую маржу.")
+    if not recommendations:
+        recommendations.append("Критичных финансовых отклонений по выбранной выборке не найдено.")
+
+    return {
+        "generated_at": now.isoformat(),
+        "filters": filters or {},
+        "summary": {
+            "income_total": _decimal_string(income_total),
+            "expense_total": _decimal_string(expense_total),
+            "margin_amount": _decimal_string(margin_amount),
+            "margin_percent": _percent_string(margin_percent),
+            "margin_warning_percent": _decimal_string(MARGIN_WARNING_PERCENT),
+            "operation_count": len(payments),
+            "current_operation_count": len(current_payments),
+            "future_operation_count": len(future_payments),
+            "income_operation_count": len(income_payments),
+            "expense_operation_count": len(expense_payments),
+            "project_count": len(projects),
+            "at_risk_project_count": len(at_risk_projects),
+        },
+        "category_totals": category_rows,
+        "projects": project_rows,
+        "at_risk_projects": at_risk_projects[:20],
+        "recent_operations": [_serialize_payment_for_analytics(payment) for payment in payments[:12]],
+        "recommendations": recommendations,
+    }
+
+
+def compact_finance_overview_for_ai(overview):
+    summary = overview.get("summary") or {}
+    return {
+        "summary": summary,
+        "recommendations": overview.get("recommendations") or [],
+        "category_totals": (overview.get("category_totals") or [])[:12],
+        "at_risk_projects": (overview.get("at_risk_projects") or [])[:12],
+        "recent_operations": (overview.get("recent_operations") or [])[:8],
+    }

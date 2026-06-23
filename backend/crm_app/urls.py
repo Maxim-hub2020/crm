@@ -21,6 +21,8 @@ from .views import (
     assistant_chat_view,
     assistant_voice_view,
     bonus_promo_preview_view,
+    finance_analytics_ai_view,
+    finance_analytics_view,
     health_view,
     me_view,
 )
@@ -46,6 +48,8 @@ urlpatterns = [
     path("billing/invoices/", billing_create_invoice_view),
     path("billing/activate/", billing_activate_invoice_view),
     path("bonus-promo-preview/", bonus_promo_preview_view),
+    path("finance-analytics/", finance_analytics_view),
+    path("finance-analytics/ai/", finance_analytics_ai_view),
     path("address-suggestions/", address_suggestions_view),
     path("chat-settings/", chat_settings_view),
     path("assistant/chat/", assistant_chat_view),

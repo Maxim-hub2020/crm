@@ -9,6 +9,7 @@ from django.db.models import F, Q, Value
 from django.db.models.functions import Replace
 from django.http import FileResponse
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from django.utils.text import get_valid_filename
 from rest_framework import viewsets
 from rest_framework.decorators import action, api_view, permission_classes
@@ -17,9 +18,9 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework import status as drf_status
 
-from .ai_assistant import CRMAssistantService, GeminiConfigurationError, GeminiRequestError
+from .ai_assistant import CRMAssistantService, GeminiClient, GeminiConfigurationError, GeminiRequestError
 from .bonuses import ensure_project_bonus_accrual, preview_project_bonus_promo_code, reverse_project_bonus_effects
-from .finance_analytics import build_project_finance_analytics
+from .finance_analytics import build_finance_overview, build_project_finance_analytics, compact_finance_overview_for_ai
 from .models import (
     Account,
     ChatIntegrationSettings,
@@ -73,6 +74,128 @@ def phone_digits_expression(field_name):
     for char in ("+", "-", " ", "(", ")"):
         expression = Replace(expression, Value(char), Value(""))
     return expression
+
+
+def _request_params(request):
+    return request.data if request.method == "POST" else request.query_params
+
+
+def _visible_finance_projects(user):
+    workspace = current_workspace(user)
+    queryset = Project.objects.filter(workspace=workspace)
+    if user.is_admin():
+        return queryset
+    return queryset.filter(manager=user)
+
+
+def _finance_scope(request):
+    params = _request_params(request)
+    project_queryset = _visible_finance_projects(request.user)
+    project_id = str(params.get("project") or params.get("project_id") or "").strip()
+    if project_id and project_id != "all":
+        project_queryset = project_queryset.filter(id=project_id)
+
+    payment_queryset = Payment.objects.filter(project__in=project_queryset)
+
+    operation_kind = str(params.get("kind") or params.get("category_kind") or "").strip()
+    if operation_kind in FinanceCategory.Type.values:
+        payment_queryset = payment_queryset.filter(category__type=operation_kind)
+
+    category_id = str(params.get("category") or "").strip()
+    if category_id and category_id != "all":
+        payment_queryset = payment_queryset.filter(category_id=category_id)
+
+    account_id = str(params.get("account") or "").strip()
+    if account_id and account_id != "all":
+        payment_queryset = payment_queryset.filter(account_id=account_id)
+
+    date_from = parse_date(str(params.get("date_from") or "").strip())
+    if date_from:
+        payment_queryset = payment_queryset.filter(paid_at__date__gte=date_from)
+
+    date_to = parse_date(str(params.get("date_to") or "").strip())
+    if date_to:
+        payment_queryset = payment_queryset.filter(paid_at__date__lte=date_to)
+
+    amount_from = str(params.get("amount_from") or "").strip().replace(" ", "").replace(",", ".")
+    if amount_from:
+        payment_queryset = payment_queryset.filter(amount__gte=amount_from)
+
+    amount_to = str(params.get("amount_to") or "").strip().replace(" ", "").replace(",", ".")
+    if amount_to:
+        payment_queryset = payment_queryset.filter(amount__lte=amount_to)
+
+    search = str(params.get("search") or "").strip()
+    if search:
+        payment_queryset = payment_queryset.filter(
+            Q(project__title__icontains=search)
+            | Q(project__client_name__icontains=search)
+            | Q(project__client_phone__icontains=search)
+            | Q(project__object_address__icontains=search)
+            | Q(comment__icontains=search)
+            | Q(category__name__icontains=search)
+            | Q(account__name__icontains=search)
+        )
+
+    has_payment_filters = any(
+        [
+            search,
+            operation_kind in FinanceCategory.Type.values,
+            category_id and category_id != "all",
+            account_id and account_id != "all",
+            date_from,
+            date_to,
+            amount_from,
+            amount_to,
+        ]
+    )
+    if has_payment_filters and not (project_id and project_id != "all"):
+        project_queryset = project_queryset.filter(id__in=payment_queryset.values("project_id"))
+
+    filters = {
+        "project": project_id or "all",
+        "kind": operation_kind or "all",
+        "category": category_id or "all",
+        "account": account_id or "all",
+        "date_from": date_from.isoformat() if date_from else "",
+        "date_to": date_to.isoformat() if date_to else "",
+        "amount_from": amount_from,
+        "amount_to": amount_to,
+        "search": search,
+    }
+    return project_queryset, payment_queryset, filters
+
+
+def _build_finance_ai_text(overview):
+    compact_payload = compact_finance_overview_for_ai(overview)
+    client = GeminiClient()
+    response = client.generate_content(
+        model=client.fast_model,
+        system_instruction=(
+            "Ты финансовый аналитик CRM производства мебели/стекла. "
+            "Пиши по-русски, кратко и по делу. Анализируй только переданные цифры. "
+            "Если данных мало, прямо скажи, какие операции или расходники нужно внести."
+        ),
+        contents=[
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": (
+                            "Проанализируй финансовую выборку CRM. Дай: 1) короткий вывод, "
+                            "2) риски, 3) что проверить по проектам, 4) конкретные рекомендации.\n\n"
+                            f"{json.dumps(compact_payload, ensure_ascii=False)}"
+                        )
+                    }
+                ],
+            }
+        ],
+        temperature=0.2,
+        max_output_tokens=1400,
+    )
+    content = client.extract_candidate_content(response)
+    return client.extract_text(content)
+
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticatedAny])
@@ -199,6 +322,29 @@ def address_suggestions_view(request):
             ],
         }
     )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+def finance_analytics_view(request):
+    project_queryset, payment_queryset, filters = _finance_scope(request)
+    return Response(build_finance_overview(project_queryset, payment_queryset, filters=filters))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAny, HasAssistantSubscription])
+def finance_analytics_ai_view(request):
+    project_queryset, payment_queryset, filters = _finance_scope(request)
+    overview = build_finance_overview(project_queryset, payment_queryset, filters=filters)
+
+    try:
+        analysis = _build_finance_ai_text(overview)
+    except GeminiConfigurationError as exc:
+        return Response({"detail": str(exc)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
+    except GeminiRequestError as exc:
+        return Response({"detail": str(exc)}, status=drf_status.HTTP_502_BAD_GATEWAY)
+
+    return Response({"analysis": analysis, "overview": overview})
 
 
 @api_view(["POST"])

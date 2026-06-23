@@ -1,14 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowUpCircle, Pencil, Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowUpCircle, Brain, CheckCircle2, Pencil, Plus, RefreshCw, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 
 import {
   createPayment,
   deletePayment,
   extractApiErrorMessage,
   fetchAccounts,
+  fetchFinanceAnalytics,
   fetchFinanceCategories,
   fetchPayments,
   fetchProjects,
+  requestFinanceAiAnalysis,
   updatePayment,
 } from "../api";
 import { Badge, Button, Input, Label, Modal, Select } from "../components/ui.jsx";
@@ -101,6 +103,163 @@ function paymentCategoryBadgeClass(payment) {
   return paymentKind(payment) === "expense" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600";
 }
 
+function formatPercent(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  return `${Number(value || 0).toLocaleString("ru-RU", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}%`;
+}
+
+function AnalyticsMetric({ label, value, tone = "slate", note = "" }) {
+  const toneClass =
+    tone === "green"
+      ? "text-emerald-600"
+      : tone === "red"
+        ? "text-red-600"
+        : tone === "amber"
+          ? "text-amber-600"
+          : "text-slate-900";
+
+  return (
+    <div className="rounded-[24px] bg-slate-50 p-4 ring-1 ring-slate-200/60">
+      <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{label}</div>
+      <div className={`mt-2 text-2xl font-black tracking-tight ${toneClass}`}>{value}</div>
+      {note ? <div className="mt-1 text-xs font-semibold text-slate-500">{note}</div> : null}
+    </div>
+  );
+}
+
+function FinanceAnalyticsBlock({
+  analytics,
+  loading,
+  error,
+  aiAnalysis,
+  aiError,
+  aiLoading,
+  onRefresh,
+  onAnalyze,
+}) {
+  const summary = analytics?.summary || {};
+  const atRiskProjects = analytics?.at_risk_projects || [];
+  const categoryTotals = analytics?.category_totals || [];
+  const recommendations = analytics?.recommendations || [];
+  const marginValue = Number(summary.margin_percent || 0);
+
+  return (
+    <div className="mb-4 rounded-[32px] bg-white p-4 shadow-lg sm:p-5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-black uppercase tracking-tight text-slate-900">
+            <Brain size={18} className="text-blue-600" />
+            Финансы-аналитика
+          </div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-slate-500">
+            Проверяет операции, маржу по проектам, обязательные расходники и дает рекомендации.
+          </div>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Button type="button" variant="secondary" className="justify-center" onClick={onRefresh} disabled={loading}>
+            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+            Обновить
+          </Button>
+          <Button type="button" className="justify-center" onClick={onAnalyze} disabled={aiLoading || loading}>
+            <Brain size={16} />
+            {aiLoading ? "Gemini анализирует..." : "AI-анализ"}
+          </Button>
+        </div>
+      </div>
+
+      {error ? <div className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+      {aiError ? <div className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{aiError}</div> : null}
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <AnalyticsMetric label="Доходы" value={`${formatMoney(summary.income_total)} ₽`} tone="green" note={`${summary.income_operation_count || 0} операций`} />
+        <AnalyticsMetric label="Расходы" value={`${formatMoney(summary.expense_total)} ₽`} tone="red" note={`${summary.expense_operation_count || 0} операций`} />
+        <AnalyticsMetric
+          label="Маржа"
+          value={formatPercent(summary.margin_percent)}
+          tone={marginValue > 0 && marginValue < 30 ? "amber" : "slate"}
+          note={`${formatMoney(summary.margin_amount)} ₽`}
+        />
+        <AnalyticsMetric
+          label="Проекты с риском"
+          value={summary.at_risk_project_count || 0}
+          tone={summary.at_risk_project_count ? "amber" : "green"}
+          note={`Всего проектов: ${summary.project_count || 0}`}
+        />
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+        <div className="rounded-[24px] bg-slate-50 p-4">
+          <div className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+            <AlertTriangle size={15} />
+            Что проверить
+          </div>
+          {recommendations.length > 0 ? (
+            <div className="space-y-2">
+              {recommendations.map((item) => (
+                <div key={item} className="flex gap-2 rounded-2xl bg-white px-3 py-2 text-sm font-semibold leading-5 text-slate-600 ring-1 ring-slate-100">
+                  <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-blue-600" />
+                  <span>{item}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl bg-white px-3 py-3 text-sm font-semibold text-slate-500 ring-1 ring-slate-100">
+              Данных для рекомендаций пока нет.
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-[24px] bg-slate-50 p-4">
+          <div className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-slate-400">Категории операций</div>
+          <div className="space-y-2">
+            {categoryTotals.slice(0, 6).map((item) => (
+              <div key={`${item.type}-${item.id || item.name}`} className="flex items-center justify-between gap-3 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-100">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-bold text-slate-700">{item.name}</div>
+                  <div className="text-xs font-semibold text-slate-400">{item.type === "expense" ? "Расход" : "Доход"} · {item.count} шт.</div>
+                </div>
+                <div className={`shrink-0 text-sm font-black ${item.type === "expense" ? "text-red-600" : "text-emerald-600"}`}>
+                  {formatMoney(item.total)} ₽
+                </div>
+              </div>
+            ))}
+            {categoryTotals.length === 0 ? (
+              <div className="rounded-2xl bg-white px-3 py-3 text-sm font-semibold text-slate-500 ring-1 ring-slate-100">
+                Операций по выбранной выборке нет.
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      {atRiskProjects.length > 0 ? (
+        <div className="mt-4 rounded-[24px] bg-amber-50 p-4">
+          <div className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-amber-600">Проекты, требующие проверки</div>
+          <div className="grid gap-2 lg:grid-cols-2">
+            {atRiskProjects.slice(0, 6).map((project) => (
+              <div key={project.id} className="rounded-2xl bg-white px-3 py-3 text-sm ring-1 ring-amber-100">
+                <div className="font-black text-slate-900">{project.title}</div>
+                <div className="mt-1 text-xs font-semibold text-slate-500">
+                  Маржа: {formatPercent(project.margin_percent)} · не хватает: {project.missing_required_expenses.join(", ") || "нет"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {aiAnalysis ? (
+        <div className="mt-4 whitespace-pre-wrap rounded-[24px] bg-slate-950 px-4 py-4 text-sm font-semibold leading-6 text-white">
+          {aiAnalysis}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function normalizeSearch(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -125,6 +284,13 @@ export default function Finances() {
   const [paymentForm, setPaymentForm] = useState(createPaymentForm());
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [analytics, setAnalytics] = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState("");
+  const [analyticsRefreshKey, setAnalyticsRefreshKey] = useState(0);
+  const [aiAnalysis, setAiAnalysis] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -161,6 +327,48 @@ export default function Finances() {
     () => (kindFilter === "all" ? categories : categories.filter((item) => item.type === kindFilter)),
     [categories, kindFilter]
   );
+
+  const analyticsParams = useMemo(
+    () => ({
+      search,
+      project: projectFilter,
+      kind: kindFilter,
+      category,
+      account,
+      date_from: dateFrom,
+      date_to: dateTo,
+      amount_from: amountFrom,
+      amount_to: amountTo,
+    }),
+    [account, amountFrom, amountTo, category, dateFrom, dateTo, kindFilter, projectFilter, search]
+  );
+
+  useEffect(() => {
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      setAnalyticsLoading(true);
+      setAnalyticsError("");
+      try {
+        const data = await fetchFinanceAnalytics(analyticsParams);
+        if (!active) return;
+        setAnalytics(data);
+      } catch (requestError) {
+        if (!active) return;
+        setAnalytics(null);
+        setAnalyticsError(extractApiErrorMessage(requestError, "Не удалось загрузить финансовую аналитику."));
+      } finally {
+        if (active) setAnalyticsLoading(false);
+      }
+    }, 250);
+
+    setAiAnalysis("");
+    setAiError("");
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [analyticsParams, analyticsRefreshKey]);
 
   const filteredPayments = useMemo(() => {
     const value = normalizeSearch(search);
@@ -217,6 +425,28 @@ export default function Finances() {
       );
     });
   }, [account, amountFrom, amountTo, category, dateFrom, dateTo, kindFilter, payments, projectFilter, projectMap, search]);
+
+  function refreshAnalytics() {
+    setAnalyticsRefreshKey((current) => current + 1);
+  }
+
+  async function runAiAnalysis() {
+    setAiError("");
+    setAiAnalysis("");
+    setAiLoading(true);
+
+    try {
+      const data = await requestFinanceAiAnalysis(analyticsParams);
+      setAiAnalysis(data.analysis || "");
+      if (data.overview) {
+        setAnalytics(data.overview);
+      }
+    } catch (requestError) {
+      setAiError(extractApiErrorMessage(requestError, "Gemini не смог выполнить финансовый анализ."));
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   function resetFilters() {
     setSearch("");
@@ -304,6 +534,7 @@ export default function Finances() {
         setPayments((current) => [created, ...current]);
       }
 
+      refreshAnalytics();
       closePaymentModal();
     } catch (requestError) {
       setActionError(extractApiErrorMessage(requestError, "Не удалось сохранить операцию."));
@@ -319,6 +550,7 @@ export default function Finances() {
     try {
       await deletePayment(paymentId);
       setPayments((current) => current.filter((payment) => payment.id !== paymentId));
+      refreshAnalytics();
     } catch (requestError) {
       setActionError(extractApiErrorMessage(requestError, "Не удалось удалить операцию."));
     }
@@ -338,6 +570,17 @@ export default function Finances() {
           Добавить операцию
         </Button>
       </div>
+
+      <FinanceAnalyticsBlock
+        analytics={analytics}
+        loading={analyticsLoading}
+        error={analyticsError}
+        aiAnalysis={aiAnalysis}
+        aiError={aiError}
+        aiLoading={aiLoading}
+        onRefresh={refreshAnalytics}
+        onAnalyze={runAiAnalysis}
+      />
 
       <div className="mb-4 rounded-[28px] bg-white p-4 shadow-lg">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">

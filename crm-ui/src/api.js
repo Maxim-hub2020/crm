@@ -456,6 +456,18 @@ export async function fetchPayments() {
   return data;
 }
 
+export async function fetchFinanceAnalytics(params = {}) {
+  initApiAuth();
+  const { data } = await api.get("/api/finance-analytics/", { params });
+  return data;
+}
+
+export async function requestFinanceAiAnalysis(payload = {}) {
+  initApiAuth();
+  const { data } = await api.post("/api/finance-analytics/ai/", payload);
+  return data;
+}
+
 export async function fetchTasks(params) {
   initApiAuth();
   const { data } = await api.get("/api/tasks/", {
