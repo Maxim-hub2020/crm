@@ -19,6 +19,7 @@ from rest_framework import status as drf_status
 
 from .ai_assistant import CRMAssistantService, GeminiConfigurationError, GeminiRequestError
 from .bonuses import ensure_project_bonus_accrual, preview_project_bonus_promo_code, reverse_project_bonus_effects
+from .finance_analytics import build_project_finance_analytics
 from .models import (
     Account,
     ChatIntegrationSettings,
@@ -300,6 +301,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         reverse_project_bonus_effects(instance, actor=self.request.user)
         instance.delete()
+
+    @action(detail=True, methods=["get"], url_path="finance-analytics")
+    def finance_analytics(self, request, pk=None):
+        project = self.get_object()
+        return Response(build_project_finance_analytics(project))
 
     @action(detail=True, methods=["post"], url_path="custom-field-files", parser_classes=[MultiPartParser, FormParser])
     def upload_custom_field_file(self, request, pk=None):

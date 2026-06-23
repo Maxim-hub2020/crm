@@ -1586,6 +1586,110 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertIn((self.income_category.name, self.income_category.type), category_keys)
         self.assertIn(self.account.name, account_names)
 
+    def test_project_finance_analytics_confirms_profitable_closed_project(self):
+        project = Project.objects.create(
+            manager=self.manager,
+            client_name="Analytics Client",
+            client_phone="+79000002100",
+            total_amount=Decimal("100000.00"),
+        )
+        categories = {
+            "delivery": FinanceCategory.objects.get_or_create(
+                workspace=self.manager.workspace,
+                name="Доставка",
+                type=FinanceCategory.Type.EXPENSE,
+            )[0],
+            "contractors": FinanceCategory.objects.get_or_create(
+                workspace=self.manager.workspace,
+                name="Оплата контрагентам",
+                type=FinanceCategory.Type.EXPENSE,
+            )[0],
+            "calculations": FinanceCategory.objects.get_or_create(
+                workspace=self.manager.workspace,
+                name="Расчеты",
+                type=FinanceCategory.Type.EXPENSE,
+            )[0],
+            "components": FinanceCategory.objects.get_or_create(
+                workspace=self.manager.workspace,
+                name="Комплектующие",
+                type=FinanceCategory.Type.EXPENSE,
+            )[0],
+        }
+        Payment.objects.create(
+            project=project,
+            created_by=self.manager,
+            category=self.income_category,
+            account=self.account,
+            amount=Decimal("100000.00"),
+            type=Payment.Type.ADVANCE,
+        )
+        for category_key, amount in (
+            ("delivery", "5000.00"),
+            ("contractors", "10000.00"),
+            ("calculations", "2000.00"),
+            ("components", "20000.00"),
+        ):
+            Payment.objects.create(
+                project=project,
+                created_by=self.manager,
+                category=categories[category_key],
+                account=self.account,
+                amount=Decimal(amount),
+                type=Payment.Type.CORRECTION,
+            )
+
+        client = self.auth_client_for(self.manager)
+        response = client.get(f"/api/projects/{project.id}/finance-analytics/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["paid_in_full"])
+        self.assertTrue(response.data["should_review"])
+        self.assertFalse(response.data["low_margin"])
+        self.assertEqual(response.data["margin_percent"], "63.00")
+        self.assertEqual(response.data["missing_required_expenses"], [])
+
+    def test_project_finance_analytics_warns_about_missing_expenses_and_low_margin(self):
+        project = Project.objects.create(
+            manager=self.manager,
+            client_name="Risk Client",
+            client_phone="+79000002101",
+            total_amount=Decimal("100000.00"),
+        )
+        component_category, _ = FinanceCategory.objects.get_or_create(
+            workspace=self.manager.workspace,
+            name="Комплектующие",
+            type=FinanceCategory.Type.EXPENSE,
+        )
+        Payment.objects.create(
+            project=project,
+            created_by=self.manager,
+            category=self.income_category,
+            account=self.account,
+            amount=Decimal("100000.00"),
+            type=Payment.Type.ADVANCE,
+        )
+        Payment.objects.create(
+            project=project,
+            created_by=self.manager,
+            category=component_category,
+            account=self.account,
+            amount=Decimal("80000.00"),
+            type=Payment.Type.CORRECTION,
+        )
+
+        client = self.auth_client_for(self.manager)
+        response = client.get(f"/api/projects/{project.id}/finance-analytics/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["paid_in_full"])
+        self.assertTrue(response.data["low_margin"])
+        self.assertTrue(response.data["needs_attention"])
+        self.assertEqual(response.data["margin_percent"], "20.00")
+        self.assertIn("Доставка", response.data["missing_required_expenses"])
+        self.assertIn("Контрагенты", response.data["missing_required_expenses"])
+        self.assertIn("Расчеты", response.data["missing_required_expenses"])
+        self.assertNotIn("Комплектующие", response.data["missing_required_expenses"])
+
     def test_manager_can_update_own_payment(self):
         client = self.auth_client_for(self.manager)
 

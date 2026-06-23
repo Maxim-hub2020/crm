@@ -1,5 +1,6 @@
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Calendar,
   Check,
   Link,
@@ -14,6 +15,7 @@ import {
   Pencil,
   Phone,
   Plus,
+  RefreshCw,
   Search,
   Trash2,
   Wallet,
@@ -37,6 +39,7 @@ import {
   fetchClients,
   fetchFinanceCategories,
   fetchPayments,
+  fetchProjectFinanceAnalytics,
   fetchProjectComments,
   fetchProjectCustomFields,
   fetchProjects,
@@ -466,6 +469,118 @@ function paymentCategoryBadgeClass(payment) {
   if (payment?.category_type === "expense") return "bg-red-50 text-red-600";
   if (payment?.category_type === "income") return "bg-emerald-50 text-emerald-600";
   return "bg-slate-100 text-slate-600";
+}
+
+function formatAnalyticsPercent(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  return `${Number(value || 0).toLocaleString("ru-RU", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}%`;
+}
+
+function FinanceAnalyticsPanel({ analytics, loading, error, onRefresh, compact = false }) {
+  const hasAnalytics = Boolean(analytics);
+  const marginPercent = hasAnalytics ? Number(analytics.margin_percent || 0) : 0;
+  const marginClass = analytics?.low_margin ? "text-red-600" : marginPercent >= 30 ? "text-emerald-600" : "text-slate-900";
+  const statusClass = analytics?.needs_attention
+    ? "bg-amber-50 text-amber-700"
+    : analytics?.paid_in_full
+      ? "bg-emerald-50 text-emerald-700"
+      : "bg-slate-100 text-slate-600";
+
+  return (
+    <Card className="border border-slate-100 shadow-none ring-0">
+      <CardHeader className="flex flex-row items-start justify-between gap-3">
+        <div>
+          <div className="text-lg font-black tracking-tight text-slate-900">Финансовая аналитика</div>
+          <div className="mt-1 text-sm text-slate-500">
+            Проверка маржи, оплат и обязательных расходников проекта.
+          </div>
+        </div>
+        <Button type="button" variant="secondary" className="shrink-0" onClick={onRefresh} disabled={loading}>
+          <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
+          Обновить
+        </Button>
+      </CardHeader>
+      <CardBody className="space-y-4">
+        {error ? <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+        {!hasAnalytics && loading ? (
+          <div className="rounded-[24px] bg-slate-50 px-4 py-6 text-sm font-semibold text-slate-500">
+            Считаем аналитику...
+          </div>
+        ) : null}
+        {hasAnalytics ? (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-[22px] bg-slate-50 p-4">
+                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Оплачено</div>
+                <div className="mt-2 text-xl font-black text-slate-900">{formatMoney(analytics.income_paid)} ₽</div>
+                <div className="mt-1 text-xs font-semibold text-slate-500">План: {formatMoney(analytics.expected_income)} ₽</div>
+              </div>
+              <div className="rounded-[22px] bg-slate-50 p-4">
+                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Расходы</div>
+                <div className="mt-2 text-xl font-black text-red-600">{formatMoney(analytics.expense_total)} ₽</div>
+                <div className="mt-1 text-xs font-semibold text-slate-500">Только наступившие операции</div>
+              </div>
+              <div className="rounded-[22px] bg-slate-50 p-4">
+                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Маржа</div>
+                <div className={`mt-2 text-xl font-black ${marginClass}`}>{formatAnalyticsPercent(analytics.margin_percent)}</div>
+                <div className="mt-1 text-xs font-semibold text-slate-500">{formatMoney(analytics.margin_amount)} ₽</div>
+              </div>
+              <div className="rounded-[22px] bg-slate-50 p-4">
+                <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Статус</div>
+                <Badge className={`mt-2 ${statusClass}`}>
+                  {analytics.needs_attention ? "Нужно проверить" : analytics.paid_in_full ? "Оплата закрыта" : "В работе"}
+                </Badge>
+                <div className="mt-2 text-xs font-semibold text-slate-500">
+                  Порог маржи: {formatAnalyticsPercent(analytics.margin_warning_percent)}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-[24px] bg-slate-50 p-4">
+              <div className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                Обязательные расходники
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {analytics.required_expenses?.map((item) => (
+                  <div
+                    key={item.key}
+                    className={`flex items-center justify-between gap-3 rounded-2xl px-3 py-2 text-sm font-bold ${
+                      item.present ? "bg-emerald-50 text-emerald-700" : "bg-white text-slate-500 ring-1 ring-slate-200"
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      {item.present ? <Check size={16} /> : <AlertTriangle size={16} />}
+                      {item.label}
+                    </span>
+                    <span>{formatMoney(item.amount)} ₽</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {!compact || analytics.recommendations?.length ? (
+              <div className="rounded-[24px] bg-white p-4 ring-1 ring-slate-100">
+                <div className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                  Рекомендации
+                </div>
+                <div className="space-y-2 text-sm font-semibold leading-6 text-slate-600">
+                  {(analytics.recommendations || []).map((item) => (
+                    <div key={item} className="flex gap-2">
+                      <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
+                      <span>{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </CardBody>
+    </Card>
+  );
 }
 
 function ageBadgeClass(days) {
@@ -921,6 +1036,11 @@ export default function Projects() {
   const [editingPaymentId, setEditingPaymentId] = useState(null);
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [paymentError, setPaymentError] = useState("");
+  const [financeAnalytics, setFinanceAnalytics] = useState(null);
+  const [financeAnalyticsProjectId, setFinanceAnalyticsProjectId] = useState(null);
+  const [financeAnalyticsLoading, setFinanceAnalyticsLoading] = useState(false);
+  const [financeAnalyticsError, setFinanceAnalyticsError] = useState("");
+  const [financeReviewOpen, setFinanceReviewOpen] = useState(false);
 
   const [taskForm, setTaskForm] = useState(createEmptyTaskForm());
   const [taskSaving, setTaskSaving] = useState(false);
@@ -1012,6 +1132,37 @@ export default function Projects() {
     }
   }
 
+  async function loadProjectFinanceAnalytics(projectId, { openReview = false } = {}) {
+    if (!projectId) {
+      setFinanceAnalytics(null);
+      setFinanceAnalyticsProjectId(null);
+      setFinanceAnalyticsError("");
+      return null;
+    }
+
+    setFinanceAnalyticsLoading(true);
+    setFinanceAnalyticsError("");
+
+    try {
+      const analytics = await fetchProjectFinanceAnalytics(projectId);
+      setFinanceAnalytics(analytics);
+      setFinanceAnalyticsProjectId(projectId);
+      if (openReview && analytics.should_review) {
+        setFinanceReviewOpen(true);
+      }
+      return analytics;
+    } catch (error) {
+      const message = extractApiErrorMessage(error, "Не удалось рассчитать финансовую аналитику проекта.");
+      setFinanceAnalyticsError(message);
+      if (openReview) {
+        window.alert(message);
+      }
+      return null;
+    } finally {
+      setFinanceAnalyticsLoading(false);
+    }
+  }
+
   useEffect(() => {
     reloadData().catch(() => {
       setProjects([]);
@@ -1036,6 +1187,18 @@ export default function Projects() {
       window.history.replaceState({}, document.title);
     }
   }, [location.state]);
+
+  useEffect(() => {
+    if (!activeProjectId) {
+      setFinanceAnalytics(null);
+      setFinanceAnalyticsProjectId(null);
+      setFinanceAnalyticsError("");
+      setFinanceReviewOpen(false);
+      return;
+    }
+
+    loadProjectFinanceAnalytics(activeProjectId).catch(() => {});
+  }, [activeProjectId]);
 
   useEffect(() => {
     if (!openCreate) {
@@ -1201,6 +1364,7 @@ export default function Projects() {
     if (!activeProjectId) return [];
     return paymentsByProject.get(activeProjectId) || [];
   }, [activeProjectId, paymentsByProject]);
+  const activeProjectFinanceAnalytics = financeAnalyticsProjectId === activeProjectId ? financeAnalytics : null;
 
   const routeUrl = useMemo(
     () => yandexRouteUrl(detailForm.object_address, detailForm.object_lat, detailForm.object_lon),
@@ -2021,6 +2185,7 @@ export default function Projects() {
       setClients(refreshedClients);
       setPaymentForm(createEmptyPaymentForm());
       setEditingPaymentId(null);
+      await loadProjectFinanceAnalytics(activeProject.id, { openReview: true });
     } catch (error) {
       setPaymentError(extractApiErrorMessage(error, "Не удалось сохранить операцию."));
     } finally {
@@ -2055,6 +2220,9 @@ export default function Projects() {
       setPayments((prev) => prev.filter((payment) => payment.id !== paymentId));
       if (editingPaymentId === paymentId) {
         cancelPaymentEdit();
+      }
+      if (activeProject?.id) {
+        await loadProjectFinanceAnalytics(activeProject.id);
       }
     } catch (error) {
       setPaymentError(extractApiErrorMessage(error, "Не удалось удалить операцию."));
@@ -2251,6 +2419,9 @@ export default function Projects() {
 
       if (activeProjectId === projectId) {
         setDetailForm((prev) => ({ ...prev, status: nextStatus }));
+      }
+      if (nextStatus === terminalStatusValue) {
+        await loadProjectFinanceAnalytics(projectId, { openReview: true });
       }
     } catch (error) {
       setProjects((prev) =>
@@ -3411,6 +3582,12 @@ export default function Projects() {
               </div>
             ) : (
               <div className="space-y-6">
+                <FinanceAnalyticsPanel
+                  analytics={activeProjectFinanceAnalytics}
+                  loading={financeAnalyticsLoading}
+                  error={financeAnalyticsError}
+                  onRefresh={() => activeProject?.id && loadProjectFinanceAnalytics(activeProject.id)}
+                />
                 <Card className="border border-slate-100 shadow-none ring-0">
                   <CardHeader>
                     <div className="text-lg font-black tracking-tight text-slate-900">Добавить операцию</div>
@@ -3582,6 +3759,31 @@ export default function Projects() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={financeReviewOpen && Boolean(financeAnalytics)}
+        title="Проверка финансов проекта"
+        onClose={() => setFinanceReviewOpen(false)}
+        widthClassName="max-w-5xl"
+      >
+        <div className="space-y-4">
+          <div className="rounded-[24px] bg-blue-50 px-4 py-4 text-sm font-semibold leading-6 text-blue-700">
+            Система проверила оплату, маржу и обязательные расходники. Если есть предупреждения, лучше закрыть их до завершения проекта.
+          </div>
+          <FinanceAnalyticsPanel
+            analytics={financeAnalytics}
+            loading={financeAnalyticsLoading}
+            error={financeAnalyticsError}
+            compact
+            onRefresh={() => financeAnalyticsProjectId && loadProjectFinanceAnalytics(financeAnalyticsProjectId)}
+          />
+          <div className="flex justify-end">
+            <Button type="button" onClick={() => setFinanceReviewOpen(false)}>
+              Понятно
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       <Modal
