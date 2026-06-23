@@ -445,12 +445,6 @@ export async function updateProject(projectId, payload) {
   return data;
 }
 
-export async function fetchProjectFinanceAnalytics(projectId) {
-  initApiAuth();
-  const { data } = await api.get(`/api/projects/${projectId}/finance-analytics/`);
-  return data;
-}
-
 export async function deleteProject(projectId) {
   initApiAuth();
   await api.delete(`/api/projects/${projectId}/`);
