@@ -72,6 +72,30 @@ def _is_terminal_status(project):
     return any(marker in status_text for marker in ("заверш", "закры", "closed", "done", "finish"))
 
 
+def _is_expense_review_status(project):
+    status_text = str(project.status or "").casefold()
+    has_review_marker = any(
+        marker in status_text
+        for marker in (
+            "монтаж",
+            "заверш",
+            "закры",
+            "install",
+            "montage",
+            "closed",
+            "done",
+            "finish",
+        )
+    )
+    statuses = list(ProjectStatus.objects.filter(workspace=project.workspace).order_by("sort_order", "id"))
+    if len(statuses) >= 2:
+        return project.status in {statuses[-1].code, statuses[-2].code} or has_review_marker
+    if len(statuses) == 1:
+        return project.status == statuses[-1].code or has_review_marker
+
+    return has_review_marker
+
+
 def build_project_finance_analytics(project):
     now = timezone.now()
     expected_income = _money(Decimal(project.total_amount or 0) - Decimal(project.referral_bonus_used or 0))
@@ -113,7 +137,8 @@ def build_project_finance_analytics(project):
     paid_in_full = expected_income > 0 and income_paid >= expected_income
     low_margin = margin_percent is not None and margin_percent < MARGIN_WARNING_PERCENT
     is_terminal_status = _is_terminal_status(project)
-    should_review = paid_in_full or is_terminal_status
+    expense_review_active = _is_expense_review_status(project)
+    should_review = expense_review_active
 
     recommendations = []
     if expected_income <= 0:
@@ -135,6 +160,9 @@ def build_project_finance_analytics(project):
     elif margin_percent is not None and paid_in_full and not missing_required_expenses:
         recommendations.append("Проект финансово закрыт: оплата сходится, обязательные расходники внесены.")
 
+    if not expense_review_active:
+        recommendations = []
+
     if future_payments:
         recommendations.append("Есть операции будущей датой, они не входят в текущую маржу.")
 
@@ -149,8 +177,11 @@ def build_project_finance_analytics(project):
         "paid_in_full": paid_in_full,
         "low_margin": low_margin,
         "is_terminal_status": is_terminal_status,
+        "expense_review_active": expense_review_active,
         "should_review": should_review,
-        "needs_attention": bool(low_margin or missing_required_expenses or (should_review and not paid_in_full)),
+        "needs_attention": bool(
+            expense_review_active and (low_margin or missing_required_expenses or not paid_in_full)
+        ),
         "income_payment_count": len(income_payments),
         "expense_payment_count": len(expense_payments),
         "has_future_payments": bool(future_payments),
@@ -201,6 +232,7 @@ def _serialize_project_analytics(project, analytics):
         "margin_percent": analytics["margin_percent"],
         "paid_in_full": analytics["paid_in_full"],
         "low_margin": analytics["low_margin"],
+        "expense_review_active": analytics["expense_review_active"],
         "needs_attention": analytics["needs_attention"],
         "missing_required_expenses": analytics["missing_required_expenses"],
         "recommendations": analytics["recommendations"],
@@ -380,9 +412,10 @@ def build_finance_overview(projects_queryset, payments_queryset, filters=None, r
             Decimal(project["margin_percent"] or "999"),
         ),
     )
+    review_project_rows = [project for project in project_rows if project["expense_review_active"]]
 
     recommendations = []
-    if margin_percent is not None and margin_percent < MARGIN_WARNING_PERCENT:
+    if review_project_rows and margin_percent is not None and margin_percent < MARGIN_WARNING_PERCENT:
         recommendations.append("Общая маржа по выбранным операциям ниже 30%. Проверьте расходы и цены по проектам.")
     if at_risk_projects:
         recommendations.append(f"Есть проекты, требующие проверки: {len(at_risk_projects)}.")
@@ -394,7 +427,12 @@ def build_finance_overview(projects_queryset, payments_queryset, filters=None, r
         selected_project = projects[0]
 
     expense_prediction = _build_project_expense_prediction(selected_project, reference_projects)
-    if expense_prediction and expense_prediction.get("estimated_remaining_expense"):
+    if (
+        selected_project
+        and _is_expense_review_status(selected_project)
+        and expense_prediction
+        and expense_prediction.get("estimated_remaining_expense")
+    ):
         remaining_expense = Decimal(expense_prediction["estimated_remaining_expense"])
         if remaining_expense > 0:
             recommendations.append(

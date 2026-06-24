@@ -1063,6 +1063,23 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
             comment="Other payment",
         )
 
+    def configure_finance_review_statuses(self):
+        ProjectStatus.objects.update_or_create(
+            workspace=self.manager.workspace,
+            code="design",
+            defaults={"name": "Проектирование", "sort_order": 10, "is_default": True},
+        )
+        ProjectStatus.objects.update_or_create(
+            workspace=self.manager.workspace,
+            code="montage",
+            defaults={"name": "Монтаж", "sort_order": 20, "is_default": False},
+        )
+        ProjectStatus.objects.update_or_create(
+            workspace=self.manager.workspace,
+            code="closed",
+            defaults={"name": "Завершено", "sort_order": 30, "is_default": False},
+        )
+
     def test_manager_sees_only_own_payments(self):
         client = self.auth_client_for(self.manager)
 
@@ -1587,11 +1604,13 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertIn(self.account.name, account_names)
 
     def test_project_finance_analytics_confirms_profitable_closed_project(self):
+        self.configure_finance_review_statuses()
         project = Project.objects.create(
             manager=self.manager,
             client_name="Analytics Client",
             client_phone="+79000002100",
             total_amount=Decimal("100000.00"),
+            status="closed",
         )
         categories = {
             "delivery": FinanceCategory.objects.get_or_create(
@@ -1649,11 +1668,13 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["missing_required_expenses"], [])
 
     def test_project_finance_analytics_warns_about_missing_expenses_and_low_margin(self):
+        self.configure_finance_review_statuses()
         project = Project.objects.create(
             manager=self.manager,
             client_name="Risk Client",
             client_phone="+79000002101",
             total_amount=Decimal("100000.00"),
+            status="montage",
         )
         component_category, _ = FinanceCategory.objects.get_or_create(
             workspace=self.manager.workspace,
@@ -1691,11 +1712,13 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertNotIn("Комплектующие", response.data["missing_required_expenses"])
 
     def test_finance_analytics_summary_counts_operations_and_risky_projects(self):
+        self.configure_finance_review_statuses()
         project = Project.objects.create(
             manager=self.manager,
             client_name="Summary Client",
             client_phone="+79000002102",
             total_amount=Decimal("100000.00"),
+            status="montage",
         )
         component_category, _ = FinanceCategory.objects.get_or_create(
             workspace=self.manager.workspace,
@@ -1730,12 +1753,14 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["at_risk_projects"][0]["id"], project.id)
 
     def test_finance_analytics_predicts_remaining_expenses_for_selected_project(self):
+        self.configure_finance_review_statuses()
         previous_project = Project.objects.create(
             manager=self.manager,
             title="Кухня массив",
             client_name="Previous Client",
             client_phone="+79000002112",
             total_amount=Decimal("100000.00"),
+            status="closed",
         )
         Payment.objects.create(
             project=previous_project,
@@ -1751,6 +1776,7 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
             client_name="Target Client",
             client_phone="+79000002113",
             total_amount=Decimal("50000.00"),
+            status="design",
         )
         Payment.objects.create(
             project=target_project,
@@ -1770,6 +1796,8 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(prediction["current_expense_total"], "5000.00")
         self.assertEqual(prediction["estimated_remaining_expense"], "15000.00")
         self.assertEqual(prediction["basis_project_count"], 1)
+        self.assertEqual(response.data["summary"]["at_risk_project_count"], 0)
+        self.assertEqual(response.data["at_risk_projects"], [])
 
     @patch("crm_app.views.GeminiClient")
     def test_finance_analytics_ai_uses_gemini(self, mocked_client_class):
