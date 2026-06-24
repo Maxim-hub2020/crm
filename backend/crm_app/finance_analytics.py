@@ -1,3 +1,4 @@
+import re
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.utils import timezone
@@ -206,9 +207,122 @@ def _serialize_project_analytics(project, analytics):
     }
 
 
-def build_finance_overview(projects_queryset, payments_queryset, filters=None):
+def _tokenize_project(project):
+    value = " ".join(
+        [
+            project.title or "",
+            project.client_name or "",
+            project.object_address or "",
+            project.status or "",
+        ]
+    )
+    return set(re.findall(r"[0-9a-zA-Zа-яА-ЯёЁ]+", value.casefold()))
+
+
+def _project_similarity_score(target_project, source_project):
+    target_tokens = _tokenize_project(target_project)
+    source_tokens = _tokenize_project(source_project)
+    if not target_tokens or not source_tokens:
+        return 0
+    return len(target_tokens & source_tokens) / len(target_tokens)
+
+
+def _build_project_expense_prediction(project, reference_projects):
+    if not project:
+        return None
+
+    project_analytics = build_project_finance_analytics(project)
+    expected_income = Decimal(project_analytics["expected_income"])
+    current_expense = Decimal(project_analytics["expense_total"])
+
+    empty_prediction = {
+        "project": project.id,
+        "project_title": _project_label(project),
+        "confidence": "none",
+        "basis_project_count": 0,
+        "basis_projects": [],
+        "average_expense_percent": None,
+        "estimated_expense_total": None,
+        "current_expense_total": _decimal_string(current_expense),
+        "estimated_remaining_expense": None,
+        "message": "У проекта пока нет суммы, поэтому прогноз расходов построить нельзя.",
+    }
+    if expected_income <= 0:
+        return empty_prediction
+
+    candidates = []
+    for reference_project in reference_projects:
+        if reference_project.pk == project.pk:
+            continue
+        if project.created_at and reference_project.created_at and reference_project.created_at >= project.created_at:
+            continue
+
+        reference_analytics = build_project_finance_analytics(reference_project)
+        reference_income = Decimal(reference_analytics["expected_income"])
+        reference_expense = Decimal(reference_analytics["expense_total"])
+        if reference_income <= 0 or reference_expense <= 0:
+            continue
+
+        candidates.append(
+            {
+                "project": reference_project,
+                "analytics": reference_analytics,
+                "expense_ratio": reference_expense / reference_income,
+                "score": _project_similarity_score(project, reference_project),
+            }
+        )
+
+    matching_candidates = [item for item in candidates if item["score"] > 0]
+    basis = sorted(
+        matching_candidates or candidates,
+        key=lambda item: (item["score"], item["project"].created_at or timezone.now()),
+        reverse=True,
+    )[:5]
+
+    if not basis:
+        empty_prediction["message"] = "Недостаточно прошлых проектов с расходами для прогноза."
+        return empty_prediction
+
+    average_ratio = sum((item["expense_ratio"] for item in basis), Decimal("0")) / Decimal(len(basis))
+    estimated_expense = _money(expected_income * average_ratio)
+    remaining_expense = _money(max(estimated_expense - current_expense, Decimal("0")))
+    average_percent = (average_ratio * Decimal("100")).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+    confidence = "medium" if len(basis) >= 3 else "low"
+    if len(matching_candidates) >= 3:
+        confidence = "high"
+
+    return {
+        "project": project.id,
+        "project_title": _project_label(project),
+        "confidence": confidence,
+        "basis_project_count": len(basis),
+        "basis_projects": [
+            {
+                "id": item["project"].id,
+                "title": _project_label(item["project"]),
+                "expense_total": item["analytics"]["expense_total"],
+                "expected_income": item["analytics"]["expected_income"],
+                "expense_percent": _percent_string(item["expense_ratio"] * Decimal("100")),
+            }
+            for item in basis
+        ],
+        "average_expense_percent": _percent_string(average_percent),
+        "estimated_expense_total": _decimal_string(estimated_expense),
+        "current_expense_total": _decimal_string(current_expense),
+        "estimated_remaining_expense": _decimal_string(remaining_expense),
+        "message": (
+            "Прогноз построен по похожим прошлым проектам."
+            if matching_candidates
+            else "Похожих проектов не найдено, использована средняя доля расходов по прошлым проектам."
+        ),
+    }
+
+
+def build_finance_overview(projects_queryset, payments_queryset, filters=None, reference_projects_queryset=None):
     now = timezone.now()
     projects = list(projects_queryset.select_related("client").order_by("-created_at", "-id"))
+    reference_queryset = reference_projects_queryset if reference_projects_queryset is not None else projects_queryset
+    reference_projects = list(reference_queryset.select_related("client").order_by("-created_at", "-id"))
     payments = list(
         payments_queryset.select_related("project", "category", "account").order_by("-paid_at", "-id")
     )
@@ -274,6 +388,19 @@ def build_finance_overview(projects_queryset, payments_queryset, filters=None):
         recommendations.append(f"Есть проекты, требующие проверки: {len(at_risk_projects)}.")
     if future_payments:
         recommendations.append(f"Есть будущие операции: {len(future_payments)}. Они не входят в текущую маржу.")
+    selected_project = None
+    filter_project_id = str((filters or {}).get("project") or "").strip()
+    if filter_project_id and filter_project_id != "all" and len(projects) == 1:
+        selected_project = projects[0]
+
+    expense_prediction = _build_project_expense_prediction(selected_project, reference_projects)
+    if expense_prediction and expense_prediction.get("estimated_remaining_expense"):
+        remaining_expense = Decimal(expense_prediction["estimated_remaining_expense"])
+        if remaining_expense > 0:
+            recommendations.append(
+                f"Прогноз дополнительных расходов по проекту: {_decimal_string(remaining_expense)} ₽."
+            )
+
     if not recommendations:
         recommendations.append("Критичных финансовых отклонений по выбранной выборке не найдено.")
 
@@ -298,6 +425,7 @@ def build_finance_overview(projects_queryset, payments_queryset, filters=None):
         "projects": project_rows,
         "at_risk_projects": at_risk_projects[:20],
         "recent_operations": [_serialize_payment_for_analytics(payment) for payment in payments[:12]],
+        "expense_prediction": expense_prediction,
         "recommendations": recommendations,
     }
 
@@ -310,4 +438,5 @@ def compact_finance_overview_for_ai(overview):
         "category_totals": (overview.get("category_totals") or [])[:12],
         "at_risk_projects": (overview.get("at_risk_projects") or [])[:12],
         "recent_operations": (overview.get("recent_operations") or [])[:8],
+        "expense_prediction": overview.get("expense_prediction"),
     }

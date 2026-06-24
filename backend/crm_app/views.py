@@ -172,6 +172,7 @@ def _build_finance_ai_text(overview):
     response = client.generate_content(
         model=client.fast_model,
         system_instruction=(
+            "Отвечай максимум 5 короткими пунктами, без вступления и длинных объяснений. "
             "Ты финансовый аналитик CRM производства мебели/стекла. "
             "Пиши по-русски, кратко и по делу. Анализируй только переданные цифры. "
             "Если данных мало, прямо скажи, какие операции или расходники нужно внести."
@@ -182,6 +183,7 @@ def _build_finance_ai_text(overview):
                 "parts": [
                     {
                         "text": (
+                            "Коротко оцени маржу, риски, прогноз расходов и что проверить.\n\n"
                             "Проанализируй финансовую выборку CRM. Дай: 1) короткий вывод, "
                             "2) риски, 3) что проверить по проектам, 4) конкретные рекомендации.\n\n"
                             f"{json.dumps(compact_payload, ensure_ascii=False)}"
@@ -191,7 +193,7 @@ def _build_finance_ai_text(overview):
             }
         ],
         temperature=0.2,
-        max_output_tokens=1400,
+        max_output_tokens=500,
     )
     content = client.extract_candidate_content(response)
     return client.extract_text(content)
@@ -328,14 +330,28 @@ def address_suggestions_view(request):
 @permission_classes([IsAuthenticatedAny, HasActiveSubscription])
 def finance_analytics_view(request):
     project_queryset, payment_queryset, filters = _finance_scope(request)
-    return Response(build_finance_overview(project_queryset, payment_queryset, filters=filters))
+    reference_queryset = _visible_finance_projects(request.user)
+    return Response(
+        build_finance_overview(
+            project_queryset,
+            payment_queryset,
+            filters=filters,
+            reference_projects_queryset=reference_queryset,
+        )
+    )
 
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticatedAny, HasAssistantSubscription])
 def finance_analytics_ai_view(request):
     project_queryset, payment_queryset, filters = _finance_scope(request)
-    overview = build_finance_overview(project_queryset, payment_queryset, filters=filters)
+    reference_queryset = _visible_finance_projects(request.user)
+    overview = build_finance_overview(
+        project_queryset,
+        payment_queryset,
+        filters=filters,
+        reference_projects_queryset=reference_queryset,
+    )
 
     try:
         analysis = _build_finance_ai_text(overview)

@@ -1729,6 +1729,48 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["summary"]["at_risk_project_count"], 1)
         self.assertEqual(response.data["at_risk_projects"][0]["id"], project.id)
 
+    def test_finance_analytics_predicts_remaining_expenses_for_selected_project(self):
+        previous_project = Project.objects.create(
+            manager=self.manager,
+            title="Кухня массив",
+            client_name="Previous Client",
+            client_phone="+79000002112",
+            total_amount=Decimal("100000.00"),
+        )
+        Payment.objects.create(
+            project=previous_project,
+            created_by=self.manager,
+            category=self.expense_category,
+            account=self.account,
+            amount=Decimal("40000.00"),
+            type=Payment.Type.CORRECTION,
+        )
+        target_project = Project.objects.create(
+            manager=self.manager,
+            title="Кухня массив новая",
+            client_name="Target Client",
+            client_phone="+79000002113",
+            total_amount=Decimal("50000.00"),
+        )
+        Payment.objects.create(
+            project=target_project,
+            created_by=self.manager,
+            category=self.expense_category,
+            account=self.account,
+            amount=Decimal("5000.00"),
+            type=Payment.Type.CORRECTION,
+        )
+        client = self.auth_client_for(self.manager)
+
+        response = client.get("/api/finance-analytics/", {"project": target_project.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        prediction = response.data["expense_prediction"]
+        self.assertEqual(prediction["estimated_expense_total"], "20000.00")
+        self.assertEqual(prediction["current_expense_total"], "5000.00")
+        self.assertEqual(prediction["estimated_remaining_expense"], "15000.00")
+        self.assertEqual(prediction["basis_project_count"], 1)
+
     @patch("crm_app.views.GeminiClient")
     def test_finance_analytics_ai_uses_gemini(self, mocked_client_class):
         project = Project.objects.create(

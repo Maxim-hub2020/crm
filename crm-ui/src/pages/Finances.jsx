@@ -144,6 +144,7 @@ function FinanceAnalyticsBlock({
   const atRiskProjects = analytics?.at_risk_projects || [];
   const categoryTotals = analytics?.category_totals || [];
   const recommendations = analytics?.recommendations || [];
+  const expensePrediction = analytics?.expense_prediction || null;
   const marginValue = Number(summary.margin_percent || 0);
 
   return (
@@ -189,6 +190,35 @@ function FinanceAnalyticsBlock({
           note={`Всего проектов: ${summary.project_count || 0}`}
         />
       </div>
+
+      {expensePrediction ? (
+        <div className="mt-4 rounded-[24px] bg-blue-50 p-4 ring-1 ring-blue-100">
+          <div className="text-xs font-black uppercase tracking-[0.18em] text-blue-600">Прогноз расходов по проекту</div>
+          <div className="mt-2 text-sm font-semibold leading-5 text-slate-600">{expensePrediction.message}</div>
+          {expensePrediction.estimated_expense_total ? (
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <AnalyticsMetric
+                label="Оценка расходов"
+                value={`${formatMoney(expensePrediction.estimated_expense_total)} ₽`}
+                tone="slate"
+                note={`Средняя доля: ${formatPercent(expensePrediction.average_expense_percent)}`}
+              />
+              <AnalyticsMetric
+                label="Уже внесено"
+                value={`${formatMoney(expensePrediction.current_expense_total)} ₽`}
+                tone="red"
+                note="Текущие расходы проекта"
+              />
+              <AnalyticsMetric
+                label="Еще может уйти"
+                value={`${formatMoney(expensePrediction.estimated_remaining_expense)} ₽`}
+                tone={Number(expensePrediction.estimated_remaining_expense || 0) > 0 ? "amber" : "green"}
+                note={`База: ${expensePrediction.basis_project_count || 0} проектов`}
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
         <div className="rounded-[24px] bg-slate-50 p-4">
@@ -269,6 +299,7 @@ export default function Finances() {
   const [payments, setPayments] = useState([]);
   const [categories, setCategories] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [activeTab, setActiveTab] = useState("operations");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [account, setAccount] = useState("all");
@@ -288,6 +319,10 @@ export default function Finances() {
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState("");
   const [analyticsRefreshKey, setAnalyticsRefreshKey] = useState(0);
+  const [analyticsProjectFilter, setAnalyticsProjectFilter] = useState("all");
+  const [analyticsKindFilter, setAnalyticsKindFilter] = useState("all");
+  const [analyticsDateFrom, setAnalyticsDateFrom] = useState("");
+  const [analyticsDateTo, setAnalyticsDateTo] = useState("");
   const [aiAnalysis, setAiAnalysis] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
@@ -330,20 +365,17 @@ export default function Finances() {
 
   const analyticsParams = useMemo(
     () => ({
-      search,
-      project: projectFilter,
-      kind: kindFilter,
-      category,
-      account,
-      date_from: dateFrom,
-      date_to: dateTo,
-      amount_from: amountFrom,
-      amount_to: amountTo,
+      project: analyticsProjectFilter,
+      kind: analyticsKindFilter,
+      date_from: analyticsDateFrom,
+      date_to: analyticsDateTo,
     }),
-    [account, amountFrom, amountTo, category, dateFrom, dateTo, kindFilter, projectFilter, search]
+    [analyticsDateFrom, analyticsDateTo, analyticsKindFilter, analyticsProjectFilter]
   );
 
   useEffect(() => {
+    if (activeTab !== "analytics") return undefined;
+
     let active = true;
     const timer = window.setTimeout(async () => {
       setAnalyticsLoading(true);
@@ -368,7 +400,7 @@ export default function Finances() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [analyticsParams, analyticsRefreshKey]);
+  }, [activeTab, analyticsParams, analyticsRefreshKey]);
 
   const filteredPayments = useMemo(() => {
     const value = normalizeSearch(search);
@@ -458,6 +490,20 @@ export default function Finances() {
     setDateTo("");
     setAmountFrom("");
     setAmountTo("");
+  }
+
+  function resetAnalyticsFilters() {
+    setAnalyticsProjectFilter("all");
+    setAnalyticsKindFilter("all");
+    setAnalyticsDateFrom("");
+    setAnalyticsDateTo("");
+  }
+
+  function tabButtonClass(tab) {
+    const isActive = activeTab === tab;
+    return `flex-1 rounded-2xl px-4 py-3 text-sm font-black transition ${
+      isActive ? "bg-slate-950 text-white shadow-lg" : "text-slate-500 hover:bg-slate-100"
+    }`;
   }
 
   function openPaymentCreate() {
@@ -565,22 +611,77 @@ export default function Finances() {
           <div className="text-sm font-bold text-slate-900">Финансовые операции</div>
           <div className="text-xs text-slate-500">Создание, поиск, фильтрация и контроль операций по проектам.</div>
         </div>
-        <Button type="button" className="w-full justify-center lg:w-auto" onClick={openPaymentCreate}>
+        {activeTab === "operations" ? (
+          <Button type="button" className="w-full justify-center lg:w-auto" onClick={openPaymentCreate}>
           <Plus size={16} />
           Добавить операцию
-        </Button>
+          </Button>
+        ) : null}
       </div>
 
-      <FinanceAnalyticsBlock
-        analytics={analytics}
-        loading={analyticsLoading}
-        error={analyticsError}
-        aiAnalysis={aiAnalysis}
-        aiError={aiError}
-        aiLoading={aiLoading}
-        onRefresh={refreshAnalytics}
-        onAnalyze={runAiAnalysis}
-      />
+      <div className="mb-4 grid gap-2 rounded-[28px] bg-white p-2 shadow-lg sm:inline-grid sm:grid-cols-2">
+        <button type="button" className={tabButtonClass("operations")} onClick={() => setActiveTab("operations")}>
+          Операции
+        </button>
+        <button type="button" className={tabButtonClass("analytics")} onClick={() => setActiveTab("analytics")}>
+          Аналитика
+        </button>
+      </div>
+
+      {activeTab === "analytics" ? (
+        <>
+          <div className="mb-4 rounded-[28px] bg-white p-4 shadow-lg">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="space-y-2">
+                <Label>Проект для анализа</Label>
+                <Select value={analyticsProjectFilter} onChange={(event) => setAnalyticsProjectFilter(event.target.value)}>
+                  <option value="all">Все проекты</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {projectDisplayName(project)}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Тип операций</Label>
+                <Select value={analyticsKindFilter} onChange={(event) => setAnalyticsKindFilter(event.target.value)}>
+                  <option value="all">Доходы и расходы</option>
+                  <option value="income">Доход</option>
+                  <option value="expense">Расход</option>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Дата от</Label>
+                <Input type="date" value={analyticsDateFrom} onChange={(event) => setAnalyticsDateFrom(event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Дата до</Label>
+                <Input type="date" value={analyticsDateTo} onChange={(event) => setAnalyticsDateTo(event.target.value)} />
+              </div>
+            </div>
+            <div className="mt-3 flex justify-end">
+              <Button type="button" variant="ghost" className="justify-center" onClick={resetAnalyticsFilters}>
+                Сбросить фильтры аналитики
+              </Button>
+            </div>
+          </div>
+
+          <FinanceAnalyticsBlock
+            analytics={analytics}
+            loading={analyticsLoading}
+            error={analyticsError}
+            aiAnalysis={aiAnalysis}
+            aiError={aiError}
+            aiLoading={aiLoading}
+            onRefresh={refreshAnalytics}
+            onAnalyze={runAiAnalysis}
+          />
+        </>
+      ) : null}
+
+      {activeTab === "operations" ? (
+        <>
 
       <div className="mb-4 rounded-[28px] bg-white p-4 shadow-lg">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
@@ -791,6 +892,9 @@ export default function Finances() {
           <div className="rounded-2xl bg-white p-8 text-center text-sm text-gray-400 shadow-lg">Платежи не найдены</div>
         )}
       </div>
+
+        </>
+      ) : null}
 
       <Modal open={paymentModalOpen} title={editingPayment ? "Редактировать операцию" : "Добавить операцию"} onClose={closePaymentModal} widthClassName="max-w-2xl">
         <form className="space-y-4" onSubmit={submitPaymentForm}>
