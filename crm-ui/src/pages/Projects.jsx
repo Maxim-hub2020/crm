@@ -867,6 +867,8 @@ export default function Projects() {
   const [dragPreview, setDragPreview] = useState(null);
   const pointerDragRef = useRef(null);
   const suppressProjectClickRef = useRef(false);
+  const handledQueryStateRef = useRef("");
+  const handledOpenProjectStateRef = useRef("");
   const bodyDragStyleRef = useRef(null);
   const kanbanScrollRef = useRef(null);
   const dragAutoScrollRef = useRef(null);
@@ -1031,11 +1033,29 @@ export default function Projects() {
   }, [viewMode]);
 
   useEffect(() => {
-    if (location.state?.q) {
-      setQuery(location.state.q);
+    const state = location.state || {};
+    const queryStateKey = `${location.key}:${state.q || ""}`;
+    if (state.q && handledQueryStateRef.current !== queryStateKey) {
+      handledQueryStateRef.current = queryStateKey;
+      setQuery(state.q);
+    }
+
+    const requestedProjectId = state.projectId;
+    if (requestedProjectId) {
+      const stateKey = `${location.key}:${requestedProjectId}:${state.tab || "comments"}`;
+      const project = projects.find((item) => String(item.id) === String(requestedProjectId));
+      if (project && handledOpenProjectStateRef.current !== stateKey) {
+        handledOpenProjectStateRef.current = stateKey;
+        openProject(project, state.tab || "comments");
+        window.history.replaceState({}, document.title);
+      }
+      return;
+    }
+
+    if (state.q) {
       window.history.replaceState({}, document.title);
     }
-  }, [location.state]);
+  }, [location.key, location.state, projects]);
 
   useEffect(() => {
     if (!openCreate) {

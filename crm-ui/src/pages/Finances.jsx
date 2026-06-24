@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowUpCircle, Brain, CheckCircle2, Pencil, Plus, RefreshCw, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import {
   createPayment,
@@ -139,6 +140,7 @@ function FinanceAnalyticsBlock({
   aiLoading,
   onRefresh,
   onAnalyze,
+  onProjectOpen,
 }) {
   const summary = analytics?.summary || {};
   const atRiskProjects = analytics?.at_risk_projects || [];
@@ -195,6 +197,15 @@ function FinanceAnalyticsBlock({
         <div className="mt-4 rounded-[24px] bg-blue-50 p-4 ring-1 ring-blue-100">
           <div className="text-xs font-black uppercase tracking-[0.18em] text-blue-600">Прогноз расходов по проекту</div>
           <div className="mt-2 text-sm font-semibold leading-5 text-slate-600">{expensePrediction.message}</div>
+          {expensePrediction.project ? (
+            <button
+              type="button"
+              className="mt-3 inline-flex items-center rounded-2xl bg-white px-4 py-2 text-sm font-black text-blue-600 shadow-sm ring-1 ring-blue-100 transition hover:bg-blue-100"
+              onClick={() => onProjectOpen?.(expensePrediction.project)}
+            >
+              Открыть карточку проекта
+            </button>
+          ) : null}
           {expensePrediction.estimated_expense_total ? (
             <div className="mt-4 grid gap-3 md:grid-cols-3">
               <AnalyticsMetric
@@ -215,6 +226,23 @@ function FinanceAnalyticsBlock({
                 tone={Number(expensePrediction.estimated_remaining_expense || 0) > 0 ? "amber" : "green"}
                 note={`База: ${expensePrediction.basis_project_count || 0} проектов`}
               />
+            </div>
+          ) : null}
+          {expensePrediction.basis_projects?.length ? (
+            <div className="mt-4 rounded-[20px] bg-white/80 p-3 ring-1 ring-blue-100">
+              <div className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-500">База прогноза</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {expensePrediction.basis_projects.map((project) => (
+                  <button
+                    key={project.id}
+                    type="button"
+                    className="rounded-full bg-blue-50 px-3 py-1.5 text-xs font-black text-blue-700 transition hover:bg-blue-100"
+                    onClick={() => onProjectOpen?.(project.id)}
+                  >
+                    {project.title}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : null}
         </div>
@@ -270,12 +298,18 @@ function FinanceAnalyticsBlock({
           <div className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-amber-600">Проекты, требующие проверки</div>
           <div className="grid gap-2 lg:grid-cols-2">
             {atRiskProjects.slice(0, 6).map((project) => (
-              <div key={project.id} className="rounded-2xl bg-white px-3 py-3 text-sm ring-1 ring-amber-100">
+              <button
+                key={project.id}
+                type="button"
+                className="rounded-2xl bg-white px-3 py-3 text-left text-sm ring-1 ring-amber-100 transition hover:bg-amber-100/70"
+                onClick={() => onProjectOpen?.(project.id)}
+              >
                 <div className="font-black text-slate-900">{project.title}</div>
                 <div className="mt-1 text-xs font-semibold text-slate-500">
                   Маржа: {formatPercent(project.margin_percent)} · не хватает: {project.missing_required_expenses.join(", ") || "нет"}
                 </div>
-              </div>
+                <div className="mt-2 text-xs font-black text-blue-600">Открыть карточку проекта</div>
+              </button>
             ))}
           </div>
         </div>
@@ -295,6 +329,7 @@ function normalizeSearch(value) {
 }
 
 export default function Finances() {
+  const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [payments, setPayments] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -460,6 +495,18 @@ export default function Finances() {
 
   function refreshAnalytics() {
     setAnalyticsRefreshKey((current) => current + 1);
+  }
+
+  function openProjectFromAnalytics(projectId, tab = "comments") {
+    if (!projectId) return;
+    const project = projects.find((item) => String(item.id) === String(projectId));
+    navigate("/projects", {
+      state: {
+        projectId,
+        tab,
+        q: project ? projectDisplayName(project) : "",
+      },
+    });
   }
 
   async function runAiAnalysis() {
@@ -676,6 +723,7 @@ export default function Finances() {
             aiLoading={aiLoading}
             onRefresh={refreshAnalytics}
             onAnalyze={runAiAnalysis}
+            onProjectOpen={openProjectFromAnalytics}
           />
         </>
       ) : null}
