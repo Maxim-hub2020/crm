@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  ChevronDown,
   ChevronLeft,
   Folder,
   FolderOpen,
@@ -67,14 +68,24 @@ const FIELD_TYPE_LABELS = {
   file: "Файл",
 };
 
-function SettingsCard({ title, icon, children, className = "" }) {
+function SettingsCard({ title, icon, children, className = "", defaultOpen = false }) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
   return (
     <div className={`overflow-hidden rounded-3xl border border-white/50 bg-white shadow-sm ${className}`}>
-      <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50/30 px-6 py-4 font-semibold text-gray-900">
-        <div className="text-indigo-600">{icon}</div>
-        <h3 className="truncate text-xs font-black uppercase tracking-widest">{title}</h3>
-      </div>
-      <div className="p-4 sm:p-6">{children}</div>
+      <button
+        type="button"
+        className={`flex w-full items-center justify-between gap-3 bg-gray-50/30 px-6 py-4 text-left font-semibold text-gray-900 transition hover:bg-gray-100/70 ${isOpen ? "border-b border-gray-100" : ""}`}
+        onClick={() => setIsOpen((prev) => !prev)}
+        aria-expanded={isOpen}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="text-indigo-600">{icon}</span>
+          <span className="truncate text-xs font-black uppercase tracking-widest">{title}</span>
+        </span>
+        <ChevronDown size={18} className={`shrink-0 text-gray-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+      </button>
+      {isOpen ? <div className="p-4 sm:p-6">{children}</div> : null}
     </div>
   );
 }
