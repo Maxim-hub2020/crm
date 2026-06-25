@@ -439,8 +439,14 @@ function CashForecastBlock({
       </div>
 
       {aiAnalysis ? (
-        <div className="mt-4 whitespace-pre-wrap rounded-[24px] bg-slate-950 px-4 py-4 text-sm font-semibold leading-6 text-white">
-          {aiAnalysis}
+        <div className="mt-4 rounded-[24px] border border-blue-100 bg-blue-50/70 px-4 py-4 text-slate-900">
+          <div className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-blue-600">
+            <Brain size={15} />
+            Прогноз Gemini
+          </div>
+          <div className="max-h-[320px] overflow-y-auto whitespace-pre-wrap text-sm font-semibold leading-7">
+            {aiAnalysis}
+          </div>
         </div>
       ) : null}
     </div>

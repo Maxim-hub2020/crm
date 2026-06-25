@@ -1839,6 +1839,49 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertIn("Маржа", response.data["analysis"])
         mocked_client.generate_content.assert_called_once()
 
+    @patch("crm_app.views.GeminiClient")
+    def test_cash_forecast_ai_falls_back_when_gemini_truncates_text(self, mocked_client_class):
+        project = Project.objects.create(
+            manager=self.manager,
+            title="Новочек",
+            client_name="Cash Client",
+            client_phone="+79000002104",
+            total_amount=Decimal("69465.00"),
+        )
+        Payment.objects.create(
+            project=project,
+            created_by=self.manager,
+            category=self.income_category,
+            account=self.account,
+            amount=Decimal("40000.00"),
+            type=Payment.Type.ADVANCE,
+        )
+        mocked_client = mocked_client_class.return_value
+        mocked_client.fast_model = "gemini-fast"
+        mocked_client.generate_content.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "1. Текущий баланс составляет 14"},
+                        ]
+                    }
+                }
+            ]
+        }
+        mocked_client.extract_candidate_content.side_effect = GeminiClient.extract_candidate_content
+        mocked_client.extract_text.side_effect = GeminiClient.extract_text
+        client = self.auth_client_for(self.admin)
+
+        response = client.post("/api/cash-forecast/ai/", {"project": project.id}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("Сейчас в кассе", response.data["analysis"])
+        self.assertIn("₽", response.data["analysis"])
+        self.assertIn("Новочек", response.data["analysis"])
+        self.assertNotIn("составляет 14", response.data["analysis"])
+        mocked_client.generate_content.assert_called_once()
+
     def test_manager_can_update_own_payment(self):
         client = self.auth_client_for(self.manager)
 

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import uuid
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from urllib.parse import urlencode
 
@@ -228,15 +229,109 @@ def _build_finance_ai_text(overview):
     return client.extract_text(content)
 
 
+def _money_decimal(value):
+    try:
+        return Decimal(str(value or "0"))
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal("0")
+
+
+def _format_rubles(value):
+    amount = _money_decimal(value).quantize(Decimal("1"))
+    sign = "−" if amount < 0 else ""
+    return f"{sign}{int(abs(amount)):,}".replace(",", " ") + " ₽"
+
+
+def _project_cash_sentence(project):
+    title = project.get("title") or "проект"
+    expected_income = _money_decimal(project.get("expected_income"))
+    income_paid = _money_decimal(project.get("income_paid"))
+    receivable = _money_decimal(project.get("receivable"))
+    expense_total = _money_decimal(project.get("expense_total"))
+    remaining_expense = _money_decimal(project.get("estimated_remaining_expense"))
+
+    if receivable > 0 and remaining_expense > 0:
+        return (
+            f"{title}: оплачено {_format_rubles(income_paid)} из {_format_rubles(expected_income)}, "
+            f"ожидаем ещё {_format_rubles(receivable)}; прогноз расходников {_format_rubles(remaining_expense)}."
+        )
+    if receivable > 0:
+        return (
+            f"{title}: оплачено {_format_rubles(income_paid)} из {_format_rubles(expected_income)}, "
+            f"ожидаем поступление {_format_rubles(receivable)}."
+        )
+    if remaining_expense > 0:
+        return f"{title}: поступления закрыты, но по прогнозу ещё нужны расходники на {_format_rubles(remaining_expense)}."
+    return f"{title}: оплачено {_format_rubles(income_paid)}, внесённые расходники {_format_rubles(expense_total)}."
+
+
+def _fallback_cash_forecast_text(forecast):
+    current_balance = _money_decimal(forecast.get("current_balance"))
+    forecast_income = _money_decimal(forecast.get("forecast_income"))
+    forecast_expense = _money_decimal(forecast.get("forecast_expense"))
+    forecast_net = _money_decimal(forecast.get("forecast_net"))
+    projected_balance = _money_decimal(forecast.get("projected_balance_60_days"))
+    cash_gap_bucket = forecast.get("cash_gap_bucket")
+    projects = forecast.get("projects") or []
+
+    lines = [
+        (
+            f"1. Сейчас в кассе {_format_rubles(current_balance)}. "
+            f"За 60 дней ожидаем поступления {_format_rubles(forecast_income)} и расходы {_format_rubles(forecast_expense)}."
+        ),
+        (
+            f"2. Чистый прогноз: {_format_rubles(forecast_net)}. "
+            f"Если всё пройдёт по плану, баланс через 60 дней будет {_format_rubles(projected_balance)}."
+        ),
+    ]
+
+    if projects:
+        lines.append(f"3. По проектам: {_project_cash_sentence(projects[0])}")
+        next_action_index = 4
+    else:
+        lines.append("3. По проектам нет ожидаемых поступлений или расходников в текущей выборке.")
+        next_action_index = 4
+
+    if cash_gap_bucket:
+        lines.append(
+            f"{next_action_index}. Есть риск кассового разрыва в периоде «{cash_gap_bucket}»: сначала проверьте оплаты клиентов и обязательные расходники."
+        )
+    elif forecast_income > 0:
+        lines.append(
+            f"{next_action_index}. Разрыва не видно. Главный фокус: довести ожидаемые оплаты до фактических поступлений и не забыть расходники."
+        )
+    else:
+        lines.append(
+            f"{next_action_index}. Движений мало: внесите плановые оплаты и расходники, чтобы прогноз стал точнее."
+        )
+
+    return "\n".join(lines)
+
+
+def _cash_ai_text_is_incomplete(text):
+    clean = str(text or "").strip()
+    if len(clean) < 120:
+        return True
+    if "₽" not in clean:
+        return True
+    if clean[-1].isdigit() or clean[-1] in {",", "-", "−", ":"}:
+        return True
+    return False
+
+
 def _build_cash_forecast_ai_text(forecast):
     compact_payload = compact_cash_forecast_for_ai(forecast)
     client = GeminiClient()
     response = client.generate_content(
         model=client.fast_model,
         system_instruction=(
-            "Ты финансовый аналитик CRM. Дай кассовый прогноз максимум 5 короткими пунктами. "
-            "Пиши по-русски, без вступления. Не придумывай цифры вне переданного JSON. "
-            "Если есть риск кассового разрыва, назови период и что сделать первым."
+            "Ты финансовый аналитик CRM производства мебели и стекла. "
+            "Ответь по-русски обычным человеческим языком, но обязательно с точными цифрами в рублях. "
+            "Формат: 4 коротких пункта отдельными строками. "
+            "1) что сейчас в кассе; 2) что будет через 60 дней; "
+            "3) ситуация по главному проекту или проектам; 4) что сделать первым. "
+            "Не обрывай фразы и не начинай пункт, если не можешь его закончить. "
+            "Не придумывай цифры вне переданного JSON."
         ),
         contents=[
             {
@@ -253,10 +348,14 @@ def _build_cash_forecast_ai_text(forecast):
             }
         ],
         temperature=0.2,
-        max_output_tokens=450,
+        max_output_tokens=900,
     )
     content = client.extract_candidate_content(response)
-    return client.extract_text(content)
+    text = client.extract_text(content)
+    if _cash_ai_text_is_incomplete(text):
+        logger.warning("Gemini returned incomplete cash forecast text: %r", text)
+        return _fallback_cash_forecast_text(forecast)
+    return text
 
 
 def _project_result(project, score_label="Проект"):
