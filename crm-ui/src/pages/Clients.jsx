@@ -1,8 +1,18 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, Edit3, Gift, Mail, MapPin, Phone, Plus, Search, Ticket, Trash2, Wallet } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-import { createClient, deleteClient, extractApiErrorMessage, fetchClients, fetchPayments, fetchProjects, updateClient } from "../api";
+import {
+  createClient,
+  deleteClient,
+  extractApiErrorMessage,
+  fetchAddressSuggestions,
+  fetchClients,
+  fetchPayments,
+  fetchProjects,
+  hasDadataAddressSuggestions,
+  updateClient,
+} from "../api";
 import { Badge, Button, Input, Label, Modal } from "../components/ui.jsx";
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneSearchDigits } from "../utils/phone.js";
 
@@ -47,6 +57,8 @@ function createClientEditForm(client = {}) {
     phone: client.phone || "",
     email: client.email || "",
     address: client.address || "",
+    apartment: client.apartment || "",
+    floor: client.floor || "",
     works_with_contract: Boolean(client.worksWithContract ?? client.works_with_contract),
   };
 }
@@ -71,6 +83,132 @@ function InfoRow({ icon: Icon, label, value, href }) {
   }
 
   return <div className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3">{content}</div>;
+}
+
+function ClientAddressFields({ form, setForm }) {
+  const selectedAddressValueRef = useRef(String(form.address || "").trim());
+  const [addressOpen, setAddressOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [suggestError, setSuggestError] = useState("");
+
+  useEffect(() => {
+    if (!addressOpen || !hasDadataAddressSuggestions()) {
+      setSuggestions([]);
+      setLoading(false);
+      setSuggestError("");
+      return;
+    }
+
+    const query = String(form.address || "").trim();
+    if (query.length < 3 || query === selectedAddressValueRef.current) {
+      setSuggestions([]);
+      setLoading(false);
+      setSuggestError("");
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    const timerId = window.setTimeout(async () => {
+      try {
+        const rows = await fetchAddressSuggestions(query);
+        if (!cancelled) {
+          setSuggestions(rows);
+          setSuggestError(rows.length ? "" : "Адрес не найден. Уточните город, улицу или дом.");
+        }
+      } catch (requestError) {
+        if (!cancelled) {
+          setSuggestError(requestError?.message || "Не удалось загрузить подсказки Dadata.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+    };
+  }, [addressOpen, form.address]);
+
+  function applySuggestion(suggestion) {
+    const selectedAddress = suggestion.value || suggestion.unrestrictedValue || form.address;
+    selectedAddressValueRef.current = String(selectedAddress || "").trim();
+    setForm((prev) => ({
+      ...prev,
+      address: selectedAddress || prev.address,
+      apartment: suggestion.apartment || prev.apartment,
+      floor: suggestion.floor || prev.floor,
+    }));
+    setSuggestions([]);
+    setLoading(false);
+    setSuggestError("");
+  }
+
+  return (
+    <div className="space-y-3 md:col-span-2">
+      <div className="space-y-2">
+        <Label>Адрес</Label>
+        <Input
+          value={form.address}
+          onFocus={() => setAddressOpen(true)}
+          onClick={() => setAddressOpen(true)}
+          onChange={(event) => {
+            selectedAddressValueRef.current = "";
+            setForm((prev) => ({ ...prev, address: event.target.value }));
+          }}
+          placeholder="Начните вводить адрес"
+        />
+      </div>
+
+      {addressOpen && (loading || suggestions.length > 0 || suggestError) ? (
+        <div className="space-y-2 rounded-[22px] border border-slate-200 bg-white p-3 shadow-[0_16px_34px_rgba(15,23,42,0.08)]">
+          {loading ? (
+            <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-400">Ищем адрес...</div>
+          ) : null}
+          {suggestions.length > 0 ? (
+            <div className="space-y-2">
+              {suggestions.map((suggestion) => (
+                <button
+                  key={`${suggestion.value}-${suggestion.lat}-${suggestion.lon}`}
+                  type="button"
+                  className="w-full rounded-2xl bg-slate-50 px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
+                  onClick={() => applySuggestion(suggestion)}
+                >
+                  {suggestion.value}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {suggestError ? (
+            <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-500">{suggestError}</div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label>Квартира</Label>
+          <Input
+            value={form.apartment}
+            onChange={(event) => setForm((prev) => ({ ...prev, apartment: event.target.value }))}
+            placeholder="12"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label>Этаж</Label>
+          <Input
+            value={form.floor}
+            onChange={(event) => setForm((prev) => ({ ...prev, floor: event.target.value }))}
+            placeholder="7"
+          />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function Clients() {
@@ -144,6 +282,8 @@ export default function Clients() {
           phone: client.phone,
           email: client.email,
           address: client.address,
+          apartment: client.apartment || "",
+          floor: client.floor || "",
           projects: clientProjects,
           projectCount: clientProjects.length || client.project_count || 0,
           worksWithContract: Boolean(client.works_with_contract),
@@ -226,6 +366,8 @@ export default function Clients() {
         phone: normalizeOptionalClientPhone(editForm.phone),
         email: editForm.email.trim() || null,
         address: editForm.address.trim() || null,
+        apartment: editForm.apartment.trim(),
+        floor: editForm.floor.trim(),
         works_with_contract: editForm.works_with_contract,
       });
       setClientRows((current) => current.map((row) => (row.id === updated.id ? updated : row)));
@@ -288,6 +430,8 @@ export default function Clients() {
         phone: normalizeOptionalClientPhone(createForm.phone),
         email: createForm.email.trim() || null,
         address: createForm.address.trim() || null,
+        apartment: createForm.apartment.trim(),
+        floor: createForm.floor.trim(),
         works_with_contract: createForm.works_with_contract,
       });
 
@@ -401,6 +545,8 @@ export default function Clients() {
                     <div className="md:col-span-2">
                       <InfoRow icon={MapPin} label="Адрес" value={selectedClient.address} />
                     </div>
+                    <InfoRow icon={MapPin} label="Квартира" value={selectedClient.apartment} />
+                    <InfoRow icon={MapPin} label="Этаж" value={selectedClient.floor} />
                     <InfoRow icon={Wallet} label="Финансы по проектам" value={`${formatMoney(selectedClient.total)} ₽`} />
                   </div>
                 </>
@@ -429,10 +575,7 @@ export default function Clients() {
                       <Label>Email</Label>
                       <Input value={editForm.email} onChange={(event) => setEditForm((prev) => ({ ...prev, email: event.target.value }))} />
                     </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>Адрес</Label>
-                      <Input value={editForm.address} onChange={(event) => setEditForm((prev) => ({ ...prev, address: event.target.value }))} />
-                    </div>
+                    <ClientAddressFields form={editForm} setForm={setEditForm} />
                   </div>
                   <label className="flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
                     <input
@@ -512,14 +655,7 @@ export default function Clients() {
                 placeholder="client@example.com"
               />
             </div>
-            <div className="space-y-2 md:col-span-2">
-              <Label>Адрес</Label>
-              <Input
-                value={createForm.address}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, address: event.target.value }))}
-                placeholder="Адрес клиента"
-              />
-            </div>
+            <ClientAddressFields form={createForm} setForm={setCreateForm} />
           </div>
 
           <label className="flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">

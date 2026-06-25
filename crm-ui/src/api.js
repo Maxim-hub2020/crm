@@ -141,6 +141,8 @@ export async function fetchAddressSuggestions(query) {
     unrestrictedValue: item.unrestricted_value || item.unrestrictedValue || item.value || "",
     lat: item.lat || "",
     lon: item.lon || "",
+    apartment: item.apartment || "",
+    floor: item.floor || "",
   }));
 }
 

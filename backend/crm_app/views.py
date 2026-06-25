@@ -710,6 +710,8 @@ def address_suggestions_view(request):
                     "unrestricted_value": item.get("unrestricted_value") or item.get("value") or "",
                     "lat": (item.get("data") or {}).get("geo_lat") or "",
                     "lon": (item.get("data") or {}).get("geo_lon") or "",
+                    "apartment": (item.get("data") or {}).get("flat") or "",
+                    "floor": (item.get("data") or {}).get("floor") or "",
                 }
                 for item in suggestions
                 if isinstance(item, dict)
@@ -1175,12 +1177,12 @@ class ClientViewSet(viewsets.ModelViewSet):
             "client",
             client.id,
             "create",
-            after=snapshot_model(client, ["id", "name", "phone", "email", "address", "works_with_contract", "bonus_balance"]),
+            after=snapshot_model(client, ["id", "name", "phone", "email", "address", "apartment", "floor", "works_with_contract", "bonus_balance"]),
             workspace=client.workspace,
         )
 
     def perform_update(self, serializer):
-        before = snapshot_model(serializer.instance, ["id", "name", "phone", "email", "address", "works_with_contract", "bonus_balance"])
+        before = snapshot_model(serializer.instance, ["id", "name", "phone", "email", "address", "apartment", "floor", "works_with_contract", "bonus_balance"])
         client = serializer.save()
         Project.objects.filter(workspace=client.workspace, client=client).update(
             client_name=client.name,
@@ -1194,12 +1196,12 @@ class ClientViewSet(viewsets.ModelViewSet):
             client.id,
             "update",
             before=before,
-            after=snapshot_model(client, ["id", "name", "phone", "email", "address", "works_with_contract", "bonus_balance"]),
+            after=snapshot_model(client, ["id", "name", "phone", "email", "address", "apartment", "floor", "works_with_contract", "bonus_balance"]),
             workspace=client.workspace,
         )
 
     def perform_destroy(self, instance):
-        before = snapshot_model(instance, ["id", "name", "phone", "email", "address", "works_with_contract", "bonus_balance"])
+        before = snapshot_model(instance, ["id", "name", "phone", "email", "address", "apartment", "floor", "works_with_contract", "bonus_balance"])
         create_audit_log(self.request.user, "client", instance.id, "delete", before=before, workspace=instance.workspace)
         instance.delete()
 

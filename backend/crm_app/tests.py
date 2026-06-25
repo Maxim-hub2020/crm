@@ -206,7 +206,7 @@ class TestDadataAddressApi(AuthenticatedApiMixin, APITestCase):
             {
                 "value": "Ростовская обл, г Ростов-на-Дону, ул Ленина, д 5",
                 "unrestricted_value": "Ростовская обл, г Ростов-на-Дону, ул Ленина, д 5",
-                "data": {"geo_lat": "47.222", "geo_lon": "39.72"},
+                "data": {"geo_lat": "47.222", "geo_lon": "39.72", "flat": "12", "floor": "7"},
             }
         ]
         api_client = self.auth_client_for(self.user)
@@ -217,6 +217,8 @@ class TestDadataAddressApi(AuthenticatedApiMixin, APITestCase):
         self.assertTrue(response.data["configured"])
         self.assertEqual(response.data["default_region"], "Ростовская область")
         self.assertEqual(response.data["suggestions"][0]["lat"], "47.222")
+        self.assertEqual(response.data["suggestions"][0]["apartment"], "12")
+        self.assertEqual(response.data["suggestions"][0]["floor"], "7")
         mocked_suggest.assert_called_once_with("Ленина 5", count=6)
 
 
@@ -853,6 +855,8 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
                 "phone": "+70000000099",
                 "email": "updated@example.com",
                 "address": "Updated address",
+                "apartment": "12",
+                "floor": "7",
                 "works_with_contract": True,
             },
             format="json",
@@ -864,6 +868,8 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(self.client_card.phone, "+7-000-000-00-99")
         self.assertEqual(self.client_card.email, "updated@example.com")
         self.assertEqual(self.client_card.address, "Updated address")
+        self.assertEqual(self.client_card.apartment, "12")
+        self.assertEqual(self.client_card.floor, "7")
         self.assertTrue(self.client_card.works_with_contract)
 
     def test_client_phone_is_normalized(self):

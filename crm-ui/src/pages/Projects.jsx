@@ -142,6 +142,8 @@ function createClientEditForm(client = {}) {
     phone: client.phone || client.client_phone || "",
     email: client.email || client.client_email || "",
     address: client.address || client.object_address || "",
+    apartment: client.apartment || "",
+    floor: client.floor || "",
     works_with_contract: Boolean(client.works_with_contract ?? client.worksWithContract),
   };
 }
@@ -1194,6 +1196,8 @@ export default function Projects() {
         client_phone: client.phone || "",
         client_email: client.email || "",
         object_address: client.address || "",
+        apartment: client.apartment || "",
+        floor: client.floor || "",
         works_with_contract: Boolean(client.works_with_contract),
         project_count: client.project_count || 0,
         updated_at: client.updated_at || client.created_at || "",
@@ -1602,6 +1606,8 @@ export default function Projects() {
       client_phone: client.client_phone || prev.client_phone,
       client_email: client.client_email || prev.client_email,
       object_address: client.object_address || prev.object_address,
+      apartment: client.apartment || prev.apartment,
+      floor: client.floor || prev.floor,
       works_with_contract: Boolean(client.works_with_contract),
     }));
   }
@@ -1779,6 +1785,8 @@ export default function Projects() {
     const currentAddress = String(detailForm.object_address || "").trim();
     const clientAddress = String(client.object_address || "").trim();
     const nextAddress = currentAddress || clientAddress;
+    const nextApartment = String(detailForm.apartment || "").trim() || String(client.apartment || "").trim();
+    const nextFloor = String(detailForm.floor || "").trim() || String(client.floor || "").trim();
     const payload = {
       ...buildProjectUpdatePayload(detailForm),
       client: client.client_id,
@@ -1786,6 +1794,8 @@ export default function Projects() {
       client_phone: normalizeOptionalClientPhone(client.client_phone) || "",
       client_email: client.client_email || null,
       object_address: nextAddress,
+      apartment: nextApartment,
+      floor: nextFloor,
     };
 
     try {
@@ -1827,6 +1837,8 @@ export default function Projects() {
         name,
         phone: hasPhone ? normalizeOptionalClientPhone(projectClientQuery) : "",
         address: detailForm.object_address || null,
+        apartment: detailForm.apartment.trim(),
+        floor: detailForm.floor.trim(),
       });
       setClients((prev) => [created, ...prev.filter((client) => client.id !== created.id)]);
       await attachProjectClient({
@@ -1835,6 +1847,8 @@ export default function Projects() {
         client_phone: created.phone || "",
         client_email: created.email || "",
         object_address: created.address || "",
+        apartment: created.apartment || "",
+        floor: created.floor || "",
       });
     } catch (error) {
       setDetailError(extractApiErrorMessage(error, "Не удалось создать и прикрепить клиента."));
@@ -1865,6 +1879,8 @@ export default function Projects() {
         phone: normalizeOptionalClientPhone(projectClientForm.phone),
         email: projectClientForm.email.trim() || null,
         address: projectClientForm.address.trim() || null,
+        apartment: projectClientForm.apartment.trim(),
+        floor: projectClientForm.floor.trim(),
         works_with_contract: Boolean(projectClientForm.works_with_contract),
       });
 
@@ -1884,6 +1900,8 @@ export default function Projects() {
             client_phone: updated.phone || "",
             client_email: updated.email || "",
             object_address: project.object_address || updated.address || "",
+            apartment: project.apartment || updated.apartment || "",
+            floor: project.floor || updated.floor || "",
             works_with_contract: Boolean(updated.works_with_contract),
           };
         })
@@ -1901,6 +1919,8 @@ export default function Projects() {
           client_phone: updated.phone || "",
           client_email: updated.email || "",
           object_address: objectAddress,
+          apartment: prev.apartment || updated.apartment || "",
+          floor: prev.floor || updated.floor || "",
           works_with_contract: Boolean(updated.works_with_contract),
         };
       });
@@ -4009,6 +4029,22 @@ export default function Projects() {
                 value={projectClientForm.address}
                 onChange={(event) => setProjectClientForm((prev) => ({ ...prev, address: event.target.value }))}
                 placeholder="Адрес клиента, если нужен для документов"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Квартира</Label>
+              <Input
+                value={projectClientForm.apartment}
+                onChange={(event) => setProjectClientForm((prev) => ({ ...prev, apartment: event.target.value }))}
+                placeholder="12"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Этаж</Label>
+              <Input
+                value={projectClientForm.floor}
+                onChange={(event) => setProjectClientForm((prev) => ({ ...prev, floor: event.target.value }))}
+                placeholder="7"
               />
             </div>
           </div>

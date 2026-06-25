@@ -100,6 +100,8 @@ class Client(models.Model):
     phone = models.CharField(max_length=50, blank=True, default="", db_index=True)
     email = models.EmailField(blank=True, null=True)
     address = models.CharField(max_length=300, blank=True, null=True)
+    apartment = models.CharField(max_length=50, blank=True, default="")
+    floor = models.CharField(max_length=50, blank=True, default="")
     works_with_contract = models.BooleanField(default=False)
     bonus_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)

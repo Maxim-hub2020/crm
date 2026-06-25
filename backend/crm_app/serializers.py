@@ -95,6 +95,8 @@ class ClientSerializer(serializers.ModelSerializer):
             "phone",
             "email",
             "address",
+            "apartment",
+            "floor",
             "works_with_contract",
             "bonus_balance",
             "promo_code",
@@ -107,6 +109,8 @@ class ClientSerializer(serializers.ModelSerializer):
             "phone": {"required": False, "allow_blank": True},
             "email": {"required": False, "allow_blank": True, "allow_null": True},
             "address": {"required": False, "allow_blank": True, "allow_null": True},
+            "apartment": {"required": False, "allow_blank": True},
+            "floor": {"required": False, "allow_blank": True},
             "works_with_contract": {"required": False},
         }
 
