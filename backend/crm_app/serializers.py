@@ -23,6 +23,7 @@ from .models import (
     Task,
     TaskTemplate,
     User,
+    YandexDiskSettings,
 )
 from .phones import PHONE_VALIDATION_ERROR, normalize_russian_phone, phone_digits
 from .subscription import has_trial_access, is_subscription_active
@@ -357,6 +358,10 @@ class ProjectSerializer(serializers.ModelSerializer):
             "referral_bonus_used",
             "bonus_accrued_amount",
             "bonus_accrued_at",
+            "yandex_disk_path",
+            "yandex_disk_web_url",
+            "yandex_disk_created_at",
+            "yandex_disk_error",
         ]
         extra_kwargs = {
             "client": {"required": False, "allow_null": True},
@@ -553,6 +558,56 @@ class ChatIntegrationSettingsSerializer(serializers.ModelSerializer):
 
     def validate_base_url(self, value):
         return str(value or "").strip().rstrip("/")
+
+
+class YandexDiskSettingsSerializer(serializers.ModelSerializer):
+    has_oauth_token = serializers.SerializerMethodField()
+    folder_template_text = serializers.SerializerMethodField()
+
+    class Meta:
+        model = YandexDiskSettings
+        fields = [
+            "id",
+            "enabled",
+            "auto_create_project_folders",
+            "base_path",
+            "folder_template",
+            "folder_template_text",
+            "oauth_token",
+            "has_oauth_token",
+            "updated_by",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["updated_by", "created_at", "updated_at", "has_oauth_token", "folder_template_text"]
+        extra_kwargs = {
+            "base_path": {"required": False, "allow_blank": True},
+            "folder_template": {"required": False},
+            "oauth_token": {"required": False, "allow_blank": True, "write_only": True},
+        }
+
+    def get_has_oauth_token(self, obj):
+        return bool(obj.oauth_token)
+
+    def get_folder_template_text(self, obj):
+        value = obj.folder_template if isinstance(obj.folder_template, list) else []
+        return "\n".join(str(item) for item in value if str(item or "").strip())
+
+    def validate_base_path(self, value):
+        value = str(value or "").strip()
+        return value or "/CRM/Проекты"
+
+    def validate_folder_template(self, value):
+        if isinstance(value, str):
+            value = value.splitlines()
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Шаблон папок должен быть списком.")
+        folders = []
+        for item in value:
+            folder = str(item or "").strip()
+            if folder and folder not in folders:
+                folders.append(folder)
+        return folders
 
 
 class PaymentSerializer(serializers.ModelSerializer):

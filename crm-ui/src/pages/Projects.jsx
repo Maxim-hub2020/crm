@@ -6,6 +6,7 @@ import {
   Link,
   Copy,
   FileText,
+  FolderOpen,
   History,
   LayoutGrid,
   List,
@@ -27,6 +28,7 @@ import {
   createClient,
   createProject,
   createProjectComment,
+  createProjectYandexDiskFolder,
   createTask,
   deletePayment,
   deleteProject,
@@ -927,6 +929,7 @@ export default function Projects() {
   const selectedAddressValueRef = useRef("");
   const loadedProjectIdRef = useRef(null);
   const [documentLoading, setDocumentLoading] = useState(false);
+  const [yandexDiskCreating, setYandexDiskCreating] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [customFieldUploads, setCustomFieldUploads] = useState({});
   const [customFieldPreview, setCustomFieldPreview] = useState(null);
@@ -1605,6 +1608,7 @@ export default function Projects() {
     setTaskForm(createEmptyTaskForm());
     setDetailAutosaveState("idle");
     setDetailBonusEnabled(false);
+    setYandexDiskCreating(false);
     setAddressDetailsOpen(false);
     setAddressSuggestions([]);
     setAddressSuggestError("");
@@ -2272,6 +2276,27 @@ export default function Projects() {
       setDetailError(message);
     } finally {
       setDocumentLoading(false);
+    }
+  }
+
+  async function handleYandexDiskFolderCreate() {
+    if (!activeProject?.id || yandexDiskCreating) return;
+
+    setYandexDiskCreating(true);
+    setDetailError("");
+    try {
+      const response = await createProjectYandexDiskFolder(activeProject.id);
+      const updated = response.project;
+      if (updated) {
+        applyUpdatedProject(updated);
+      }
+      if (response.result?.error) {
+        setDetailError(response.result.error);
+      }
+    } catch (error) {
+      setDetailError(extractApiErrorMessage(error, "Не удалось создать папку проекта на Яндекс.Диске."));
+    } finally {
+      setYandexDiskCreating(false);
     }
   }
 
@@ -3314,6 +3339,42 @@ export default function Projects() {
                   }))
                 }
               />
+
+              <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-black text-slate-900">
+                      <FolderOpen size={16} className="text-blue-600" />
+                      Папка проекта на Яндекс.Диске
+                    </div>
+                    <div className="mt-1 truncate text-xs font-semibold text-slate-500">
+                      {activeProject.yandex_disk_path || "Папка пока не создана"}
+                    </div>
+                    {activeProject.yandex_disk_error ? (
+                      <div className="mt-2 rounded-2xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                        {activeProject.yandex_disk_error}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    {activeProject.yandex_disk_web_url ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="justify-center"
+                        onClick={() => window.open(activeProject.yandex_disk_web_url, "_blank", "noopener,noreferrer")}
+                      >
+                        <FolderOpen size={16} />
+                        Открыть папку
+                      </Button>
+                    ) : null}
+                    <Button type="button" className="justify-center" onClick={handleYandexDiskFolderCreate} disabled={yandexDiskCreating}>
+                      <FolderOpen size={16} />
+                      {yandexDiskCreating ? "Создаём..." : activeProject.yandex_disk_web_url ? "Пересоздать" : "Создать папку"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
 
               {detailForm.works_with_contract ? (
                 <div className="flex justify-end rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">

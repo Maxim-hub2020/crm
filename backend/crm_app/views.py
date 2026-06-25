@@ -44,6 +44,7 @@ from .models import (
     Task,
     TaskTemplate,
     User,
+    YandexDiskSettings,
 )
 from .permissions import HasActiveSubscription, HasAssistantSubscription, IsAdmin, IsAuthenticatedAny
 from .phones import phone_search_digits
@@ -64,6 +65,7 @@ from .serializers import (
     ProjectSerializer,
     TaskSerializer,
     TaskTemplateSerializer,
+    YandexDiskSettingsSerializer,
 )
 from .subscription import (
     activate_subscription_invoice,
@@ -76,6 +78,7 @@ from .subscription import (
 )
 from .tenancy import current_workspace
 from .workflow import apply_task_templates_for_project, build_project_status_check, create_audit_log, snapshot_model, user_display_name
+from .yandex_disk import ensure_project_disk_folder
 
 logger = logging.getLogger(__name__)
 
@@ -464,6 +467,24 @@ def chat_settings_view(request):
     return Response(serializer.data)
 
 
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+def yandex_disk_settings_view(request):
+    workspace = current_workspace(request.user)
+    settings, _created = YandexDiskSettings.objects.get_or_create(workspace=workspace)
+
+    if request.method == "GET":
+        return Response(YandexDiskSettingsSerializer(settings).data)
+
+    if not request.user.is_admin():
+        return Response({"detail": "Настройки Яндекс.Диска может менять только администратор."}, status=drf_status.HTTP_403_FORBIDDEN)
+
+    serializer = YandexDiskSettingsSerializer(settings, data=request.data, partial=True)
+    serializer.is_valid(raise_exception=True)
+    serializer.save(updated_by=request.user)
+    return Response(serializer.data)
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticatedAny, HasActiveSubscription])
 def address_suggestions_view(request):
@@ -730,6 +751,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         project = serializer.save(manager=user, workspace=workspace)
         record_project_created(subscription)
         apply_task_templates_for_project(project, actor=user)
+        ensure_project_disk_folder(project, actor=user)
         create_audit_log(
             user,
             "project",
@@ -783,6 +805,13 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def activity(self, request, pk=None):
         project = self.get_object()
         return Response({"project": project.id, "events": _project_activity_payload(project)})
+
+    @action(detail=True, methods=["post"], url_path="yandex-disk-folder")
+    def yandex_disk_folder(self, request, pk=None):
+        project = self.get_object()
+        result = ensure_project_disk_folder(project, actor=request.user, force=True)
+        project.refresh_from_db()
+        return Response({"result": result, "project": self.get_serializer(project).data})
 
     @action(detail=True, methods=["post"], url_path="custom-field-files", parser_classes=[MultiPartParser, FormParser])
     def upload_custom_field_file(self, request, pk=None):

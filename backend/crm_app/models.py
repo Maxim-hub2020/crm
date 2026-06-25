@@ -162,6 +162,10 @@ class Project(models.Model):
     referral_bonus_used = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     bonus_accrued_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     bonus_accrued_at = models.DateTimeField(blank=True, null=True)
+    yandex_disk_path = models.CharField(max_length=600, blank=True, default="")
+    yandex_disk_web_url = models.URLField(max_length=1000, blank=True, default="")
+    yandex_disk_created_at = models.DateTimeField(blank=True, null=True)
+    yandex_disk_error = models.TextField(blank=True, default="")
 
     # MVP: CSV. Можно заменить на ManyToMany позже.
     categories = models.CharField(max_length=200, blank=True, default="")  # "mirrors,furniture,shower"
@@ -395,6 +399,55 @@ class ChatIntegrationSettings(models.Model):
 
     def __str__(self):
         return self.inbox_name or self.base_url or self.get_provider_display()
+
+    def save(self, *args, **kwargs):
+        if not self.workspace_id:
+            self.workspace = default_workspace()
+        super().save(*args, **kwargs)
+
+
+def default_yandex_disk_folder_template():
+    return [
+        "Визуализация",
+        "Закупочная смета",
+        "Модель",
+        "Раскрой",
+        "Смета",
+        "Согласование",
+        "ТЗ",
+        "Чертежи",
+    ]
+
+
+class YandexDiskSettings(models.Model):
+    workspace = models.OneToOneField(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="yandex_disk_settings",
+        blank=True,
+        null=True,
+    )
+    enabled = models.BooleanField(default=False)
+    auto_create_project_folders = models.BooleanField(default=True)
+    base_path = models.CharField(max_length=500, blank=True, default="/CRM/Проекты")
+    folder_template = models.JSONField(default=default_yandex_disk_folder_template, blank=True)
+    oauth_token = models.CharField(max_length=512, blank=True, default="")
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="updated_yandex_disk_settings",
+        blank=True,
+        null=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Yandex Disk settings"
+        verbose_name_plural = "Yandex Disk settings"
+
+    def __str__(self):
+        return self.base_path or "Yandex Disk"
 
     def save(self, *args, **kwargs):
         if not self.workspace_id:

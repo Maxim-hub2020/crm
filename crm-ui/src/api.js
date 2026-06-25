@@ -431,6 +431,18 @@ export async function updateChatSettings(payload) {
   return data;
 }
 
+export async function fetchYandexDiskSettings() {
+  initApiAuth();
+  const { data } = await api.get("/api/yandex-disk-settings/");
+  return data;
+}
+
+export async function updateYandexDiskSettings(payload) {
+  initApiAuth();
+  const { data } = await api.patch("/api/yandex-disk-settings/", payload);
+  return data;
+}
+
 export async function downloadProjectDocument(projectId, documentType) {
   initApiAuth();
   const { data, headers } = await api.get(`/api/projects/${projectId}/documents/${documentType}/`, {
@@ -454,6 +466,12 @@ export async function updateProject(projectId, payload) {
 export async function deleteProject(projectId) {
   initApiAuth();
   await api.delete(`/api/projects/${projectId}/`);
+}
+
+export async function createProjectYandexDiskFolder(projectId) {
+  initApiAuth();
+  const { data } = await api.post(`/api/projects/${projectId}/yandex-disk-folder/`);
+  return data;
 }
 
 export async function fetchProjectActivity(projectId) {

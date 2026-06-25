@@ -3,6 +3,7 @@ import {
   CreditCard,
   FileText,
   GripVertical,
+  HardDrive,
   Hash,
   Layers,
   ListTodo,
@@ -38,11 +39,13 @@ import {
   fetchProjectCustomFields,
   fetchProjectStatuses,
   fetchTaskTemplates,
+  fetchYandexDiskSettings,
   fetchUsers,
   updateTaskTemplate,
   updateFinanceCategory,
   updateProjectStatus,
   updateChatSettings,
+  updateYandexDiskSettings,
   uploadDocumentTemplate,
 } from "../api";
 import { Input, Select } from "../components/ui.jsx";
@@ -161,6 +164,7 @@ export default function Settings() {
   const [taskTemplates, setTaskTemplates] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [chatSettings, setChatSettings] = useState(null);
+  const [yandexDiskSettings, setYandexDiskSettings] = useState(null);
   const [error, setError] = useState("");
   const [draggedRow, setDraggedRow] = useState(null);
   const [reorderSaving, setReorderSaving] = useState("");
@@ -176,6 +180,7 @@ export default function Settings() {
   const [taskTemplateForm, setTaskTemplateForm] = useState({ status: "", title: "", notes: "", due_in_days: "1", priority: "medium" });
   const [templateBusy, setTemplateBusy] = useState(false);
   const [chatSaving, setChatSaving] = useState(false);
+  const [yandexDiskSaving, setYandexDiskSaving] = useState(false);
   const [chatForm, setChatForm] = useState({
     enabled: false,
     base_url: "",
@@ -183,9 +188,16 @@ export default function Settings() {
     inbox_name: "",
     api_access_token: "",
   });
+  const [yandexDiskForm, setYandexDiskForm] = useState({
+    enabled: false,
+    auto_create_project_folders: true,
+    base_path: "/CRM/Проекты",
+    folder_template_text: "Визуализация\nЗакупочная смета\nМодель\nРаскрой\nСмета\nСогласование\nТЗ\nЧертежи",
+    oauth_token: "",
+  });
 
   async function reload() {
-    const [userRows, statusRows, categoryRows, accountRows, fieldRows, taskTemplateRows, templateRows, chatRows] = await Promise.all([
+    const [userRows, statusRows, categoryRows, accountRows, fieldRows, taskTemplateRows, templateRows, chatRows, yandexDiskRows] = await Promise.all([
       fetchUsers(),
       fetchProjectStatuses(),
       fetchFinanceCategories(),
@@ -194,6 +206,7 @@ export default function Settings() {
       fetchTaskTemplates(),
       fetchDocumentTemplates(),
       fetchChatSettings(),
+      fetchYandexDiskSettings(),
     ]);
 
     setUsers(userRows);
@@ -204,12 +217,20 @@ export default function Settings() {
     setTaskTemplates(taskTemplateRows);
     setTemplates(templateRows);
     setChatSettings(chatRows);
+    setYandexDiskSettings(yandexDiskRows);
     setChatForm({
       enabled: Boolean(chatRows.enabled),
       base_url: chatRows.base_url || "",
       account_id: chatRows.account_id || "",
       inbox_name: chatRows.inbox_name || "",
       api_access_token: "",
+    });
+    setYandexDiskForm({
+      enabled: Boolean(yandexDiskRows.enabled),
+      auto_create_project_folders: Boolean(yandexDiskRows.auto_create_project_folders),
+      base_path: yandexDiskRows.base_path || "/CRM/Проекты",
+      folder_template_text: yandexDiskRows.folder_template_text || "Визуализация\nЗакупочная смета\nМодель\nРаскрой\nСмета\nСогласование\nТЗ\nЧертежи",
+      oauth_token: "",
     });
     setTaskTemplateForm((prev) => ({ ...prev, status: prev.status || statusRows[0]?.id || "" }));
   }
@@ -440,6 +461,41 @@ export default function Settings() {
     }
   }
 
+  async function handleSaveYandexDiskSettings(event) {
+    event.preventDefault();
+    setYandexDiskSaving(true);
+    try {
+      const payload = {
+        enabled: Boolean(yandexDiskForm.enabled),
+        auto_create_project_folders: Boolean(yandexDiskForm.auto_create_project_folders),
+        base_path: yandexDiskForm.base_path.trim() || "/CRM/Проекты",
+        folder_template: yandexDiskForm.folder_template_text
+          .split(/\r?\n/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+      };
+      if (yandexDiskForm.oauth_token.trim()) {
+        payload.oauth_token = yandexDiskForm.oauth_token.trim();
+      }
+
+      const updated = await updateYandexDiskSettings(payload);
+      setYandexDiskSettings(updated);
+      setYandexDiskForm((prev) => ({
+        ...prev,
+        enabled: Boolean(updated.enabled),
+        auto_create_project_folders: Boolean(updated.auto_create_project_folders),
+        base_path: updated.base_path || "/CRM/Проекты",
+        folder_template_text: updated.folder_template_text || prev.folder_template_text,
+        oauth_token: "",
+      }));
+      setError("");
+    } catch (requestError) {
+      setError(extractApiErrorMessage(requestError, "Не удалось сохранить настройки Яндекс.Диска."));
+    } finally {
+      setYandexDiskSaving(false);
+    }
+  }
+
   return (
     <div className="grid gap-6 xl:grid-cols-3">
       {error ? (
@@ -500,6 +556,56 @@ export default function Settings() {
               disabled={chatSaving}
             >
               {chatSaving ? "Сохраняем..." : "Сохранить чаты"}
+            </button>
+          </form>
+        </SettingsCard>
+
+        <SettingsCard title="Яндекс.Диск" icon={<HardDrive size={16} />}>
+          <form className="space-y-3" onSubmit={handleSaveYandexDiskSettings}>
+            <label className="flex items-start gap-3 rounded-2xl bg-blue-50 px-3 py-3 text-sm font-semibold text-blue-700">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 rounded border-blue-200 text-blue-600"
+                checked={yandexDiskForm.enabled}
+                onChange={(event) => setYandexDiskForm((prev) => ({ ...prev, enabled: event.target.checked }))}
+              />
+              <span>Включить создание папок проектов на Яндекс.Диске</span>
+            </label>
+            <label className="flex items-start gap-3 rounded-2xl bg-slate-50 px-3 py-3 text-sm font-semibold text-slate-600">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600"
+                checked={yandexDiskForm.auto_create_project_folders}
+                onChange={(event) => setYandexDiskForm((prev) => ({ ...prev, auto_create_project_folders: event.target.checked }))}
+              />
+              <span>Автоматически создавать папку при создании проекта</span>
+            </label>
+            <Input
+              value={yandexDiskForm.base_path}
+              onChange={(event) => setYandexDiskForm((prev) => ({ ...prev, base_path: event.target.value }))}
+              placeholder="/CRM/Проекты"
+            />
+            <textarea
+              className="min-h-40 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+              value={yandexDiskForm.folder_template_text}
+              onChange={(event) => setYandexDiskForm((prev) => ({ ...prev, folder_template_text: event.target.value }))}
+              placeholder={"Визуализация\nЗакупочная смета\nМодель\nРаскрой\nСмета\nСогласование\nТЗ\nЧертежи"}
+            />
+            <Input
+              type="password"
+              value={yandexDiskForm.oauth_token}
+              onChange={(event) => setYandexDiskForm((prev) => ({ ...prev, oauth_token: event.target.value }))}
+              placeholder={yandexDiskSettings?.has_oauth_token ? "OAuth-токен сохранён, новый вводить не обязательно" : "OAuth-токен Яндекс.Диска"}
+            />
+            <p className="text-xs leading-5 text-gray-500">
+              Папка проекта будет называться как в CRM: номер проекта и его наименование. Внутри будут созданы подпапки из списка выше.
+            </p>
+            <button
+              className="w-full rounded-full bg-gray-900 px-5 py-3 text-xs font-bold text-white shadow-lg hover:bg-black disabled:opacity-60"
+              type="submit"
+              disabled={yandexDiskSaving}
+            >
+              {yandexDiskSaving ? "Сохраняем..." : "Сохранить Яндекс.Диск"}
             </button>
           </form>
         </SettingsCard>

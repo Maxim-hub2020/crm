@@ -17,6 +17,7 @@ from .models import (
     TaskTemplate,
     User,
     Workspace,
+    YandexDiskSettings,
 )
 
 admin.site.register(User)
@@ -33,5 +34,6 @@ admin.site.register(Account)
 admin.site.register(ProjectCustomField)
 admin.site.register(DocumentTemplate)
 admin.site.register(ChatIntegrationSettings)
+admin.site.register(YandexDiskSettings)
 admin.site.register(CRMMemorySnapshot)
 admin.site.register(AuditLog)

@@ -30,6 +30,7 @@ from .views import (
     global_search_view,
     health_view,
     me_view,
+    yandex_disk_settings_view,
 )
 
 router = DefaultRouter()
@@ -62,6 +63,7 @@ urlpatterns = [
     path("global-search/", global_search_view),
     path("address-suggestions/", address_suggestions_view),
     path("chat-settings/", chat_settings_view),
+    path("yandex-disk-settings/", yandex_disk_settings_view),
     path("assistant/chat/", assistant_chat_view),
     path("assistant/voice/", assistant_voice_view),
     path("projects", ProjectViewSet.as_view({"get": "list", "post": "create"}), name="projects-no-slash"),
