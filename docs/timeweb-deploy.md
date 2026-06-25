@@ -77,6 +77,14 @@ VITE_ASSISTANT_LIVE=0
 https://cehcrm.ru/api/yandex-disk/oauth/callback/
 ```
 
+Если Яндекс не даёт поменять Redirect URI и оставляет `https://oauth.yandex.ru/verification_code`, укажите в `.env`:
+
+```env
+YANDEX_DISK_REDIRECT_URI=https://oauth.yandex.ru/verification_code
+```
+
+В этом режиме после нажатия `Подключить CRM к Яндекс.Диску` Яндекс покажет код. Скопируйте его в поле `Код подтверждения Яндекса` в CRM и нажмите `Сохранить доступ`.
+
 После деплоя откройте `Система -> Яндекс.Диск` и нажмите `Подключить CRM к Яндекс.Диску`.
 
 Сгенерировать секрет Django можно так:

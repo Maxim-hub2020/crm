@@ -35,6 +35,7 @@ import {
   deleteProjectCustomField,
   deleteProjectStatus,
   deleteTaskTemplate,
+  completeYandexDiskOAuth,
   extractApiErrorMessage,
   fetchAccounts,
   fetchChatSettings,
@@ -189,6 +190,8 @@ export default function Settings() {
   const [chatSaving, setChatSaving] = useState(false);
   const [yandexDiskSaving, setYandexDiskSaving] = useState(false);
   const [yandexDiskConnecting, setYandexDiskConnecting] = useState(false);
+  const [yandexDiskCodeSaving, setYandexDiskCodeSaving] = useState(false);
+  const [yandexDiskCode, setYandexDiskCode] = useState("");
   const [diskPicker, setDiskPicker] = useState({
     open: false,
     target: "base_path",
@@ -555,6 +558,23 @@ export default function Settings() {
     }
   }
 
+  async function handleCompleteYandexDiskOAuth() {
+    if (!yandexDiskCode.trim()) return;
+
+    setYandexDiskCodeSaving(true);
+    try {
+      const updated = await completeYandexDiskOAuth(yandexDiskCode.trim());
+      setYandexDiskSettings(updated);
+      setYandexDiskCode("");
+      setNotice("Яндекс.Диск подключен. Теперь CRM может создавать и переносить папки проектов.");
+      setError("");
+    } catch (requestError) {
+      setError(extractApiErrorMessage(requestError, "Не удалось сохранить код Яндекс.Диска."));
+    } finally {
+      setYandexDiskCodeSaving(false);
+    }
+  }
+
   function renderYandexDiskPathField(target, label, description) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-3">
@@ -709,6 +729,27 @@ export default function Settings() {
               <ExternalLink size={17} />
               {yandexDiskConnecting ? "Открываем Яндекс..." : yandexDiskSettings?.has_oauth_token ? "Переподключить CRM к Яндекс.Диску" : "Подключить CRM к Яндекс.Диску"}
             </button>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              <div className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Код подтверждения Яндекса</div>
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <Input
+                  value={yandexDiskCode}
+                  onChange={(event) => setYandexDiskCode(event.target.value)}
+                  placeholder="Вставьте код, который показал Яндекс"
+                />
+                <Button
+                  type="button"
+                  className="px-4"
+                  onClick={handleCompleteYandexDiskOAuth}
+                  disabled={yandexDiskCodeSaving || !yandexDiskCode.trim()}
+                >
+                  {yandexDiskCodeSaving ? "Проверяем..." : "Сохранить доступ"}
+                </Button>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                Если Яндекс не возвращает обратно в CRM, он покажет код на странице verification_code. Скопируйте его сюда.
+              </p>
+            </div>
             {renderYandexDiskPathField("base_path", "Папка проектов", "Сюда будут автоматически попадать новые папки проектов.")}
             {renderYandexDiskPathField("archive_path", "Папка архива", "Сюда CRM перенесёт папку проекта после перехода в завершённый статус.")}
             <textarea

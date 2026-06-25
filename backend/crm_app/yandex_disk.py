@@ -91,6 +91,22 @@ def connect_yandex_disk_with_code(request, code, state):
     return settings
 
 
+def connect_yandex_disk_with_manual_code(request, workspace, code):
+    if not code:
+        raise YandexDiskError("Укажите код подтверждения Яндекс.Диска.")
+
+    token_payload = exchange_yandex_disk_code(request, code)
+    access_token = token_payload.get("access_token")
+    if not access_token:
+        raise YandexDiskError("Яндекс не вернул OAuth-токен.")
+
+    settings = get_yandex_disk_settings(workspace)
+    settings.oauth_token = access_token
+    settings.enabled = True
+    settings.save(update_fields=["oauth_token", "enabled", "updated_at"])
+    return settings
+
+
 def exchange_yandex_disk_code(request, code):
     client_id = _yandex_disk_client_id()
     client_secret = _yandex_disk_client_secret()

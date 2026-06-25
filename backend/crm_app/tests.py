@@ -2367,6 +2367,37 @@ class TestYandexDiskOAuthApi(AuthenticatedApiMixin, APITestCase):
         self.assertTrue(settings.enabled)
         self.assertEqual(settings.oauth_token, "saved-yandex-token")
 
+    @patch.dict(
+        os.environ,
+        {
+            "YANDEX_DISK_CLIENT_ID": "test-client-id",
+            "YANDEX_DISK_CLIENT_SECRET": "test-client-secret",
+        },
+    )
+    def test_admin_can_connect_yandex_disk_with_manual_verification_code(self):
+        client = self.auth_client_for(self.admin)
+
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps({"access_token": "manual-yandex-token", "token_type": "bearer"}).encode("utf-8")
+
+        with patch("crm_app.yandex_disk.urllib_request.urlopen", return_value=FakeResponse()):
+            response = client.post("/api/yandex-disk/oauth/complete/", {"code": "manual-code"}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["has_oauth_token"])
+        settings = YandexDiskSettings.objects.get(workspace=self.admin.workspace)
+        self.assertTrue(settings.enabled)
+        self.assertEqual(settings.oauth_token, "manual-yandex-token")
+
 
 class TestAssistantApi(AuthenticatedApiMixin, APITestCase):
     def make_function_call_response(self, name, args, call_id="call-1"):

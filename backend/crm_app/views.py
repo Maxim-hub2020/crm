@@ -87,6 +87,7 @@ from .yandex_disk import (
     archive_project_disk_folder,
     build_yandex_disk_authorization_url,
     connect_yandex_disk_with_code,
+    connect_yandex_disk_with_manual_code,
     ensure_project_disk_folder,
     is_archive_project_status,
     list_disk_folders,
@@ -515,6 +516,25 @@ def yandex_disk_oauth_start_view(request):
         return Response({"detail": str(exc)}, status=drf_status.HTTP_400_BAD_REQUEST)
 
     return Response({"authorization_url": authorization_url, "redirect_uri": yandex_disk_redirect_uri(request)})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+def yandex_disk_oauth_complete_view(request):
+    if not request.user.is_admin():
+        return Response({"detail": "Подключать Яндекс.Диск может только администратор."}, status=drf_status.HTTP_403_FORBIDDEN)
+
+    workspace = current_workspace(request.user)
+    code = (request.data.get("code") or "").strip()
+    try:
+        settings = connect_yandex_disk_with_manual_code(request, workspace, code)
+    except YandexDiskError as exc:
+        return Response({"detail": str(exc)}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    data = YandexDiskSettingsSerializer(settings).data
+    data["oauth_configured"] = yandex_disk_oauth_configured()
+    data["oauth_redirect_uri"] = yandex_disk_redirect_uri(request)
+    return Response(data)
 
 
 @api_view(["GET"])

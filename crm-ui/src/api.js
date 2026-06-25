@@ -449,6 +449,12 @@ export async function startYandexDiskOAuth() {
   return data;
 }
 
+export async function completeYandexDiskOAuth(code) {
+  initApiAuth();
+  const { data } = await api.post("/api/yandex-disk/oauth/complete/", { code });
+  return data;
+}
+
 export async function updateYandexDiskSettings(payload) {
   initApiAuth();
   const { data } = await api.patch("/api/yandex-disk-settings/", payload);
