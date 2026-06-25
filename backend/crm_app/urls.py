@@ -2,6 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     AccountViewSet,
+    AuditLogViewSet,
     ClientBonusTransactionViewSet,
     ClientViewSet,
     DocumentTemplateViewSet,
@@ -12,6 +13,7 @@ from .views import (
     ProjectStatusViewSet,
     ProjectViewSet,
     TaskViewSet,
+    TaskTemplateViewSet,
     UserViewSet,
     billing_activate_invoice_view,
     billing_create_invoice_view,
@@ -21,8 +23,11 @@ from .views import (
     assistant_chat_view,
     assistant_voice_view,
     bonus_promo_preview_view,
+    cash_forecast_ai_view,
+    cash_forecast_view,
     finance_analytics_ai_view,
     finance_analytics_view,
+    global_search_view,
     health_view,
     me_view,
 )
@@ -39,6 +44,8 @@ router.register(r"accounts", AccountViewSet, basename="accounts")
 router.register(r"project-custom-fields", ProjectCustomFieldViewSet, basename="project-custom-fields")
 router.register(r"document-templates", DocumentTemplateViewSet, basename="document-templates")
 router.register(r"tasks", TaskViewSet, basename="tasks")
+router.register(r"task-templates", TaskTemplateViewSet, basename="task-templates")
+router.register(r"audit-logs", AuditLogViewSet, basename="audit-logs")
 router.register(r"users", UserViewSet, basename="users")
 
 urlpatterns = [
@@ -50,6 +57,9 @@ urlpatterns = [
     path("bonus-promo-preview/", bonus_promo_preview_view),
     path("finance-analytics/", finance_analytics_view),
     path("finance-analytics/ai/", finance_analytics_ai_view),
+    path("cash-forecast/", cash_forecast_view),
+    path("cash-forecast/ai/", cash_forecast_ai_view),
+    path("global-search/", global_search_view),
     path("address-suggestions/", address_suggestions_view),
     path("chat-settings/", chat_settings_view),
     path("assistant/chat/", assistant_chat_view),

@@ -7,10 +7,12 @@ import {
   deletePayment,
   extractApiErrorMessage,
   fetchAccounts,
+  fetchCashForecast,
   fetchFinanceAnalytics,
   fetchFinanceCategories,
   fetchPayments,
   fetchProjects,
+  requestCashForecastAi,
   requestFinanceAiAnalysis,
   updatePayment,
 } from "../api";
@@ -324,6 +326,127 @@ function FinanceAnalyticsBlock({
   );
 }
 
+function CashForecastBlock({
+  forecast,
+  loading,
+  error,
+  aiAnalysis,
+  aiError,
+  aiLoading,
+  onRefresh,
+  onAnalyze,
+  onProjectOpen,
+}) {
+  const buckets = forecast?.buckets || [];
+  const cashGapBucket = forecast?.cash_gap_bucket || "";
+
+  return (
+    <div className="mb-4 rounded-[32px] bg-white p-4 shadow-lg sm:p-5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-black uppercase tracking-tight text-slate-900">
+            <Brain size={18} className="text-blue-600" />
+            Кассовый прогноз
+          </div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-slate-500">
+            Сводит текущий остаток, будущие оплаты, ожидаемые поступления по проектам и оценку предстоящих расходов.
+          </div>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Button type="button" variant="secondary" className="justify-center" onClick={onRefresh} disabled={loading}>
+            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+            Обновить
+          </Button>
+          <Button type="button" className="justify-center" onClick={onAnalyze} disabled={aiLoading || loading}>
+            <Brain size={16} />
+            {aiLoading ? "Gemini считает..." : "Gemini-прогноз"}
+          </Button>
+        </div>
+      </div>
+
+      {error ? <div className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+      {aiError ? <div className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{aiError}</div> : null}
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <AnalyticsMetric label="Сейчас в кассе" value={`${formatMoney(forecast?.current_balance)} ₽`} note="Факт на сегодня" />
+        <AnalyticsMetric label="Ожидаемый доход" value={`${formatMoney(forecast?.forecast_income)} ₽`} tone="green" note="На горизонте 60 дней" />
+        <AnalyticsMetric label="Ожидаемый расход" value={`${formatMoney(forecast?.forecast_expense)} ₽`} tone="red" note={`Средняя доля: ${forecast?.average_expense_percent || "0"}%`} />
+        <AnalyticsMetric
+          label="Баланс через 60 дней"
+          value={`${formatMoney(forecast?.projected_balance_60_days)} ₽`}
+          tone={Number(forecast?.projected_balance_60_days || 0) < 0 ? "red" : "green"}
+          note={cashGapBucket ? "Есть риск кассового разрыва" : "Разрыва не видно"}
+        />
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-4">
+        {buckets.map((bucket) => {
+          const net = Number(bucket.net || 0);
+          const projected = Number(bucket.projected_balance || 0);
+          return (
+            <div
+              key={bucket.key}
+              className={`rounded-[24px] p-4 ring-1 ${
+                cashGapBucket === bucket.key ? "bg-red-50 ring-red-100" : "bg-slate-50 ring-slate-200/70"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">{bucket.label}</div>
+                  <div className={`mt-2 text-2xl font-black ${projected < 0 ? "text-red-600" : "text-slate-900"}`}>
+                    {formatMoney(projected)} ₽
+                  </div>
+                </div>
+                {cashGapBucket === bucket.key ? (
+                  <span className="rounded-full bg-red-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-red-600">
+                    Разрыв
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-bold">
+                <div className="rounded-2xl bg-white px-3 py-2 text-emerald-600">+ {formatMoney(bucket.income)} ₽</div>
+                <div className="rounded-2xl bg-white px-3 py-2 text-red-600">− {formatMoney(bucket.expense)} ₽</div>
+              </div>
+              <div className={`mt-3 text-sm font-black ${net < 0 ? "text-red-600" : "text-emerald-600"}`}>
+                Чистый поток: {net < 0 ? "−" : "+"} {formatMoney(Math.abs(net))} ₽
+              </div>
+              <div className="mt-3 space-y-2">
+                {(bucket.items || []).slice(0, 4).map((item, index) => (
+                  <button
+                    key={`${bucket.key}-${item.type}-${item.project || "nop"}-${index}`}
+                    type="button"
+                    className="block w-full rounded-2xl bg-white px-3 py-2 text-left text-xs ring-1 ring-slate-100 transition hover:bg-blue-50"
+                    onClick={() => onProjectOpen?.(item.project, item.kind === "expense" ? "finances" : "comments")}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate font-black text-slate-800">{item.project_title || item.title}</span>
+                      <span className={item.kind === "expense" ? "font-black text-red-600" : "font-black text-emerald-600"}>
+                        {item.kind === "expense" ? "−" : "+"} {formatMoney(item.amount)}
+                      </span>
+                    </div>
+                    <div className="mt-1 truncate font-semibold text-slate-400">{item.title}</div>
+                  </button>
+                ))}
+                {(bucket.items || []).length === 0 ? (
+                  <div className="rounded-2xl bg-white px-3 py-3 text-xs font-semibold text-slate-400 ring-1 ring-slate-100">
+                    Движений пока нет.
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {aiAnalysis ? (
+        <div className="mt-4 whitespace-pre-wrap rounded-[24px] bg-slate-950 px-4 py-4 text-sm font-semibold leading-6 text-white">
+          {aiAnalysis}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function normalizeSearch(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -361,6 +484,13 @@ export default function Finances() {
   const [aiAnalysis, setAiAnalysis] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
+  const [cashForecast, setCashForecast] = useState(null);
+  const [cashForecastLoading, setCashForecastLoading] = useState(false);
+  const [cashForecastError, setCashForecastError] = useState("");
+  const [cashForecastRefreshKey, setCashForecastRefreshKey] = useState(0);
+  const [cashAiAnalysis, setCashAiAnalysis] = useState("");
+  const [cashAiLoading, setCashAiLoading] = useState(false);
+  const [cashAiError, setCashAiError] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -437,6 +567,35 @@ export default function Finances() {
     };
   }, [activeTab, analyticsParams, analyticsRefreshKey]);
 
+  useEffect(() => {
+    if (activeTab !== "cashflow") return undefined;
+
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      setCashForecastLoading(true);
+      setCashForecastError("");
+      try {
+        const data = await fetchCashForecast(analyticsParams);
+        if (!active) return;
+        setCashForecast(data);
+      } catch (requestError) {
+        if (!active) return;
+        setCashForecast(null);
+        setCashForecastError(extractApiErrorMessage(requestError, "Не удалось загрузить кассовый прогноз."));
+      } finally {
+        if (active) setCashForecastLoading(false);
+      }
+    }, 250);
+
+    setCashAiAnalysis("");
+    setCashAiError("");
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [activeTab, analyticsParams, cashForecastRefreshKey]);
+
   const filteredPayments = useMemo(() => {
     const value = normalizeSearch(search);
     const minAmount = amountFrom ? Number(amountFrom) : null;
@@ -497,6 +656,10 @@ export default function Finances() {
     setAnalyticsRefreshKey((current) => current + 1);
   }
 
+  function refreshCashForecast() {
+    setCashForecastRefreshKey((current) => current + 1);
+  }
+
   function openProjectFromAnalytics(projectId, tab = "comments") {
     if (!projectId) return;
     const project = projects.find((item) => String(item.id) === String(projectId));
@@ -524,6 +687,24 @@ export default function Finances() {
       setAiError(extractApiErrorMessage(requestError, "Gemini не смог выполнить финансовый анализ."));
     } finally {
       setAiLoading(false);
+    }
+  }
+
+  async function runCashAiForecast() {
+    setCashAiError("");
+    setCashAiAnalysis("");
+    setCashAiLoading(true);
+
+    try {
+      const data = await requestCashForecastAi(analyticsParams);
+      setCashAiAnalysis(data.analysis || "");
+      if (data.forecast) {
+        setCashForecast(data.forecast);
+      }
+    } catch (requestError) {
+      setCashAiError(extractApiErrorMessage(requestError, "Gemini не смог построить кассовый прогноз."));
+    } finally {
+      setCashAiLoading(false);
     }
   }
 
@@ -628,6 +809,7 @@ export default function Finances() {
       }
 
       refreshAnalytics();
+      refreshCashForecast();
       closePaymentModal();
     } catch (requestError) {
       setActionError(extractApiErrorMessage(requestError, "Не удалось сохранить операцию."));
@@ -644,6 +826,7 @@ export default function Finances() {
       await deletePayment(paymentId);
       setPayments((current) => current.filter((payment) => payment.id !== paymentId));
       refreshAnalytics();
+      refreshCashForecast();
     } catch (requestError) {
       setActionError(extractApiErrorMessage(requestError, "Не удалось удалить операцию."));
     }
@@ -666,16 +849,19 @@ export default function Finances() {
         ) : null}
       </div>
 
-      <div className="mb-4 grid gap-2 rounded-[28px] bg-white p-2 shadow-lg sm:inline-grid sm:grid-cols-2">
+      <div className="mb-4 grid gap-2 rounded-[28px] bg-white p-2 shadow-lg sm:inline-grid sm:grid-cols-3">
         <button type="button" className={tabButtonClass("operations")} onClick={() => setActiveTab("operations")}>
           Операции
         </button>
         <button type="button" className={tabButtonClass("analytics")} onClick={() => setActiveTab("analytics")}>
           Аналитика
         </button>
+        <button type="button" className={tabButtonClass("cashflow")} onClick={() => setActiveTab("cashflow")}>
+          Кассовый прогноз
+        </button>
       </div>
 
-      {activeTab === "analytics" ? (
+      {activeTab === "analytics" || activeTab === "cashflow" ? (
         <>
           <div className="mb-4 rounded-[28px] bg-white p-4 shadow-lg">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -714,17 +900,31 @@ export default function Finances() {
             </div>
           </div>
 
-          <FinanceAnalyticsBlock
-            analytics={analytics}
-            loading={analyticsLoading}
-            error={analyticsError}
-            aiAnalysis={aiAnalysis}
-            aiError={aiError}
-            aiLoading={aiLoading}
-            onRefresh={refreshAnalytics}
-            onAnalyze={runAiAnalysis}
-            onProjectOpen={openProjectFromAnalytics}
-          />
+          {activeTab === "analytics" ? (
+            <FinanceAnalyticsBlock
+              analytics={analytics}
+              loading={analyticsLoading}
+              error={analyticsError}
+              aiAnalysis={aiAnalysis}
+              aiError={aiError}
+              aiLoading={aiLoading}
+              onRefresh={refreshAnalytics}
+              onAnalyze={runAiAnalysis}
+              onProjectOpen={openProjectFromAnalytics}
+            />
+          ) : (
+            <CashForecastBlock
+              forecast={cashForecast}
+              loading={cashForecastLoading}
+              error={cashForecastError}
+              aiAnalysis={cashAiAnalysis}
+              aiError={cashAiError}
+              aiLoading={cashAiLoading}
+              onRefresh={refreshCashForecast}
+              onAnalyze={runCashAiForecast}
+              onProjectOpen={openProjectFromAnalytics}
+            />
+          )}
         </>
       ) : null}
 

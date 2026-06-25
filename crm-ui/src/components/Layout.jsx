@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Briefcase, FolderKanban, Home, ListTodo, LogOut, Menu, MessageCircle, Mic, Settings, ShieldQuestion, Users, Wallet } from "lucide-react";
+import { Briefcase, FolderKanban, Home, ListTodo, LogOut, Menu, MessageCircle, Mic, Search, Settings, ShieldQuestion, Users, Wallet, X } from "lucide-react";
 import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
 
-import { clearToken, fetchMe, getUser, isAdminUser } from "../api";
+import { clearToken, fetchGlobalSearch, fetchMe, getUser, isAdminUser } from "../api";
 import { BrandMark } from "./BrandLogo.jsx";
 
 const ROUTE_META = {
@@ -42,6 +42,9 @@ export default function Layout({ children }) {
   const location = useLocation();
   const [user, setUser] = useState(getUser());
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [globalQuery, setGlobalQuery] = useState("");
+  const [globalResults, setGlobalResults] = useState([]);
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -65,6 +68,37 @@ export default function Layout({ children }) {
   const isAssistantMode = location.pathname === "/assistant";
 
   useEffect(() => {
+    if (isAssistantMode) {
+      setGlobalSearchOpen(false);
+      return undefined;
+    }
+
+    const query = globalQuery.trim();
+    if (query.length < 2) {
+      setGlobalResults([]);
+      return undefined;
+    }
+
+    let active = true;
+    const timerId = window.setTimeout(async () => {
+      try {
+        const response = await fetchGlobalSearch(query);
+        if (!active) return;
+        setGlobalResults(response.results || []);
+        setGlobalSearchOpen(true);
+      } catch {
+        if (!active) return;
+        setGlobalResults([]);
+      }
+    }, 250);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timerId);
+    };
+  }, [globalQuery, isAssistantMode]);
+
+  useEffect(() => {
     if (!isAssistantMode) {
       localStorage.setItem("crm_last_screen", location.pathname);
     }
@@ -77,6 +111,30 @@ export default function Layout({ children }) {
 
   function closeSidebar() {
     setSidebarOpen(false);
+  }
+
+  function openGlobalResult(result) {
+    setGlobalQuery("");
+    setGlobalResults([]);
+    setGlobalSearchOpen(false);
+
+    if (result.project_id) {
+      navigate("/projects", {
+        state: {
+          projectId: result.project_id,
+          tab: result.tab || "comments",
+          q: result.title || "",
+        },
+      });
+      return;
+    }
+
+    if (result.type === "client") {
+      navigate("/clients", { state: { clientId: result.client_id, q: result.title || "" } });
+      return;
+    }
+
+    navigate(result.route || "/");
   }
 
   return (
@@ -125,7 +183,7 @@ export default function Layout({ children }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         {!isAssistantMode && (
-          <header className="z-10 flex h-12 shrink-0 items-center justify-between border-b border-slate-200/70 bg-white px-4 sm:px-6">
+          <header className="z-10 flex h-12 shrink-0 items-center justify-between gap-3 border-b border-slate-200/70 bg-white px-4 sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
               <button onClick={() => setSidebarOpen(true)} className="-ml-2 p-2 text-slate-500 md:hidden" type="button">
                 <Menu size={20} />
@@ -133,9 +191,64 @@ export default function Layout({ children }) {
               <h1 className="truncate text-lg font-black uppercase tracking-tight text-slate-900">{currentMeta.title}</h1>
             </div>
 
+            <div className="relative hidden min-w-[240px] max-w-xl flex-1 sm:block">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={globalQuery}
+                onChange={(event) => setGlobalQuery(event.target.value)}
+                onFocus={() => {
+                  if (globalResults.length) setGlobalSearchOpen(true);
+                }}
+                placeholder="Поиск по CRM..."
+                className="h-9 w-full rounded-full border border-slate-200 bg-slate-50 px-9 text-sm font-semibold text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
+              />
+              {globalQuery ? (
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                  onClick={() => {
+                    setGlobalQuery("");
+                    setGlobalResults([]);
+                    setGlobalSearchOpen(false);
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              ) : null}
+              {globalSearchOpen && globalQuery.trim().length >= 2 ? (
+                <div className="absolute left-0 right-0 top-11 z-50 overflow-hidden rounded-3xl border border-slate-100 bg-white shadow-2xl">
+                  {globalResults.length ? (
+                    <div className="max-h-[420px] overflow-auto p-2">
+                      {globalResults.map((result) => (
+                        <button
+                          key={`${result.type}-${result.id}`}
+                          type="button"
+                          className="block w-full rounded-2xl px-3 py-2 text-left transition hover:bg-blue-50"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => openGlobalResult(result)}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-black text-slate-900">{result.title}</div>
+                              {result.subtitle ? <div className="mt-0.5 truncate text-xs font-semibold text-slate-500">{result.subtitle}</div> : null}
+                            </div>
+                            <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                              {result.label}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="px-4 py-5 text-sm font-semibold text-slate-500">Ничего не найдено.</div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+
             <Link
               to="/assistant"
-              className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
             >
               <Mic size={13} />
               AI-помощник

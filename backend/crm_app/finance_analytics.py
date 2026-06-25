@@ -1,4 +1,5 @@
 import re
+from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.utils import timezone
@@ -477,4 +478,226 @@ def compact_finance_overview_for_ai(overview):
         "at_risk_projects": (overview.get("at_risk_projects") or [])[:12],
         "recent_operations": (overview.get("recent_operations") or [])[:8],
         "expense_prediction": overview.get("expense_prediction"),
+    }
+
+
+def _bucket_key_for_date(target_date, today):
+    days = (target_date - today).days
+    if days <= 0:
+        return "today"
+    if days <= 7:
+        return "week"
+    if days <= 30:
+        return "month"
+    return "sixty_days"
+
+
+def _bucket_date_for_project(project, statuses, today):
+    status_codes = [status.code for status in statuses]
+    if project.status in status_codes:
+        index = status_codes.index(project.status)
+    else:
+        index = 0
+
+    if len(status_codes) >= 2 and index >= len(status_codes) - 2:
+        return today + timedelta(days=7)
+    if len(status_codes) >= 4 and index >= len(status_codes) // 2:
+        return today + timedelta(days=30)
+    return today + timedelta(days=60)
+
+
+def _average_reference_expense_ratio(reference_projects):
+    ratios = []
+    for project in reference_projects:
+        analytics = build_project_finance_analytics(project)
+        expected_income = Decimal(analytics["expected_income"])
+        expense_total = Decimal(analytics["expense_total"])
+        if expected_income > 0 and expense_total > 0:
+            ratios.append(expense_total / expected_income)
+
+    if not ratios:
+        return Decimal("0.55")
+    return sum(ratios, Decimal("0")) / Decimal(len(ratios))
+
+
+def _empty_cash_bucket(key, label, days_to):
+    return {
+        "key": key,
+        "label": label,
+        "days_to": days_to,
+        "income": _decimal_string(Decimal("0")),
+        "expense": _decimal_string(Decimal("0")),
+        "net": _decimal_string(Decimal("0")),
+        "items": [],
+    }
+
+
+def _add_cash_item(bucket, item):
+    income = Decimal(bucket["income"])
+    expense = Decimal(bucket["expense"])
+    amount = _money(Decimal(item["amount"]))
+    if item["kind"] == FinanceCategory.Type.EXPENSE:
+        expense += amount
+    else:
+        income += amount
+    bucket["income"] = _decimal_string(income)
+    bucket["expense"] = _decimal_string(expense)
+    bucket["net"] = _decimal_string(income - expense)
+    bucket["items"].append({**item, "amount": _decimal_string(amount)})
+
+
+def build_cash_forecast(projects_queryset, payments_queryset, reference_projects_queryset=None):
+    now = timezone.now()
+    today = timezone.localdate()
+    first_project = projects_queryset.first()
+    workspace = getattr(first_project, "workspace", None)
+    statuses = list(ProjectStatus.objects.filter(workspace=workspace).order_by("sort_order", "id"))
+    projects = list(projects_queryset.select_related("client").prefetch_related("payments").order_by("-created_at", "-id"))
+    reference_source = reference_projects_queryset if reference_projects_queryset is not None else projects_queryset
+    reference_projects = list(reference_source.select_related("client").prefetch_related("payments"))
+    payments = list(payments_queryset.select_related("project", "category", "account").order_by("paid_at", "id"))
+
+    buckets = {
+        "today": _empty_cash_bucket("today", "Сегодня", 0),
+        "week": _empty_cash_bucket("week", "7 дней", 7),
+        "month": _empty_cash_bucket("month", "30 дней", 30),
+        "sixty_days": _empty_cash_bucket("sixty_days", "60 дней", 60),
+    }
+
+    current_balance = Decimal("0")
+    future_payment_ids = set()
+    for payment in payments:
+        amount = _money(payment.amount)
+        kind = _payment_kind(payment)
+        signed = -amount if kind == FinanceCategory.Type.EXPENSE else amount
+        if not payment.paid_at or payment.paid_at <= now:
+            current_balance += signed
+            continue
+
+        future_payment_ids.add(payment.id)
+        paid_date = timezone.localtime(payment.paid_at).date()
+        bucket = buckets[_bucket_key_for_date(paid_date, today)]
+        _add_cash_item(
+            bucket,
+            {
+                "type": "planned_operation",
+                "kind": kind,
+                "date": paid_date.isoformat(),
+                "amount": amount,
+                "title": getattr(payment.category, "name", "") or ("Расход" if kind == FinanceCategory.Type.EXPENSE else "Доход"),
+                "project": payment.project_id,
+                "project_title": _project_label(payment.project),
+                "comment": payment.comment or "",
+            },
+        )
+
+    average_expense_ratio = _average_reference_expense_ratio(reference_projects)
+    project_rows = []
+    for project in projects:
+        analytics = build_project_finance_analytics(project)
+        expected_income = Decimal(analytics["expected_income"])
+        income_paid = Decimal(analytics["income_paid"])
+        expense_total = Decimal(analytics["expense_total"])
+        if expected_income <= 0:
+            continue
+
+        due_date = _bucket_date_for_project(project, statuses, today)
+        bucket = buckets[_bucket_key_for_date(due_date, today)]
+        receivable = _money(max(expected_income - income_paid, Decimal("0")))
+        estimated_expense_total = _money(expected_income * average_expense_ratio)
+        remaining_expense = _money(max(estimated_expense_total - expense_total, Decimal("0")))
+
+        if receivable > 0:
+            _add_cash_item(
+                bucket,
+                {
+                    "type": "expected_project_income",
+                    "kind": FinanceCategory.Type.INCOME,
+                    "date": due_date.isoformat(),
+                    "amount": receivable,
+                    "title": "Ожидаемая оплата клиента",
+                    "project": project.id,
+                    "project_title": _project_label(project),
+                    "comment": "Расчет по сумме проекта и уже внесенным доходам.",
+                },
+            )
+
+        if remaining_expense > 0:
+            _add_cash_item(
+                bucket,
+                {
+                    "type": "expected_project_expense",
+                    "kind": FinanceCategory.Type.EXPENSE,
+                    "date": due_date.isoformat(),
+                    "amount": remaining_expense,
+                    "title": "Оценка будущих расходов",
+                    "project": project.id,
+                    "project_title": _project_label(project),
+                    "comment": f"Средняя доля расходов по прошлым проектам: {_percent_string(average_expense_ratio * Decimal('100'))}%.",
+                },
+            )
+
+        project_rows.append(
+            {
+                "id": project.id,
+                "title": _project_label(project),
+                "status": project.status,
+                "expected_income": _decimal_string(expected_income),
+                "income_paid": _decimal_string(income_paid),
+                "receivable": _decimal_string(receivable),
+                "expense_total": _decimal_string(expense_total),
+                "estimated_remaining_expense": _decimal_string(remaining_expense),
+                "forecast_date": due_date.isoformat(),
+            }
+        )
+
+    cumulative = _money(current_balance)
+    cash_gap_bucket = None
+    bucket_rows = []
+    for key in ("today", "week", "month", "sixty_days"):
+        bucket = buckets[key]
+        cumulative = _money(cumulative + Decimal(bucket["net"]))
+        if cumulative < 0 and not cash_gap_bucket:
+            cash_gap_bucket = key
+        bucket_rows.append({**bucket, "projected_balance": _decimal_string(cumulative)})
+
+    total_income = sum((Decimal(bucket["income"]) for bucket in bucket_rows), Decimal("0"))
+    total_expense = sum((Decimal(bucket["expense"]) for bucket in bucket_rows), Decimal("0"))
+
+    return {
+        "generated_at": now.isoformat(),
+        "current_balance": _decimal_string(current_balance),
+        "forecast_income": _decimal_string(total_income),
+        "forecast_expense": _decimal_string(total_expense),
+        "forecast_net": _decimal_string(total_income - total_expense),
+        "projected_balance_60_days": _decimal_string(cumulative),
+        "average_expense_percent": _percent_string(average_expense_ratio * Decimal("100")),
+        "cash_gap_bucket": cash_gap_bucket,
+        "buckets": bucket_rows,
+        "projects": project_rows[:30],
+        "planned_operation_count": len(future_payment_ids),
+    }
+
+
+def compact_cash_forecast_for_ai(forecast):
+    return {
+        "current_balance": forecast.get("current_balance"),
+        "forecast_income": forecast.get("forecast_income"),
+        "forecast_expense": forecast.get("forecast_expense"),
+        "forecast_net": forecast.get("forecast_net"),
+        "projected_balance_60_days": forecast.get("projected_balance_60_days"),
+        "average_expense_percent": forecast.get("average_expense_percent"),
+        "cash_gap_bucket": forecast.get("cash_gap_bucket"),
+        "buckets": [
+            {
+                "label": bucket.get("label"),
+                "income": bucket.get("income"),
+                "expense": bucket.get("expense"),
+                "net": bucket.get("net"),
+                "projected_balance": bucket.get("projected_balance"),
+                "items": (bucket.get("items") or [])[:8],
+            }
+            for bucket in (forecast.get("buckets") or [])
+        ],
+        "projects": (forecast.get("projects") or [])[:12],
     }

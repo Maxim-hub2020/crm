@@ -20,9 +20,16 @@ from rest_framework import status as drf_status
 
 from .ai_assistant import CRMAssistantService, GeminiClient, GeminiConfigurationError, GeminiRequestError
 from .bonuses import ensure_project_bonus_accrual, preview_project_bonus_promo_code, reverse_project_bonus_effects
-from .finance_analytics import build_finance_overview, build_project_finance_analytics, compact_finance_overview_for_ai
+from .finance_analytics import (
+    build_cash_forecast,
+    build_finance_overview,
+    build_project_finance_analytics,
+    compact_cash_forecast_for_ai,
+    compact_finance_overview_for_ai,
+)
 from .models import (
     Account,
+    AuditLog,
     ChatIntegrationSettings,
     Client,
     ClientBonusTransaction,
@@ -35,6 +42,7 @@ from .models import (
     ProjectStatus,
     SubscriptionInvoice,
     Task,
+    TaskTemplate,
     User,
 )
 from .permissions import HasActiveSubscription, HasAssistantSubscription, IsAdmin, IsAuthenticatedAny
@@ -42,6 +50,7 @@ from .phones import phone_search_digits
 from .serializers import (
     AdminUserSerializer,
     AccountSerializer,
+    AuditLogSerializer,
     ChatIntegrationSettingsSerializer,
     ClientBonusTransactionSerializer,
     ClientSerializer,
@@ -54,6 +63,7 @@ from .serializers import (
     ProjectStatusSerializer,
     ProjectSerializer,
     TaskSerializer,
+    TaskTemplateSerializer,
 )
 from .subscription import (
     activate_subscription_invoice,
@@ -65,6 +75,7 @@ from .subscription import (
     record_project_created,
 )
 from .tenancy import current_workspace
+from .workflow import apply_task_templates_for_project, build_project_status_check, create_audit_log, snapshot_model, user_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +208,168 @@ def _build_finance_ai_text(overview):
     )
     content = client.extract_candidate_content(response)
     return client.extract_text(content)
+
+
+def _build_cash_forecast_ai_text(forecast):
+    compact_payload = compact_cash_forecast_for_ai(forecast)
+    client = GeminiClient()
+    response = client.generate_content(
+        model=client.fast_model,
+        system_instruction=(
+            "Ты финансовый аналитик CRM. Дай кассовый прогноз максимум 5 короткими пунктами. "
+            "Пиши по-русски, без вступления. Не придумывай цифры вне переданного JSON. "
+            "Если есть риск кассового разрыва, назови период и что сделать первым."
+        ),
+        contents=[
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": (
+                            "Проанализируй кассовый прогноз CRM: входящий поток, расходы, ожидаемые оплаты, "
+                            "будущий баланс и риски.\n\n"
+                            f"{json.dumps(compact_payload, ensure_ascii=False)}"
+                        )
+                    }
+                ],
+            }
+        ],
+        temperature=0.2,
+        max_output_tokens=450,
+    )
+    content = client.extract_candidate_content(response)
+    return client.extract_text(content)
+
+
+def _project_result(project, score_label="Проект"):
+    return {
+        "type": "project",
+        "id": project.id,
+        "project_id": project.id,
+        "title": f"№{project.order_number:04d} · {project.title or project.client_name}" if project.order_number else project.title or project.client_name,
+        "subtitle": " · ".join([value for value in [project.client_name, project.client_phone, project.object_address] if value]),
+        "route": "/projects",
+        "tab": "comments",
+        "label": score_label,
+    }
+
+
+def _client_result(client):
+    return {
+        "type": "client",
+        "id": client.id,
+        "client_id": client.id,
+        "title": client.name,
+        "subtitle": " · ".join([value for value in [client.phone, client.address] if value]),
+        "route": "/clients",
+        "label": "Клиент",
+    }
+
+
+def _task_result(task):
+    return {
+        "type": "task",
+        "id": task.id,
+        "project_id": task.project_id,
+        "title": task.title,
+        "subtitle": " · ".join([value for value in [getattr(task.project, "title", ""), task.due_date.isoformat() if task.due_date else ""] if value]),
+        "route": "/projects" if task.project_id else "/tasks",
+        "tab": "tasks",
+        "label": "Задача",
+    }
+
+
+def _payment_result(payment):
+    return {
+        "type": "payment",
+        "id": payment.id,
+        "project_id": payment.project_id,
+        "title": f"{getattr(payment.category, 'name', '') or 'Операция'} · {payment.amount} ₽",
+        "subtitle": " · ".join([value for value in [getattr(payment.project, "title", ""), payment.comment] if value]),
+        "route": "/projects",
+        "tab": "finances",
+        "label": "Финансы",
+    }
+
+
+def _comment_result(comment):
+    text = (comment.text or "").strip()
+    return {
+        "type": "comment",
+        "id": comment.id,
+        "project_id": comment.project_id,
+        "title": text[:80] or "Комментарий",
+        "subtitle": getattr(comment.project, "title", "") or getattr(comment.project, "client_name", ""),
+        "route": "/projects",
+        "tab": "comments",
+        "label": "Комментарий",
+    }
+
+
+def _project_activity_payload(project):
+    events = []
+
+    for comment in project.comments.select_related("author").order_by("-created_at")[:30]:
+        events.append(
+            {
+                "type": "comment",
+                "title": "Комментарий",
+                "description": comment.text,
+                "actor_name": user_display_name(comment.author),
+                "created_at": comment.created_at.isoformat(),
+            }
+        )
+
+    for task in project.tasks.select_related("created_by", "assignee").order_by("-created_at")[:30]:
+        events.append(
+            {
+                "type": "task",
+                "title": "Задача создана" if task.status != Task.Status.DONE else "Задача выполнена",
+                "description": task.title,
+                "actor_name": user_display_name(task.created_by),
+                "created_at": task.updated_at.isoformat() if task.status == Task.Status.DONE else task.created_at.isoformat(),
+            }
+        )
+
+    for payment in project.payments.select_related("created_by", "category").order_by("-created_at")[:30]:
+        category_name = getattr(payment.category, "name", "") or "Операция"
+        events.append(
+            {
+                "type": "payment",
+                "title": category_name,
+                "description": f"{payment.amount} ₽ · {payment.comment or 'без комментария'}",
+                "actor_name": user_display_name(payment.created_by),
+                "created_at": payment.created_at.isoformat(),
+            }
+        )
+
+    for bonus in project.bonus_transactions.select_related("created_by", "client").order_by("-created_at")[:20]:
+        events.append(
+            {
+                "type": "bonus",
+                "title": "Бонусная операция",
+                "description": f"{bonus.amount} ₽ · {bonus.comment or bonus.get_type_display()}",
+                "actor_name": user_display_name(bonus.created_by),
+                "created_at": bonus.created_at.isoformat(),
+            }
+        )
+
+    for log in AuditLog.objects.select_related("actor").filter(
+        workspace=project.workspace,
+        entity_type="project",
+        entity_id=str(project.id),
+    ).order_by("-created_at")[:30]:
+        events.append(
+            {
+                "type": "audit",
+                "title": f"Изменение: {log.action}",
+                "description": "",
+                "actor_name": user_display_name(log.actor),
+                "created_at": log.created_at.isoformat(),
+            }
+        )
+
+    return sorted(events, key=lambda item: item["created_at"], reverse=True)[:80]
 
 
 @api_view(["GET"])
@@ -363,6 +536,103 @@ def finance_analytics_ai_view(request):
     return Response({"analysis": analysis, "overview": overview})
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+def cash_forecast_view(request):
+    project_queryset, payment_queryset, filters = _finance_scope(request)
+    reference_queryset = _visible_finance_projects(request.user)
+    return Response(
+        build_cash_forecast(
+            project_queryset,
+            payment_queryset,
+            reference_projects_queryset=reference_queryset,
+        )
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAny, HasAssistantSubscription])
+def cash_forecast_ai_view(request):
+    project_queryset, payment_queryset, filters = _finance_scope(request)
+    reference_queryset = _visible_finance_projects(request.user)
+    forecast = build_cash_forecast(
+        project_queryset,
+        payment_queryset,
+        reference_projects_queryset=reference_queryset,
+    )
+
+    try:
+        analysis = _build_cash_forecast_ai_text(forecast)
+    except GeminiConfigurationError as exc:
+        return Response({"detail": str(exc)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
+    except GeminiRequestError as exc:
+        return Response({"detail": str(exc)}, status=drf_status.HTTP_502_BAD_GATEWAY)
+
+    return Response({"analysis": analysis, "forecast": forecast})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+def global_search_view(request):
+    query = str(request.query_params.get("q") or "").strip()
+    if len(query) < 2:
+        return Response({"query": query, "results": []})
+
+    workspace = current_workspace(request.user)
+    phone_query = phone_search_digits(query)
+    project_queryset = Project.objects.filter(workspace=workspace).select_related("client")
+    if not request.user.is_admin():
+        project_queryset = project_queryset.filter(manager=request.user)
+
+    project_filter = (
+        Q(title__icontains=query)
+        | Q(client_name__icontains=query)
+        | Q(client_phone__icontains=query)
+        | Q(object_address__icontains=query)
+        | Q(description__icontains=query)
+    )
+    if phone_query:
+        project_filter |= Q(client_phone__icontains=phone_query)
+    projects = list(project_queryset.filter(project_filter).order_by("-updated_at")[:8])
+
+    client_queryset = Client.objects.filter(workspace=workspace)
+    client_filter = Q(name__icontains=query) | Q(phone__icontains=query) | Q(email__icontains=query) | Q(address__icontains=query)
+    if phone_query:
+        client_filter |= Q(phone__icontains=phone_query)
+    clients = list(client_queryset.filter(client_filter).order_by("name")[:6])
+
+    task_queryset = Task.objects.select_related("project").filter(assignee__workspace=workspace)
+    task_queryset = task_queryset.filter(Q(project__isnull=True) | Q(project__workspace=workspace))
+    if not request.user.is_admin():
+        task_queryset = task_queryset.filter(assignee=request.user)
+    tasks = list(task_queryset.filter(Q(title__icontains=query) | Q(notes__icontains=query) | Q(project__title__icontains=query)).order_by("status", "due_date")[:6])
+
+    payment_queryset = Payment.objects.select_related("project", "category").filter(project__in=project_queryset)
+    payments = list(
+        payment_queryset.filter(
+            Q(comment__icontains=query)
+            | Q(project__title__icontains=query)
+            | Q(project__client_name__icontains=query)
+            | Q(category__name__icontains=query)
+        ).order_by("-paid_at")[:6]
+    )
+
+    comments = list(
+        ProjectComment.objects.select_related("project")
+        .filter(project__in=project_queryset, text__icontains=query)
+        .order_by("-created_at")[:6]
+    )
+
+    results = []
+    results.extend(_project_result(project) for project in projects)
+    results.extend(_client_result(client) for client in clients)
+    results.extend(_task_result(task) for task in tasks)
+    results.extend(_payment_result(payment) for payment in payments)
+    results.extend(_comment_result(comment) for comment in comments)
+
+    return Response({"query": query, "results": results[:30]})
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticatedAny, HasAssistantSubscription])
 def assistant_chat_view(request):
@@ -457,17 +727,62 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 }
             )
 
-        serializer.save(manager=user, workspace=workspace)
+        project = serializer.save(manager=user, workspace=workspace)
         record_project_created(subscription)
+        apply_task_templates_for_project(project, actor=user)
+        create_audit_log(
+            user,
+            "project",
+            project.id,
+            "create",
+            after=snapshot_model(project, ["id", "title", "client_name", "client_phone", "object_address", "total_amount", "status"]),
+            workspace=workspace,
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        before = snapshot_model(instance, ["id", "title", "client_name", "client_phone", "object_address", "total_amount", "status"])
+        previous_status = instance.status
+        project = serializer.save()
+        if previous_status != project.status:
+            apply_task_templates_for_project(project, actor=self.request.user)
+        create_audit_log(
+            self.request.user,
+            "project",
+            project.id,
+            "update",
+            before=before,
+            after=snapshot_model(project, ["id", "title", "client_name", "client_phone", "object_address", "total_amount", "status"]),
+            workspace=project.workspace,
+        )
 
     def perform_destroy(self, instance):
+        before = snapshot_model(instance, ["id", "title", "client_name", "client_phone", "object_address", "total_amount", "status"])
         reverse_project_bonus_effects(instance, actor=self.request.user)
+        create_audit_log(
+            self.request.user,
+            "project",
+            instance.id,
+            "delete",
+            before=before,
+            workspace=instance.workspace,
+        )
         instance.delete()
 
     @action(detail=True, methods=["get"], url_path="finance-analytics")
     def finance_analytics(self, request, pk=None):
         project = self.get_object()
         return Response(build_project_finance_analytics(project))
+
+    @action(detail=True, methods=["get"], url_path="status-checks")
+    def status_checks(self, request, pk=None):
+        project = self.get_object()
+        return Response(build_project_status_check(project))
+
+    @action(detail=True, methods=["get"], url_path="activity")
+    def activity(self, request, pk=None):
+        project = self.get_object()
+        return Response({"project": project.id, "events": _project_activity_payload(project)})
 
     @action(detail=True, methods=["post"], url_path="custom-field-files", parser_classes=[MultiPartParser, FormParser])
     def upload_custom_field_file(self, request, pk=None):
@@ -623,9 +938,18 @@ class ClientViewSet(viewsets.ModelViewSet):
         return qs.distinct()
 
     def perform_create(self, serializer):
-        serializer.save(workspace=current_workspace(self.request.user))
+        client = serializer.save(workspace=current_workspace(self.request.user))
+        create_audit_log(
+            self.request.user,
+            "client",
+            client.id,
+            "create",
+            after=snapshot_model(client, ["id", "name", "phone", "email", "address", "works_with_contract", "bonus_balance"]),
+            workspace=client.workspace,
+        )
 
     def perform_update(self, serializer):
+        before = snapshot_model(serializer.instance, ["id", "name", "phone", "email", "address", "works_with_contract", "bonus_balance"])
         client = serializer.save()
         Project.objects.filter(workspace=client.workspace, client=client).update(
             client_name=client.name,
@@ -633,6 +957,20 @@ class ClientViewSet(viewsets.ModelViewSet):
             client_email=client.email,
             works_with_contract=client.works_with_contract,
         )
+        create_audit_log(
+            self.request.user,
+            "client",
+            client.id,
+            "update",
+            before=before,
+            after=snapshot_model(client, ["id", "name", "phone", "email", "address", "works_with_contract", "bonus_balance"]),
+            workspace=client.workspace,
+        )
+
+    def perform_destroy(self, instance):
+        before = snapshot_model(instance, ["id", "name", "phone", "email", "address", "works_with_contract", "bonus_balance"])
+        create_audit_log(self.request.user, "client", instance.id, "delete", before=before, workspace=instance.workspace)
+        instance.delete()
 
 
 class PaymentViewSet(viewsets.ModelViewSet):
@@ -650,22 +988,44 @@ class PaymentViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             payment = serializer.save(created_by=self.request.user)
             ensure_project_bonus_accrual(payment.project, actor=self.request.user)
+            create_audit_log(
+                self.request.user,
+                "payment",
+                payment.id,
+                "create",
+                after=snapshot_model(payment, ["id", "project_id", "category_id", "account_id", "paid_at", "amount", "type", "comment"]),
+                workspace=payment.project.workspace,
+            )
 
     def perform_update(self, serializer):
         previous_project_id = serializer.instance.project_id
+        before = snapshot_model(serializer.instance, ["id", "project_id", "category_id", "account_id", "paid_at", "amount", "type", "comment"])
         with transaction.atomic():
             payment = serializer.save()
             project_ids = {previous_project_id, payment.project_id}
             for project_id in project_ids:
                 if project_id:
                     ensure_project_bonus_accrual(Project.objects.get(pk=project_id), actor=self.request.user)
+            create_audit_log(
+                self.request.user,
+                "payment",
+                payment.id,
+                "update",
+                before=before,
+                after=snapshot_model(payment, ["id", "project_id", "category_id", "account_id", "paid_at", "amount", "type", "comment"]),
+                workspace=payment.project.workspace,
+            )
 
     def perform_destroy(self, instance):
+        payment_id = instance.id
         project_id = instance.project_id
+        workspace = instance.project.workspace
+        before = snapshot_model(instance, ["id", "project_id", "category_id", "account_id", "paid_at", "amount", "type", "comment"])
         with transaction.atomic():
             instance.delete()
             if project_id:
                 ensure_project_bonus_accrual(Project.objects.get(pk=project_id), actor=self.request.user)
+            create_audit_log(self.request.user, "payment", payment_id, "delete", before=before, workspace=workspace)
 
 
 class ClientBonusTransactionViewSet(viewsets.ReadOnlyModelViewSet):
@@ -705,7 +1065,34 @@ class ProjectCommentViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(author=self.request.user)
+        comment = serializer.save(author=self.request.user)
+        create_audit_log(
+            self.request.user,
+            "comment",
+            comment.id,
+            "create",
+            after=snapshot_model(comment, ["id", "project_id", "text"]),
+            workspace=comment.project.workspace,
+        )
+
+    def perform_update(self, serializer):
+        before = snapshot_model(serializer.instance, ["id", "project_id", "text"])
+        comment = serializer.save()
+        create_audit_log(
+            self.request.user,
+            "comment",
+            comment.id,
+            "update",
+            before=before,
+            after=snapshot_model(comment, ["id", "project_id", "text"]),
+            workspace=comment.project.workspace,
+        )
+
+    def perform_destroy(self, instance):
+        workspace = instance.project.workspace
+        before = snapshot_model(instance, ["id", "project_id", "text"])
+        create_audit_log(self.request.user, "comment", instance.id, "delete", before=before, workspace=workspace)
+        instance.delete()
 
 
 class ProjectStatusViewSet(viewsets.ModelViewSet):
@@ -824,7 +1211,88 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         assignee = serializer.validated_data.get("assignee") or self.request.user
-        serializer.save(created_by=self.request.user, assignee=assignee)
+        task = serializer.save(created_by=self.request.user, assignee=assignee)
+        create_audit_log(
+            self.request.user,
+            "task",
+            task.id,
+            "create",
+            after=snapshot_model(task, ["id", "project_id", "title", "status", "priority", "due_date"]),
+            workspace=getattr(task.project, "workspace", current_workspace(self.request.user)),
+        )
+
+    def perform_update(self, serializer):
+        before = snapshot_model(serializer.instance, ["id", "project_id", "title", "status", "priority", "due_date"])
+        task = serializer.save()
+        create_audit_log(
+            self.request.user,
+            "task",
+            task.id,
+            "update",
+            before=before,
+            after=snapshot_model(task, ["id", "project_id", "title", "status", "priority", "due_date"]),
+            workspace=getattr(task.project, "workspace", current_workspace(self.request.user)),
+        )
+
+    def perform_destroy(self, instance):
+        workspace = getattr(instance.project, "workspace", current_workspace(self.request.user))
+        before = snapshot_model(instance, ["id", "project_id", "title", "status", "priority", "due_date"])
+        create_audit_log(self.request.user, "task", instance.id, "delete", before=before, workspace=workspace)
+        instance.delete()
+
+
+class TaskTemplateViewSet(viewsets.ModelViewSet):
+    serializer_class = TaskTemplateSerializer
+    http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return (
+            TaskTemplate.objects.select_related("status")
+            .filter(workspace=current_workspace(self.request.user))
+            .order_by("status__sort_order", "sort_order", "id")
+        )
+
+    def get_permissions(self):
+        if self.action in {"list", "retrieve"}:
+            return [IsAuthenticatedAny(), HasActiveSubscription()]
+        return [IsAdmin(), HasActiveSubscription()]
+
+    def perform_create(self, serializer):
+        template = serializer.save(workspace=current_workspace(self.request.user))
+        create_audit_log(
+            self.request.user,
+            "task_template",
+            template.id,
+            "create",
+            after=snapshot_model(template, ["id", "status_id", "title", "due_in_days", "priority", "auto_create", "sort_order"]),
+            workspace=template.workspace,
+        )
+
+    def perform_update(self, serializer):
+        before = snapshot_model(serializer.instance, ["id", "status_id", "title", "due_in_days", "priority", "auto_create", "sort_order"])
+        template = serializer.save()
+        create_audit_log(
+            self.request.user,
+            "task_template",
+            template.id,
+            "update",
+            before=before,
+            after=snapshot_model(template, ["id", "status_id", "title", "due_in_days", "priority", "auto_create", "sort_order"]),
+            workspace=template.workspace,
+        )
+
+    def perform_destroy(self, instance):
+        before = snapshot_model(instance, ["id", "status_id", "title", "due_in_days", "priority", "auto_create", "sort_order"])
+        create_audit_log(self.request.user, "task_template", instance.id, "delete", before=before, workspace=instance.workspace)
+        instance.delete()
+
+
+class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = AuditLogSerializer
+    permission_classes = [IsAdmin, HasActiveSubscription]
+
+    def get_queryset(self):
+        return AuditLog.objects.select_related("actor").filter(workspace=current_workspace(self.request.user)).order_by("-created_at", "-id")
 
 
 class UserViewSet(viewsets.ModelViewSet):

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ChevronRight, Edit3, Gift, Mail, MapPin, Phone, Plus, Search, Ticket, Trash2, Wallet } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { createClient, deleteClient, extractApiErrorMessage, fetchClients, fetchPayments, fetchProjects, updateClient } from "../api";
 import { Badge, Button, Input, Label, Modal } from "../components/ui.jsx";
@@ -75,6 +75,7 @@ function InfoRow({ icon: Icon, label, value, href }) {
 
 export default function Clients() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [clientRows, setClientRows] = useState([]);
   const [projects, setProjects] = useState([]);
   const [payments, setPayments] = useState([]);
@@ -103,6 +104,22 @@ export default function Clients() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    const state = location.state || {};
+    if (state.q) {
+      setSearch(state.q);
+    }
+    if (state.clientId && clientRows.length) {
+      const client = clientRows.find((row) => String(row.id) === String(state.clientId));
+      setSelectedClientId(Number(state.clientId));
+      if (client) {
+        setEditForm(createClientEditForm(client));
+        setClientEditMode(false);
+      }
+      window.history.replaceState({}, document.title);
+    }
+  }, [clientRows.length, location.state]);
 
   const clients = useMemo(() => {
     const projectsByClient = new Map();

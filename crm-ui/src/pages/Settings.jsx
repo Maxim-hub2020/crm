@@ -5,6 +5,7 @@ import {
   GripVertical,
   Hash,
   Layers,
+  ListTodo,
   Lock,
   MessageCircle,
   Plus,
@@ -21,12 +22,14 @@ import {
   createFinanceCategory,
   createProjectCustomField,
   createProjectStatus,
+  createTaskTemplate,
   createUser,
   deleteAccount,
   deleteDocumentTemplate,
   deleteFinanceCategory,
   deleteProjectCustomField,
   deleteProjectStatus,
+  deleteTaskTemplate,
   extractApiErrorMessage,
   fetchAccounts,
   fetchChatSettings,
@@ -34,7 +37,9 @@ import {
   fetchFinanceCategories,
   fetchProjectCustomFields,
   fetchProjectStatuses,
+  fetchTaskTemplates,
   fetchUsers,
+  updateTaskTemplate,
   updateFinanceCategory,
   updateProjectStatus,
   updateChatSettings,
@@ -153,6 +158,7 @@ export default function Settings() {
   const [categories, setCategories] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [customFields, setCustomFields] = useState([]);
+  const [taskTemplates, setTaskTemplates] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [chatSettings, setChatSettings] = useState(null);
   const [error, setError] = useState("");
@@ -167,6 +173,7 @@ export default function Settings() {
   const [accountName, setAccountName] = useState("");
   const [fieldName, setFieldName] = useState("");
   const [fieldType, setFieldType] = useState("text");
+  const [taskTemplateForm, setTaskTemplateForm] = useState({ status: "", title: "", notes: "", due_in_days: "1", priority: "medium" });
   const [templateBusy, setTemplateBusy] = useState(false);
   const [chatSaving, setChatSaving] = useState(false);
   const [chatForm, setChatForm] = useState({
@@ -178,12 +185,13 @@ export default function Settings() {
   });
 
   async function reload() {
-    const [userRows, statusRows, categoryRows, accountRows, fieldRows, templateRows, chatRows] = await Promise.all([
+    const [userRows, statusRows, categoryRows, accountRows, fieldRows, taskTemplateRows, templateRows, chatRows] = await Promise.all([
       fetchUsers(),
       fetchProjectStatuses(),
       fetchFinanceCategories(),
       fetchAccounts(),
       fetchProjectCustomFields(),
+      fetchTaskTemplates(),
       fetchDocumentTemplates(),
       fetchChatSettings(),
     ]);
@@ -193,6 +201,7 @@ export default function Settings() {
     setCategories(categoryRows);
     setAccounts(accountRows);
     setCustomFields(fieldRows);
+    setTaskTemplates(taskTemplateRows);
     setTemplates(templateRows);
     setChatSettings(chatRows);
     setChatForm({
@@ -202,6 +211,7 @@ export default function Settings() {
       inbox_name: chatRows.inbox_name || "",
       api_access_token: "",
     });
+    setTaskTemplateForm((prev) => ({ ...prev, status: prev.status || statusRows[0]?.id || "" }));
   }
 
   useEffect(() => {
@@ -346,6 +356,34 @@ export default function Settings() {
       await reload();
     } catch (requestError) {
       setError(extractApiErrorMessage(requestError, "Не удалось добавить поле."));
+    }
+  }
+
+  async function handleAddTaskTemplate(event) {
+    event.preventDefault();
+    if (!taskTemplateForm.status || !taskTemplateForm.title.trim()) return;
+    try {
+      await createTaskTemplate({
+        status: taskTemplateForm.status,
+        title: taskTemplateForm.title.trim(),
+        notes: taskTemplateForm.notes.trim(),
+        due_in_days: Number(taskTemplateForm.due_in_days) || 0,
+        priority: taskTemplateForm.priority,
+        auto_create: true,
+      });
+      setTaskTemplateForm((prev) => ({ ...prev, title: "", notes: "", due_in_days: "1", priority: "medium" }));
+      await reload();
+    } catch (requestError) {
+      setError(extractApiErrorMessage(requestError, "Не удалось добавить шаблон задачи."));
+    }
+  }
+
+  async function handleToggleTaskTemplate(template) {
+    try {
+      await updateTaskTemplate(template.id, { auto_create: !template.auto_create });
+      await reload();
+    } catch (requestError) {
+      setError(extractApiErrorMessage(requestError, "Не удалось обновить шаблон задачи."));
     }
   }
 
@@ -512,6 +550,79 @@ export default function Settings() {
             />
             <button className="w-full rounded-full bg-gray-900 px-5 py-3 text-xs font-bold text-white shadow-lg hover:bg-black" type="submit">
               Добавить
+            </button>
+          </form>
+        </SettingsCard>
+
+        <SettingsCard title="Шаблоны задач" icon={<ListTodo size={16} />}>
+          <div className="mb-4 space-y-2">
+            {taskTemplates.map((template) => (
+              <div key={template.id} className="rounded-2xl bg-gray-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-black text-gray-900">{template.title}</div>
+                    <div className="mt-1 text-xs font-semibold text-gray-500">
+                      {template.status_name || "Этап"} · срок +{template.due_in_days || 0} дн. · {template.priority}
+                    </div>
+                    {template.notes ? <div className="mt-2 line-clamp-2 text-xs text-gray-500">{template.notes}</div> : null}
+                  </div>
+                  <DeleteButton onClick={() => removeAndReload(deleteTaskTemplate, template.id, "Не удалось удалить шаблон задачи.")} />
+                </div>
+                <button
+                  type="button"
+                  className={`mt-3 rounded-full px-3 py-1 text-xs font-black ${
+                    template.auto_create ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-500"
+                  }`}
+                  onClick={() => handleToggleTaskTemplate(template)}
+                >
+                  {template.auto_create ? "Автосоздание включено" : "Автосоздание выключено"}
+                </button>
+              </div>
+            ))}
+            {taskTemplates.length === 0 ? (
+              <div className="rounded-2xl bg-gray-50 px-4 py-6 text-sm text-gray-400">Шаблонов пока нет.</div>
+            ) : null}
+          </div>
+
+          <form className="space-y-3 border-t pt-4" onSubmit={handleAddTaskTemplate}>
+            <Select
+              value={taskTemplateForm.status}
+              onChange={(event) => setTaskTemplateForm((prev) => ({ ...prev, status: event.target.value }))}
+            >
+              {statuses.map((status) => (
+                <option key={status.id} value={status.id}>
+                  {status.name}
+                </option>
+              ))}
+            </Select>
+            <Input
+              value={taskTemplateForm.title}
+              onChange={(event) => setTaskTemplateForm((prev) => ({ ...prev, title: event.target.value }))}
+              placeholder="Название задачи"
+            />
+            <Input
+              value={taskTemplateForm.notes}
+              onChange={(event) => setTaskTemplateForm((prev) => ({ ...prev, notes: event.target.value }))}
+              placeholder="Комментарий к задаче"
+            />
+            <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-2">
+              <Select
+                value={taskTemplateForm.priority}
+                onChange={(event) => setTaskTemplateForm((prev) => ({ ...prev, priority: event.target.value }))}
+              >
+                <option value="low">Низкий</option>
+                <option value="medium">Средний</option>
+                <option value="high">Высокий</option>
+              </Select>
+              <Input
+                inputMode="numeric"
+                value={taskTemplateForm.due_in_days}
+                onChange={(event) => setTaskTemplateForm((prev) => ({ ...prev, due_in_days: event.target.value }))}
+                placeholder="+ дней"
+              />
+            </div>
+            <button className="w-full rounded-full bg-gray-900 px-5 py-3 text-xs font-bold text-white shadow-lg hover:bg-black" type="submit">
+              Добавить шаблон
             </button>
           </form>
         </SettingsCard>

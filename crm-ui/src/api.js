@@ -265,6 +265,12 @@ export async function fetchProjects() {
   return data;
 }
 
+export async function fetchGlobalSearch(query) {
+  initApiAuth();
+  const { data } = await api.get("/api/global-search/", { params: { q: query } });
+  return data;
+}
+
 export async function fetchClients(params = {}) {
   initApiAuth();
   const { data } = await api.get("/api/clients/", { params });
@@ -450,6 +456,18 @@ export async function deleteProject(projectId) {
   await api.delete(`/api/projects/${projectId}/`);
 }
 
+export async function fetchProjectActivity(projectId) {
+  initApiAuth();
+  const { data } = await api.get(`/api/projects/${projectId}/activity/`);
+  return data;
+}
+
+export async function fetchProjectStatusChecks(projectId) {
+  initApiAuth();
+  const { data } = await api.get(`/api/projects/${projectId}/status-checks/`);
+  return data;
+}
+
 export async function fetchPayments() {
   initApiAuth();
   const { data } = await api.get("/api/payments/");
@@ -465,6 +483,18 @@ export async function fetchFinanceAnalytics(params = {}) {
 export async function requestFinanceAiAnalysis(payload = {}) {
   initApiAuth();
   const { data } = await api.post("/api/finance-analytics/ai/", payload);
+  return data;
+}
+
+export async function fetchCashForecast(params = {}) {
+  initApiAuth();
+  const { data } = await api.get("/api/cash-forecast/", { params });
+  return data;
+}
+
+export async function requestCashForecastAi(payload = {}) {
+  initApiAuth();
+  const { data } = await api.post("/api/cash-forecast/ai/", payload);
   return data;
 }
 
@@ -491,6 +521,29 @@ export async function updateTask(taskId, payload) {
 export async function deleteTask(taskId) {
   initApiAuth();
   await api.delete(`/api/tasks/${taskId}/`);
+}
+
+export async function fetchTaskTemplates() {
+  initApiAuth();
+  const { data } = await api.get("/api/task-templates/");
+  return data;
+}
+
+export async function createTaskTemplate(payload) {
+  initApiAuth();
+  const { data } = await api.post("/api/task-templates/", payload);
+  return data;
+}
+
+export async function updateTaskTemplate(templateId, payload) {
+  initApiAuth();
+  const { data } = await api.patch(`/api/task-templates/${templateId}/`, payload);
+  return data;
+}
+
+export async function deleteTaskTemplate(templateId) {
+  initApiAuth();
+  await api.delete(`/api/task-templates/${templateId}/`);
 }
 
 export async function createPayment(payload) {

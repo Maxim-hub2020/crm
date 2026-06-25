@@ -1,10 +1,12 @@
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Calendar,
   Check,
   Link,
   Copy,
   FileText,
+  History,
   LayoutGrid,
   List,
   ListTodo,
@@ -37,9 +39,11 @@ import {
   fetchClients,
   fetchFinanceCategories,
   fetchPayments,
+  fetchProjectActivity,
   fetchProjectComments,
   fetchProjectCustomFields,
   fetchProjects,
+  fetchProjectStatusChecks,
   fetchProjectStatuses,
   fetchTasks,
   hasDadataAddressSuggestions,
@@ -322,6 +326,31 @@ function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString("ru-RU");
+}
+
+const PROJECT_ACTIVITY_LABELS = {
+  create: "Создание",
+  update: "Изменение",
+  delete: "Удаление",
+  create_comment: "Комментарий",
+  update_comment: "Изменение комментария",
+  delete_comment: "Удаление комментария",
+  create_payment: "Финансы",
+  update_payment: "Изменение операции",
+  delete_payment: "Удаление операции",
+  create_task: "Задача",
+  update_task: "Изменение задачи",
+  delete_task: "Удаление задачи",
+};
+
+function projectActivityLabel(event) {
+  return event?.title || PROJECT_ACTIVITY_LABELS[event?.action] || PROJECT_ACTIVITY_LABELS[event?.type] || "Событие";
+}
+
+function projectCheckToneClass(severity) {
+  if (severity === "critical") return "bg-red-50 text-red-700 ring-red-100";
+  if (severity === "warning") return "bg-amber-50 text-amber-700 ring-amber-100";
+  return "bg-blue-50 text-blue-700 ring-blue-100";
 }
 
 function todayDateValue() {
@@ -912,6 +941,10 @@ export default function Projects() {
 
   const [comments, setComments] = useState([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
+  const [projectActivity, setProjectActivity] = useState([]);
+  const [projectActivityLoading, setProjectActivityLoading] = useState(false);
+  const [projectStatusChecks, setProjectStatusChecks] = useState(null);
+  const [projectStatusChecksLoading, setProjectStatusChecksLoading] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [commentSaving, setCommentSaving] = useState(false);
   const [commentError, setCommentError] = useState("");
@@ -1011,6 +1044,40 @@ export default function Projects() {
       setComments([]);
     } finally {
       setCommentsLoading(false);
+    }
+  }
+
+  async function reloadProjectActivity(projectId) {
+    if (!projectId) {
+      setProjectActivity([]);
+      return;
+    }
+
+    setProjectActivityLoading(true);
+    try {
+      const response = await fetchProjectActivity(projectId);
+      setProjectActivity(response.events || []);
+    } catch {
+      setProjectActivity([]);
+    } finally {
+      setProjectActivityLoading(false);
+    }
+  }
+
+  async function reloadProjectStatusChecks(projectId) {
+    if (!projectId) {
+      setProjectStatusChecks(null);
+      return;
+    }
+
+    setProjectStatusChecksLoading(true);
+    try {
+      const response = await fetchProjectStatusChecks(projectId);
+      setProjectStatusChecks(response);
+    } catch {
+      setProjectStatusChecks(null);
+    } finally {
+      setProjectStatusChecksLoading(false);
     }
   }
 
@@ -1373,6 +1440,8 @@ export default function Projects() {
           setClients(refreshedClients);
         }
         detailSnapshotRef.current = JSON.stringify(buildProjectUpdatePayload(normalizeProjectForm(updated, defaultStatusValue)));
+        reloadProjectStatusChecks(updated.id).catch(() => {});
+        reloadProjectActivity(updated.id).catch(() => {});
         setDetailError("");
         setDetailAutosaveState("saved");
         window.setTimeout(() => {
@@ -1393,6 +1462,8 @@ export default function Projects() {
   useEffect(() => {
     if (!activeProjectId) {
       setComments([]);
+      setProjectActivity([]);
+      setProjectStatusChecks(null);
       setCommentText("");
       setCommentError("");
       setEditingCommentId(null);
@@ -1406,6 +1477,8 @@ export default function Projects() {
     }
 
     reloadComments(activeProjectId).catch(() => {});
+    reloadProjectActivity(activeProjectId).catch(() => {});
+    reloadProjectStatusChecks(activeProjectId).catch(() => {});
     setEditingCommentId(null);
     setEditingCommentText("");
     setEditingPaymentId(null);
@@ -1933,6 +2006,7 @@ export default function Projects() {
 
       setComments((prev) => [created, ...prev]);
       setCommentText("");
+      reloadProjectActivity(activeProject.id).catch(() => {});
     } catch (error) {
       setCommentError(extractApiErrorMessage(error, "Не удалось добавить комментарий."));
     } finally {
@@ -1948,6 +2022,7 @@ export default function Projects() {
         setEditingCommentId(null);
         setEditingCommentText("");
       }
+      if (activeProject) reloadProjectActivity(activeProject.id).catch(() => {});
     } catch (error) {
       setCommentError(extractApiErrorMessage(error, "Не удалось удалить комментарий."));
     }
@@ -1980,6 +2055,7 @@ export default function Projects() {
       setComments((prev) => prev.map((comment) => (comment.id === updated.id ? updated : comment)));
       setEditingCommentId(null);
       setEditingCommentText("");
+      if (activeProject) reloadProjectActivity(activeProject.id).catch(() => {});
     } catch (error) {
       setCommentError(extractApiErrorMessage(error, "Не удалось сохранить комментарий."));
     } finally {
@@ -2041,6 +2117,8 @@ export default function Projects() {
       setClients(refreshedClients);
       setPaymentForm(createEmptyPaymentForm());
       setEditingPaymentId(null);
+      reloadProjectActivity(activeProject.id).catch(() => {});
+      reloadProjectStatusChecks(activeProject.id).catch(() => {});
     } catch (error) {
       setPaymentError(extractApiErrorMessage(error, "Не удалось сохранить операцию."));
     } finally {
@@ -2076,6 +2154,10 @@ export default function Projects() {
       if (editingPaymentId === paymentId) {
         cancelPaymentEdit();
       }
+      if (activeProject) {
+        reloadProjectActivity(activeProject.id).catch(() => {});
+        reloadProjectStatusChecks(activeProject.id).catch(() => {});
+      }
     } catch (error) {
       setPaymentError(extractApiErrorMessage(error, "Не удалось удалить операцию."));
     }
@@ -2104,6 +2186,8 @@ export default function Projects() {
 
       setTasks((prev) => [created, ...prev]);
       setTaskForm(createEmptyTaskForm());
+      reloadProjectActivity(activeProject.id).catch(() => {});
+      reloadProjectStatusChecks(activeProject.id).catch(() => {});
     } catch (error) {
       setTaskError(extractApiErrorMessage(error, "Не удалось создать задачу."));
     } finally {
@@ -2117,6 +2201,10 @@ export default function Projects() {
         status: task.status === "done" ? "open" : "done",
       });
       setTasks((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      if (activeProject) {
+        reloadProjectActivity(activeProject.id).catch(() => {});
+        reloadProjectStatusChecks(activeProject.id).catch(() => {});
+      }
     } catch (error) {
       setTaskError(extractApiErrorMessage(error, "Не удалось обновить задачу."));
     }
@@ -2126,6 +2214,10 @@ export default function Projects() {
     try {
       await deleteTask(taskId);
       setTasks((prev) => prev.filter((task) => task.id !== taskId));
+      if (activeProject) {
+        reloadProjectActivity(activeProject.id).catch(() => {});
+        reloadProjectStatusChecks(activeProject.id).catch(() => {});
+      }
     } catch (error) {
       setTaskError(extractApiErrorMessage(error, "Не удалось удалить задачу."));
     }
@@ -2271,6 +2363,8 @@ export default function Projects() {
 
       if (activeProjectId === projectId) {
         setDetailForm((prev) => ({ ...prev, status: nextStatus }));
+        reloadProjectActivity(projectId).catch(() => {});
+        reloadProjectStatusChecks(projectId).catch(() => {});
       }
     } catch (error) {
       setProjects((prev) =>
@@ -3238,6 +3332,33 @@ export default function Projects() {
             </div>
 
             {detailError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{detailError}</div>}
+            {projectStatusChecksLoading ? (
+              <div className="rounded-[24px] bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-500">
+                Проверяем проект...
+              </div>
+            ) : projectStatusChecks?.issues?.length ? (
+              <div className="rounded-[24px] bg-white p-4 ring-1 ring-slate-200">
+                <div className="flex items-center gap-2 text-sm font-black text-slate-900">
+                  <AlertTriangle size={17} className="text-amber-500" />
+                  Требует внимания перед закрытием
+                </div>
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  {projectStatusChecks.issues.map((issue, index) => (
+                    <div
+                      key={`${issue.code || issue.title}-${index}`}
+                      className={`rounded-2xl px-3 py-2 text-sm font-semibold ring-1 ${projectCheckToneClass(issue.severity)}`}
+                    >
+                      <div className="font-black">{issue.title}</div>
+                      {issue.message ? <div className="mt-1 text-xs leading-5 opacity-80">{issue.message}</div> : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : projectStatusChecks ? (
+              <div className="rounded-[24px] bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">
+                По проекту критичных замечаний нет.
+              </div>
+            ) : null}
 
             <div className="flex flex-wrap gap-2 rounded-[28px] bg-slate-100 p-1">
               <Button
@@ -3266,6 +3387,15 @@ export default function Projects() {
               >
                 <Wallet size={16} />
                 Финансы
+              </Button>
+              <Button
+                type="button"
+                variant={detailTab === "activity" ? "primary" : "ghost"}
+                className="px-4"
+                onClick={() => setDetailTab("activity")}
+              >
+                <History size={16} />
+                Лента
               </Button>
             </div>
 
@@ -3429,7 +3559,7 @@ export default function Projects() {
                   </CardBody>
                 </Card>
               </div>
-            ) : (
+            ) : detailTab === "finances" ? (
               <div className="space-y-6">
                 <Card className="border border-slate-100 shadow-none ring-0">
                   <CardHeader>
@@ -3592,6 +3722,48 @@ export default function Projects() {
                   </CardBody>
                 </Card>
               </div>
+            ) : (
+              <Card className="border border-slate-100 shadow-none ring-0">
+                <CardHeader>
+                  <div className="flex items-center gap-2 text-lg font-black tracking-tight text-slate-900">
+                    <History size={18} />
+                    Лента проекта
+                  </div>
+                  <div className="mt-1 text-sm text-slate-500">
+                    Здесь собираются изменения карточки, комментарии, задачи и финансовые операции.
+                  </div>
+                </CardHeader>
+                <CardBody>
+                  {projectActivityLoading ? (
+                    <div className="rounded-[24px] bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                      Загружаем ленту...
+                    </div>
+                  ) : projectActivity.length === 0 ? (
+                    <div className="rounded-[24px] bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                      В ленте пока нет событий.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {projectActivity.map((event) => (
+                        <div key={event.id || `${event.type}-${event.created_at}`} className="rounded-[24px] bg-slate-50 px-4 py-4 ring-1 ring-slate-100">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <div className="text-sm font-black text-slate-900">{projectActivityLabel(event)}</div>
+                              {event.description ? (
+                                <div className="mt-1 text-sm font-semibold leading-5 text-slate-600">{event.description}</div>
+                              ) : null}
+                            </div>
+                            <div className="shrink-0 text-xs font-semibold text-slate-400">{formatDateTime(event.created_at)}</div>
+                          </div>
+                          <div className="mt-3 text-xs font-black uppercase tracking-[0.16em] text-slate-400">
+                            {event.actor_name || "CRM"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardBody>
+              </Card>
             )}
 
             <div className="flex justify-center border-t border-slate-100 pt-5">

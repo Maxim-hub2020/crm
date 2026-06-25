@@ -14,6 +14,7 @@ from .models import (
     ProjectCustomField,
     ProjectStatus,
     Task,
+    TaskTemplate,
     User,
     Workspace,
 )
@@ -26,6 +27,7 @@ admin.site.register(ProjectStatus)
 admin.site.register(Project)
 admin.site.register(Payment)
 admin.site.register(Task)
+admin.site.register(TaskTemplate)
 admin.site.register(FinanceCategory)
 admin.site.register(Account)
 admin.site.register(ProjectCustomField)

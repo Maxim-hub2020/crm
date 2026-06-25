@@ -9,6 +9,7 @@ from django.utils.text import slugify
 from .bonuses import apply_project_bonus_promo_code, ensure_project_bonus_accrual, normalize_bonus_promo_code, promo_code_for_phone
 from .models import (
     Account,
+    AuditLog,
     ChatIntegrationSettings,
     Client,
     ClientBonusTransaction,
@@ -20,6 +21,7 @@ from .models import (
     ProjectCustomField,
     ProjectStatus,
     Task,
+    TaskTemplate,
     User,
 )
 from .phones import PHONE_VALIDATION_ERROR, normalize_russian_phone, phone_digits
@@ -777,6 +779,79 @@ class TaskSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("You can assign tasks only to yourself.")
 
         return assignee
+
+
+class TaskTemplateSerializer(serializers.ModelSerializer):
+    status_code = serializers.CharField(source="status.code", read_only=True)
+    status_name = serializers.CharField(source="status.name", read_only=True)
+
+    class Meta:
+        model = TaskTemplate
+        fields = [
+            "id",
+            "status",
+            "status_code",
+            "status_name",
+            "title",
+            "notes",
+            "due_in_days",
+            "priority",
+            "auto_create",
+            "sort_order",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["status_code", "status_name", "created_at", "updated_at"]
+        extra_kwargs = {
+            "notes": {"required": False, "allow_blank": True},
+            "due_in_days": {"required": False},
+            "priority": {"required": False},
+            "auto_create": {"required": False},
+            "sort_order": {"required": False},
+        }
+
+    def validate_status(self, status):
+        request = self.context.get("request")
+        workspace = current_workspace(getattr(request, "user", None))
+        if status.workspace_id != getattr(workspace, "id", None):
+            raise serializers.ValidationError("Статус относится к другой компании.")
+        return status
+
+    def validate(self, attrs):
+        if self.instance is None and "sort_order" not in attrs:
+            request = self.context.get("request")
+            workspace = current_workspace(getattr(request, "user", None))
+            status = attrs.get("status")
+            max_order = (
+                TaskTemplate.objects.filter(workspace=workspace, status=status)
+                .order_by("-sort_order")
+                .values_list("sort_order", flat=True)
+                .first()
+            )
+            attrs["sort_order"] = (max_order or 0) + 10
+        return attrs
+
+
+class AuditLogSerializer(serializers.ModelSerializer):
+    actor_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AuditLog
+        fields = [
+            "id",
+            "actor",
+            "actor_name",
+            "entity_type",
+            "entity_id",
+            "action",
+            "before_json",
+            "after_json",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_actor_name(self, obj):
+        return obj.actor.get_full_name() or obj.actor.username
 
 
 class AdminUserSerializer(serializers.ModelSerializer):

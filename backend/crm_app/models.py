@@ -481,6 +481,36 @@ class Task(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 
+class TaskTemplate(models.Model):
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="task_templates",
+        blank=True,
+        null=True,
+        db_index=True,
+    )
+    status = models.ForeignKey(ProjectStatus, on_delete=models.CASCADE, related_name="task_templates")
+    title = models.CharField(max_length=200)
+    notes = models.TextField(blank=True, default="")
+    due_in_days = models.PositiveIntegerField(default=0)
+    priority = models.CharField(max_length=20, choices=Task.Priority.choices, default=Task.Priority.MEDIUM)
+    auto_create = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["status__sort_order", "sort_order", "id"]
+
+    def save(self, *args, **kwargs):
+        if not self.workspace_id and self.status_id:
+            self.workspace = self.status.workspace
+        if not self.workspace_id:
+            self.workspace = default_workspace()
+        super().save(*args, **kwargs)
+
+
 class SubscriptionPlan(models.Model):
     code = models.SlugField(max_length=50, unique=True, allow_unicode=True)
     name = models.CharField(max_length=120)
