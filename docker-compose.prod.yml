@@ -117,7 +117,7 @@ services:
       - media_volume:/app/media
       - ./backend/secrets:/app/secrets:ro
     command: >
-      celery -A crm_core.celery:app worker --loglevel=info --queues=assistant --concurrency=$${CELERY_WORKER_CONCURRENCY:-1}
+      sh -c "celery -A crm_core.celery:app worker --loglevel=info --queues=assistant --concurrency=$${CELERY_WORKER_CONCURRENCY:-1}"
 
   nginx:
     image: crm-nginx:latest
