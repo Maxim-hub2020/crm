@@ -3,6 +3,7 @@ import {
   ChevronLeft,
   Folder,
   FolderOpen,
+  ExternalLink,
   CreditCard,
   FileText,
   GripVertical,
@@ -671,6 +672,15 @@ export default function Settings() {
               />
               <span>Автоматически создавать папку при создании проекта</span>
             </label>
+            <a
+              className="flex w-full items-center justify-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-5 py-3 text-sm font-bold text-blue-700 transition hover:border-blue-200 hover:bg-blue-100"
+              href="https://disk.yandex.ru/client/disk"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <ExternalLink size={17} />
+              Войти в Яндекс.Диск
+            </a>
             {renderYandexDiskPathField("base_path", "Папка проектов", "Сюда будут автоматически попадать новые папки проектов.")}
             {renderYandexDiskPathField("archive_path", "Папка архива", "Сюда CRM перенесёт папку проекта после перехода в завершённый статус.")}
             <textarea
