@@ -123,14 +123,13 @@ export default function Layout({ children }) {
         state: {
           projectId: result.project_id,
           tab: result.tab || "comments",
-          q: result.title || "",
         },
       });
       return;
     }
 
     if (result.type === "client") {
-      navigate("/clients", { state: { clientId: result.client_id, q: result.title || "" } });
+      navigate("/clients", { state: { clientId: result.client_id } });
       return;
     }
 
@@ -183,7 +182,7 @@ export default function Layout({ children }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         {!isAssistantMode && (
-          <header className="z-10 flex h-12 shrink-0 items-center justify-between gap-3 border-b border-slate-200/70 bg-white px-4 sm:px-6">
+          <header className="z-10 flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 bg-white px-4 py-2 sm:flex-nowrap sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
               <button onClick={() => setSidebarOpen(true)} className="-ml-2 p-2 text-slate-500 md:hidden" type="button">
                 <Menu size={20} />
@@ -191,7 +190,7 @@ export default function Layout({ children }) {
               <h1 className="truncate text-lg font-black uppercase tracking-tight text-slate-900">{currentMeta.title}</h1>
             </div>
 
-            <div className="relative hidden min-w-[240px] max-w-xl flex-1 sm:block">
+            <div className="relative order-3 w-full sm:order-none sm:min-w-[240px] sm:max-w-xl sm:flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 value={globalQuery}

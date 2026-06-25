@@ -1,4 +1,4 @@
-import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Calendar,
@@ -17,7 +17,6 @@ import {
   Pencil,
   Phone,
   Plus,
-  Search,
   Trash2,
   Wallet,
 } from "lucide-react";
@@ -259,13 +258,6 @@ function normalizeSearchText(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-function customFieldValueSearchText(value) {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return [value.name, value.original_name, value.url, value.content_type].filter(Boolean).join(" ");
-  }
-  return String(value || "");
-}
-
 function phoneHref(value) {
   const normalized = String(value || "").replace(/[^\d+]/g, "");
   return normalized ? `tel:${normalized}` : "";
@@ -381,31 +373,6 @@ function isPastDateValue(value) {
 
 function isFuturePayment(payment) {
   return toDateInputValue(payment?.paid_at) > todayDateValue();
-}
-
-function projectSearchText(project, statusMap) {
-  const status = statusMap.get(project.status);
-  return normalizeSearchText(
-    [
-      project.title,
-      projectOrderLabel(project),
-      project.order_number,
-      project.client_name,
-      project.client_phone,
-      project.client_email,
-      project.object_address,
-      project.bonus_promo_code,
-      project.apartment,
-      project.entrance,
-      project.floor,
-      project.description,
-      ...Object.values(project.custom_fields || {}).map(customFieldValueSearchText),
-      status?.label,
-      status?.short,
-    ]
-      .filter(Boolean)
-      .join(" ")
-  );
 }
 
 function formatDeadline(value) {
@@ -924,15 +891,12 @@ export default function Projects() {
   const [accounts, setAccounts] = useState([]);
   const [customFields, setCustomFields] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState(location.state?.q || "");
-  const deferredQuery = useDeferredValue(query);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem(VIEW_MODE_KEY) || "kanban");
   const [touchDragProjectId, setTouchDragProjectId] = useState(null);
   const [dragTargetStatus, setDragTargetStatus] = useState("");
   const [dragPreview, setDragPreview] = useState(null);
   const pointerDragRef = useRef(null);
   const suppressProjectClickRef = useRef(false);
-  const handledQueryStateRef = useRef("");
   const handledOpenProjectStateRef = useRef("");
   const bodyDragStyleRef = useRef(null);
   const kanbanScrollRef = useRef(null);
@@ -1138,12 +1102,6 @@ export default function Projects() {
 
   useEffect(() => {
     const state = location.state || {};
-    const queryStateKey = `${location.key}:${state.q || ""}`;
-    if (state.q && handledQueryStateRef.current !== queryStateKey) {
-      handledQueryStateRef.current = queryStateKey;
-      setQuery(state.q);
-    }
-
     const requestedProjectId = state.projectId;
     if (requestedProjectId) {
       const stateKey = `${location.key}:${requestedProjectId}:${state.tab || "comments"}`;
@@ -1156,9 +1114,6 @@ export default function Projects() {
       return;
     }
 
-    if (state.q) {
-      window.history.replaceState({}, document.title);
-    }
   }, [location.key, location.state, projects]);
 
   useEffect(() => {
@@ -1236,21 +1191,7 @@ export default function Projects() {
     return clientDirectory.find((client) => String(client.client_id) === String(createForm.client)) || null;
   }, [clientDirectory, createForm.client]);
 
-  const filteredProjects = useMemo(() => {
-    const tokens = normalizeSearchText(deferredQuery).split(/\s+/).filter(Boolean);
-    if (!tokens.length) return projects;
-
-    return projects.filter((project) => {
-      const searchText = projectSearchText(project, statusMap);
-      return tokens.every((token) => searchText.includes(token));
-    });
-  }, [deferredQuery, projects, statusMap]);
-
-  const projectSearchResults = useMemo(() => {
-    const tokens = normalizeSearchText(deferredQuery).split(/\s+/).filter(Boolean);
-    if (!tokens.length) return [];
-    return filteredProjects.slice(0, 8);
-  }, [deferredQuery, filteredProjects]);
+  const filteredProjects = projects;
 
   const groupedProjects = useMemo(() => {
     const groups = Object.fromEntries(statusOptions.map((status) => [status.value, []]));
@@ -2649,47 +2590,7 @@ export default function Projects() {
           width={dragPreview.width}
         />
       )}
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-        <div className="relative w-full max-w-[420px]">
-          <Search
-            size={21}
-            className="pointer-events-none absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"
-          />
-          <Input
-            className="h-14 rounded-[20px] border-slate-200/90 bg-white pl-14 pr-4 text-[1.02rem] shadow-[0_12px_28px_rgba(15,23,42,0.05)]"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Поиск проектов..."
-          />
-          {projectSearchResults.length > 0 && (
-            <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-30 overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_24px_60px_rgba(15,23,42,0.12)]">
-              {projectSearchResults.map((project) => (
-                <button
-                  key={project.id}
-                  type="button"
-                  className="block w-full border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 hover:bg-blue-50"
-                  onClick={() => {
-                    setQuery("");
-                    openProject(project);
-                  }}
-                >
-                  <div className="flex items-center gap-2">
-                    {projectOrderLabel(project) ? (
-                      <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-black text-blue-600">
-                        №{projectOrderLabel(project)}
-                      </span>
-                    ) : null}
-                    <div className="font-black text-slate-900">{projectDisplayName(project)}</div>
-                  </div>
-                  <div className="mt-1 line-clamp-1 text-sm font-semibold text-slate-500">
-                    {[project.client_name, project.object_address, statusMap.get(project.status)?.label].filter(Boolean).join(" · ")}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-end">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 rounded-full bg-white p-1 shadow-sm ring-1 ring-slate-200/80">
             <ModeButton active={viewMode === "kanban"} icon={LayoutGrid} label="Канбан" onClick={() => setViewMode("kanban")} />
@@ -3223,7 +3124,7 @@ export default function Projects() {
                             </div>
                             {projectClientQueryHasPhone ? (
                               <div className="mt-2 text-xs font-semibold text-slate-400">
-                                Телефон возьмём из строки поиска.
+                                Телефон возьмём из поля клиента.
                               </div>
                             ) : null}
                           </div>

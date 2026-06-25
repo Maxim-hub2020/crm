@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Edit3, Gift, Mail, MapPin, Phone, Plus, Search, Ticket, Trash2, Wallet } from "lucide-react";
+import { ChevronRight, Edit3, Gift, Mail, MapPin, Phone, Plus, Ticket, Trash2, Wallet } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -14,7 +14,7 @@ import {
   updateClient,
 } from "../api";
 import { Badge, Button, Input, Label, Modal } from "../components/ui.jsx";
-import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneSearchDigits } from "../utils/phone.js";
+import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone } from "../utils/phone.js";
 
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
@@ -217,7 +217,6 @@ export default function Clients() {
   const [clientRows, setClientRows] = useState([]);
   const [projects, setProjects] = useState([]);
   const [payments, setPayments] = useState([]);
-  const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [selectedClientId, setSelectedClientId] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -245,9 +244,6 @@ export default function Clients() {
 
   useEffect(() => {
     const state = location.state || {};
-    if (state.q) {
-      setSearch(state.q);
-    }
     if (state.clientId && clientRows.length) {
       const client = clientRows.find((row) => String(row.id) === String(state.clientId));
       setSelectedClientId(Number(state.clientId));
@@ -289,27 +285,12 @@ export default function Clients() {
           worksWithContract: Boolean(client.works_with_contract),
           bonusBalance: Number(client.bonus_balance || 0),
           promoCode: client.promo_code || "",
-          phoneSearch: phoneSearchDigits(client.phone),
           paymentsCount: projectPayments.length,
           total,
         };
       })
       .sort((left, right) => (left.name || "").localeCompare(right.name || "", "ru"));
   }, [clientRows, payments, projects]);
-
-  const filteredClients = useMemo(() => {
-    const value = search.trim().toLowerCase();
-    const phoneQuery = phoneSearchDigits(search);
-    if (!value) return clients;
-
-    return clients.filter((client) => {
-      const byText = [client.name, client.phone, client.email, client.address]
-        .filter(Boolean)
-        .some((field) => field.toLowerCase().includes(value));
-      const byPhone = phoneQuery.length >= 3 && String(client.phoneSearch || "").includes(phoneQuery);
-      return byText || byPhone;
-    });
-  }, [clients, search]);
 
   const selectedClient = useMemo(
     () => clients.find((client) => client.id === selectedClientId) || null,
@@ -453,17 +434,7 @@ export default function Clients() {
 
   return (
     <div>
-      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full sm:max-w-xs">
-          <Input
-            className="h-12 rounded-[18px] pl-10"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Поиск клиентов..."
-          />
-          <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
-        </div>
-
+      <div className="mb-5 flex justify-end">
         <Button type="button" className="w-full justify-center sm:w-auto" onClick={openClientCreate}>
           <Plus size={16} />
           Добавить клиента
@@ -473,7 +444,7 @@ export default function Clients() {
       {error && <div className="mb-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
       <div className="space-y-2">
-        {filteredClients.map((client) => (
+        {clients.map((client) => (
           <button
             key={client.id}
             type="button"
@@ -500,7 +471,7 @@ export default function Clients() {
           </button>
         ))}
 
-        {filteredClients.length === 0 && (
+        {clients.length === 0 && (
           <div className="rounded-[32px] bg-white p-10 text-center text-gray-400 shadow-lg">
             Клиенты не найдены.
           </div>
@@ -606,7 +577,7 @@ export default function Clients() {
                     key={project.id}
                     type="button"
                     className="w-full rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-left transition hover:border-blue-200 hover:bg-blue-50"
-                    onClick={() => navigate("/projects", { state: { q: project.title || project.client_name } })}
+                    onClick={() => navigate("/projects", { state: { projectId: project.id, tab: "comments" } })}
                   >
                     <div className="font-black text-slate-900">{project.title || project.client_name || `Проект #${project.id}`}</div>
                     <div className="mt-1 line-clamp-1 text-sm text-slate-500">{project.object_address || "Адрес не указан"}</div>

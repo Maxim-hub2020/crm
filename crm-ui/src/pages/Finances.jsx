@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowUpCircle, Brain, CheckCircle2, Pencil, Plus, RefreshCw, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowUpCircle, Brain, CheckCircle2, Pencil, Plus, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import {
@@ -17,11 +17,6 @@ import {
   updatePayment,
 } from "../api";
 import { Badge, Button, Input, Label, Modal, Select } from "../components/ui.jsx";
-
-const KIND_LABELS = {
-  income: "Доход",
-  expense: "Расход",
-};
 
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
@@ -457,10 +452,6 @@ function CashForecastBlock({
   );
 }
 
-function normalizeSearch(value) {
-  return String(value || "").trim().toLowerCase();
-}
-
 export default function Finances() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
@@ -468,7 +459,6 @@ export default function Finances() {
   const [categories, setCategories] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [activeTab, setActiveTab] = useState("operations");
-  const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [account, setAccount] = useState("all");
   const [projectFilter, setProjectFilter] = useState("all");
@@ -607,37 +597,16 @@ export default function Finances() {
   }, [activeTab, analyticsParams, cashForecastRefreshKey]);
 
   const filteredPayments = useMemo(() => {
-    const value = normalizeSearch(search);
     const minAmount = amountFrom ? Number(amountFrom) : null;
     const maxAmount = amountTo ? Number(amountTo) : null;
     const fromTime = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null;
     const toTime = dateTo ? new Date(`${dateTo}T23:59:59`).getTime() : null;
 
     return payments.filter((payment) => {
-      const project = projectMap.get(payment.project);
       const kind = paymentKind(payment);
       const signedAmount = paymentSignedAmount(payment);
       const absoluteAmount = Math.abs(signedAmount);
       const paidTime = payment.paid_at ? new Date(payment.paid_at).getTime() : null;
-
-      const matchesSearch =
-        !value ||
-        [
-          project?.title,
-          project?.client_name,
-          project?.client_phone,
-          project?.object_address,
-          payment.comment,
-          payment.category_name,
-          payment.account_name,
-          KIND_LABELS[kind],
-          isFuturePayment(payment) ? "запланировано" : "",
-          formatDate(payment.paid_at),
-          payment.amount,
-          paymentDisplaySignedAmount(payment),
-        ]
-          .filter((field) => field !== null && field !== undefined)
-          .some((field) => normalizeSearch(field).includes(value));
 
       const matchesProject = projectFilter === "all" || String(payment.project || "") === projectFilter;
       const matchesKind = kindFilter === "all" || kind === kindFilter;
@@ -649,7 +618,6 @@ export default function Finances() {
       const matchesDateTo = toTime === null || (paidTime !== null && paidTime <= toTime);
 
       return (
-        matchesSearch &&
         matchesProject &&
         matchesKind &&
         matchesCategory &&
@@ -660,7 +628,7 @@ export default function Finances() {
         matchesDateTo
       );
     });
-  }, [account, amountFrom, amountTo, category, dateFrom, dateTo, kindFilter, payments, projectFilter, projectMap, search]);
+  }, [account, amountFrom, amountTo, category, dateFrom, dateTo, kindFilter, payments, projectFilter]);
 
   function refreshAnalytics() {
     setAnalyticsRefreshKey((current) => current + 1);
@@ -672,12 +640,10 @@ export default function Finances() {
 
   function openProjectFromAnalytics(projectId, tab = "comments") {
     if (!projectId) return;
-    const project = projects.find((item) => String(item.id) === String(projectId));
     navigate("/projects", {
       state: {
         projectId,
         tab,
-        q: project ? projectDisplayName(project) : "",
       },
     });
   }
@@ -719,7 +685,6 @@ export default function Finances() {
   }
 
   function resetFilters() {
-    setSearch("");
     setCategory("all");
     setAccount("all");
     setProjectFilter("all");
@@ -849,7 +814,7 @@ export default function Finances() {
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="text-sm font-bold text-slate-900">Финансовые операции</div>
-          <div className="text-xs text-slate-500">Создание, поиск, фильтрация и контроль операций по проектам.</div>
+          <div className="text-xs text-slate-500">Создание, фильтрация и контроль операций по проектам.</div>
         </div>
         {activeTab === "operations" ? (
           <Button type="button" className="w-full justify-center lg:w-auto" onClick={openPaymentCreate}>
@@ -942,16 +907,7 @@ export default function Finances() {
         <>
 
       <div className="mb-4 rounded-[28px] bg-white p-4 shadow-lg">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="relative flex-grow">
-            <Input
-              className="pl-10"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Поиск по проекту, клиенту, телефону, адресу, сумме, комментарию..."
-            />
-            <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
-          </div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
           <Button type="button" variant="secondary" className="justify-center" onClick={() => setFiltersOpen((current) => !current)}>
             <SlidersHorizontal size={16} />
             Фильтры

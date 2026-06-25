@@ -97,7 +97,7 @@ export default function Dashboard() {
             <button
               key={project.id}
               type="button"
-              onClick={() => navigate("/projects", { state: { q: projectDisplayName(project) } })}
+              onClick={() => navigate("/projects", { state: { projectId: project.id, tab: "comments" } })}
               className="w-full rounded-2xl bg-gray-50 p-4 text-left transition hover:bg-gray-100"
             >
               <h4 className="font-bold text-gray-800">{projectDisplayName(project)}</h4>
