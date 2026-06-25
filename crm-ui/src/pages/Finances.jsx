@@ -424,7 +424,11 @@ function CashForecastBlock({
                         {item.kind === "expense" ? "−" : "+"} {formatMoney(item.amount)}
                       </span>
                     </div>
-                    <div className="mt-1 truncate font-semibold text-slate-400">{item.title}</div>
+                    <div className="mt-1 truncate font-semibold text-slate-400">
+                      {(item.missing_required_expenses || []).length
+                        ? `Не закрыто: ${(item.missing_required_expenses || []).join(", ")}`
+                        : item.title}
+                    </div>
                   </button>
                 ))}
                 {(bucket.items || []).length === 0 ? (

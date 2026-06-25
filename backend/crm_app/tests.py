@@ -1619,6 +1619,11 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
                 name="Доставка",
                 type=FinanceCategory.Type.EXPENSE,
             )[0],
+            "montage": FinanceCategory.objects.get_or_create(
+                workspace=self.manager.workspace,
+                name="Монтаж",
+                type=FinanceCategory.Type.EXPENSE,
+            )[0],
             "contractors": FinanceCategory.objects.get_or_create(
                 workspace=self.manager.workspace,
                 name="Оплата контрагентам",
@@ -1645,6 +1650,7 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         )
         for category_key, amount in (
             ("delivery", "5000.00"),
+            ("montage", "7000.00"),
             ("contractors", "10000.00"),
             ("calculations", "2000.00"),
             ("components", "20000.00"),
@@ -1665,7 +1671,7 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertTrue(response.data["paid_in_full"])
         self.assertTrue(response.data["should_review"])
         self.assertFalse(response.data["low_margin"])
-        self.assertEqual(response.data["margin_percent"], "63.00")
+        self.assertEqual(response.data["margin_percent"], "56.00")
         self.assertEqual(response.data["missing_required_expenses"], [])
 
     def test_project_finance_analytics_warns_about_missing_expenses_and_low_margin(self):
@@ -1793,10 +1799,12 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         prediction = response.data["expense_prediction"]
-        self.assertEqual(prediction["estimated_expense_total"], "20000.00")
+        self.assertEqual(prediction["estimated_expense_total"], "27000.00")
         self.assertEqual(prediction["current_expense_total"], "5000.00")
-        self.assertEqual(prediction["estimated_remaining_expense"], "15000.00")
+        self.assertEqual(prediction["estimated_remaining_expense"], "22000.00")
         self.assertEqual(prediction["basis_project_count"], 1)
+        self.assertEqual(prediction["learning_scope"], "similar_completed_projects")
+        self.assertIn("Монтаж", [item["label"] for item in prediction["required_expense_forecast"]])
         self.assertEqual(response.data["summary"]["at_risk_project_count"], 0)
         self.assertEqual(response.data["at_risk_projects"], [])
 
