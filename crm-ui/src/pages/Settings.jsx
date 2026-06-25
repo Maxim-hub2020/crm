@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  ChevronLeft,
+  Folder,
+  FolderOpen,
   CreditCard,
   FileText,
   GripVertical,
@@ -39,6 +42,7 @@ import {
   fetchProjectCustomFields,
   fetchProjectStatuses,
   fetchTaskTemplates,
+  fetchYandexDiskFolders,
   fetchYandexDiskSettings,
   fetchUsers,
   updateTaskTemplate,
@@ -48,7 +52,7 @@ import {
   updateYandexDiskSettings,
   uploadDocumentTemplate,
 } from "../api";
-import { Input, Select } from "../components/ui.jsx";
+import { Button, Input, Modal, Select } from "../components/ui.jsx";
 import { formatRussianPhoneInput } from "../utils/phone.js";
 
 const STATUS_COLOR = "sky";
@@ -181,6 +185,15 @@ export default function Settings() {
   const [templateBusy, setTemplateBusy] = useState(false);
   const [chatSaving, setChatSaving] = useState(false);
   const [yandexDiskSaving, setYandexDiskSaving] = useState(false);
+  const [diskPicker, setDiskPicker] = useState({
+    open: false,
+    target: "base_path",
+    title: "",
+    path: "disk:/",
+    folders: [],
+    loading: false,
+    error: "",
+  });
   const [chatForm, setChatForm] = useState({
     enabled: false,
     base_url: "",
@@ -463,6 +476,79 @@ export default function Settings() {
     }
   }
 
+  function parentDiskPath(path) {
+    const normalized = String(path || "disk:/").replace(/^disk:/, "").replace(/^\/+/, "");
+    if (!normalized) return "disk:/";
+    const parts = normalized.split("/").filter(Boolean);
+    parts.pop();
+    return parts.length ? `disk:/${parts.join("/")}` : "disk:/";
+  }
+
+  async function loadDiskPickerPath(path) {
+    setDiskPicker((prev) => ({ ...prev, path, loading: true, error: "" }));
+    try {
+      const response = await fetchYandexDiskFolders(path);
+      setDiskPicker((prev) => ({
+        ...prev,
+        path: response.path || path,
+        folders: response.folders || [],
+        loading: false,
+        error: "",
+      }));
+    } catch (requestError) {
+      setDiskPicker((prev) => ({
+        ...prev,
+        loading: false,
+        error: extractApiErrorMessage(requestError, "Не удалось загрузить папки Яндекс.Диска."),
+      }));
+    }
+  }
+
+  function openDiskPicker(target, title) {
+    const currentPath = yandexDiskForm[target] || "disk:/";
+    setDiskPicker({
+      open: true,
+      target,
+      title,
+      path: currentPath,
+      folders: [],
+      loading: true,
+      error: "",
+    });
+    loadDiskPickerPath(currentPath);
+  }
+
+  function closeDiskPicker() {
+    setDiskPicker((prev) => ({ ...prev, open: false, loading: false, error: "" }));
+  }
+
+  function selectCurrentDiskFolder() {
+    setYandexDiskForm((prev) => ({ ...prev, [diskPicker.target]: diskPicker.path }));
+    closeDiskPicker();
+  }
+
+  function renderYandexDiskPathField(target, label, description) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-3">
+        <div className="mb-2 flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</div>
+            <p className="mt-1 text-xs leading-4 text-slate-500">{description}</p>
+          </div>
+          <Button type="button" variant="secondary" className="shrink-0 px-3 py-2 text-xs" onClick={() => openDiskPicker(target, label)}>
+            <FolderOpen size={15} />
+            Выбрать
+          </Button>
+        </div>
+        <Input
+          value={yandexDiskForm[target]}
+          onChange={(event) => setYandexDiskForm((prev) => ({ ...prev, [target]: event.target.value }))}
+          placeholder={target === "archive_path" ? "/CRM/Архив" : "/CRM/Проекты"}
+        />
+      </div>
+    );
+  }
+
   async function handleSaveYandexDiskSettings(event) {
     event.preventDefault();
     setYandexDiskSaving(true);
@@ -501,6 +587,7 @@ export default function Settings() {
   }
 
   return (
+    <>
     <div className="grid gap-6 xl:grid-cols-3">
       {error ? (
         <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700 xl:col-span-3">{error}</div>
@@ -584,16 +671,8 @@ export default function Settings() {
               />
               <span>Автоматически создавать папку при создании проекта</span>
             </label>
-            <Input
-              value={yandexDiskForm.base_path}
-              onChange={(event) => setYandexDiskForm((prev) => ({ ...prev, base_path: event.target.value }))}
-              placeholder="/CRM/Проекты"
-            />
-            <Input
-              value={yandexDiskForm.archive_path}
-              onChange={(event) => setYandexDiskForm((prev) => ({ ...prev, archive_path: event.target.value }))}
-              placeholder="/CRM/Архив"
-            />
+            {renderYandexDiskPathField("base_path", "Папка проектов", "Сюда будут автоматически попадать новые папки проектов.")}
+            {renderYandexDiskPathField("archive_path", "Папка архива", "Сюда CRM перенесёт папку проекта после перехода в завершённый статус.")}
             <textarea
               className="min-h-40 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
               value={yandexDiskForm.folder_template_text}
@@ -933,5 +1012,51 @@ export default function Settings() {
         </SettingsCard>
       </div>
     </div>
+    <Modal
+      open={diskPicker.open}
+      title={diskPicker.title || "Выбор папки"}
+      onClose={closeDiskPicker}
+      widthClassName="max-w-2xl"
+      bodyClassName="space-y-4"
+    >
+      <div className="rounded-2xl bg-slate-50 p-3">
+        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Текущая папка</div>
+        <div className="mt-1 break-all text-sm font-bold text-slate-900">{diskPicker.path}</div>
+      </div>
+
+      {diskPicker.error ? <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{diskPicker.error}</div> : null}
+
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="secondary" onClick={() => loadDiskPickerPath(parentDiskPath(diskPicker.path))} disabled={diskPicker.loading || diskPicker.path === "disk:/"}>
+          <ChevronLeft size={16} />
+          Выше
+        </Button>
+        <Button type="button" onClick={selectCurrentDiskFolder} disabled={diskPicker.loading}>
+          <FolderOpen size={16} />
+          Выбрать текущую папку
+        </Button>
+      </div>
+
+      <div className="max-h-[48vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white">
+        {diskPicker.loading ? (
+          <div className="px-4 py-6 text-center text-sm font-semibold text-slate-400">Загружаем папки...</div>
+        ) : diskPicker.folders.length ? (
+          diskPicker.folders.map((folder) => (
+            <button
+              key={folder.path}
+              type="button"
+              className="flex w-full items-center gap-3 border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 hover:bg-blue-50"
+              onClick={() => loadDiskPickerPath(folder.path)}
+            >
+              <Folder size={18} className="shrink-0 text-blue-600" />
+              <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-800">{folder.name}</span>
+            </button>
+          ))
+        ) : (
+          <div className="px-4 py-6 text-center text-sm font-semibold text-slate-400">В этой папке нет вложенных папок.</div>
+        )}
+      </div>
+    </Modal>
+    </>
   );
 }

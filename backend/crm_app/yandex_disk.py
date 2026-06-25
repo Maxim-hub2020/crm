@@ -134,6 +134,36 @@ def get_yandex_disk_settings(workspace):
     return settings
 
 
+def list_disk_folders(token, disk_path="disk:/"):
+    url = f"{YANDEX_DISK_API_BASE}?{parse.urlencode({'path': normalize_disk_path(disk_path), 'limit': 200})}"
+    api_request = request.Request(url, method="GET", headers={"Authorization": f"OAuth {token}"})
+    try:
+        with request.urlopen(api_request, timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib_error.HTTPError as exc:
+        try:
+            payload = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            payload = {}
+        message = payload.get("message") or payload.get("description") or f"Yandex Disk API error {exc.code}"
+        raise YandexDiskError(message) from exc
+    except urllib_error.URLError as exc:
+        raise YandexDiskError(f"Yandex Disk connection error: {exc.reason}") from exc
+
+    items = payload.get("_embedded", {}).get("items", [])
+    folders = [
+        {
+            "name": item.get("name") or "",
+            "path": normalize_disk_path(item.get("path") or ""),
+            "modified": item.get("modified") or "",
+        }
+        for item in items
+        if item.get("type") == "dir"
+    ]
+    folders.sort(key=lambda item: item["name"].casefold())
+    return {"path": normalize_disk_path(payload.get("path") or disk_path), "folders": folders}
+
+
 def normalize_folder_template(value):
     if isinstance(value, str):
         try:

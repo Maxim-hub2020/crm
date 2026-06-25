@@ -78,7 +78,7 @@ from .subscription import (
 )
 from .tenancy import current_workspace
 from .workflow import apply_task_templates_for_project, build_project_status_check, create_audit_log, snapshot_model, user_display_name
-from .yandex_disk import archive_project_disk_folder, ensure_project_disk_folder, is_archive_project_status
+from .yandex_disk import YandexDiskError, archive_project_disk_folder, ensure_project_disk_folder, is_archive_project_status, list_disk_folders
 
 logger = logging.getLogger(__name__)
 
@@ -483,6 +483,21 @@ def yandex_disk_settings_view(request):
     serializer.is_valid(raise_exception=True)
     serializer.save(updated_by=request.user)
     return Response(serializer.data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+def yandex_disk_folders_view(request):
+    workspace = current_workspace(request.user)
+    settings, _created = YandexDiskSettings.objects.get_or_create(workspace=workspace)
+    if not settings.oauth_token:
+        return Response({"detail": "OAuth-токен Яндекс.Диска не настроен."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    disk_path = request.query_params.get("path") or "disk:/"
+    try:
+        return Response(list_disk_folders(settings.oauth_token, disk_path))
+    except YandexDiskError as exc:
+        return Response({"detail": str(exc)}, status=drf_status.HTTP_502_BAD_GATEWAY)
 
 
 @api_view(["GET"])

@@ -437,6 +437,12 @@ export async function fetchYandexDiskSettings() {
   return data;
 }
 
+export async function fetchYandexDiskFolders(path = "disk:/") {
+  initApiAuth();
+  const { data } = await api.get("/api/yandex-disk-folders/", { params: { path } });
+  return data;
+}
+
 export async function updateYandexDiskSettings(payload) {
   initApiAuth();
   const { data } = await api.patch("/api/yandex-disk-settings/", payload);
