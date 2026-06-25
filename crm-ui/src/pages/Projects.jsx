@@ -477,16 +477,48 @@ function projectDiscountedAmount(project) {
   return Math.max(0, Number(project?.total_amount || 0) - projectReferralBonus(project));
 }
 
+function paymentOperationKind(payment) {
+  if (payment?.category_type === "expense") return "expense";
+  if (payment?.category_type === "income") return "income";
+  return payment?.type === "refund" || payment?.type === "correction" ? "expense" : "income";
+}
+
 function paymentDisplaySignedAmount(payment) {
   const amount = Number(payment?.amount || 0);
-  if (payment?.category_type === "expense") return -amount;
-  if (payment?.category_type === "income") return amount;
-  return payment?.type === "refund" || payment?.type === "correction" ? -amount : amount;
+  return paymentOperationKind(payment) === "expense" ? -amount : amount;
 }
 
 function paymentSignedAmount(payment) {
   if (isFuturePayment(payment)) return 0;
   return paymentDisplaySignedAmount(payment);
+}
+
+function buildProjectFinanceSummary(project, payments = []) {
+  const projectTotal = projectDiscountedAmount(project);
+  const currentPayments = payments.filter((payment) => !isFuturePayment(payment));
+  const futurePayments = payments.length - currentPayments.length;
+
+  const totals = currentPayments.reduce(
+    (acc, payment) => {
+      const amount = Number(payment?.amount || 0);
+      if (paymentOperationKind(payment) === "expense") {
+        acc.expenses += amount;
+      } else {
+        acc.income += amount;
+      }
+      return acc;
+    },
+    { income: 0, expenses: 0 }
+  );
+
+  return {
+    projectTotal,
+    income: totals.income,
+    expenses: totals.expenses,
+    balance: totals.income - totals.expenses,
+    remainingToReceive: Math.max(0, projectTotal - totals.income),
+    futurePayments,
+  };
 }
 
 function paymentCategoryLabel(payment) {
@@ -1291,6 +1323,11 @@ export default function Projects() {
     if (!activeProjectId) return [];
     return paymentsByProject.get(activeProjectId) || [];
   }, [activeProjectId, paymentsByProject]);
+
+  const activeProjectFinanceSummary = useMemo(
+    () => buildProjectFinanceSummary(activeProject, activeProjectPayments),
+    [activeProject, activeProjectPayments]
+  );
 
   const routeUrl = useMemo(
     () => yandexRouteUrl(detailForm.object_address, detailForm.object_lat, detailForm.object_lon),
@@ -3622,6 +3659,62 @@ export default function Projects() {
               </div>
             ) : detailTab === "finances" ? (
               <div className="space-y-6">
+                <Card className="border border-slate-100 shadow-none ring-0">
+                  <CardHeader>
+                    <div className="text-lg font-black tracking-tight text-slate-900">Деньги по проекту сейчас</div>
+                    <div className="mt-1 text-sm text-slate-500">
+                      Считаем только фактические операции на сегодня: поступления минус расходники.
+                    </div>
+                  </CardHeader>
+                  <CardBody>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-[24px] border border-slate-100 bg-slate-50 p-4">
+                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">Сумма проекта</div>
+                        <div className="mt-3 text-2xl font-black tracking-tight text-slate-900">
+                          {formatMoney(activeProjectFinanceSummary.projectTotal)} ₽
+                        </div>
+                        <div className="mt-1 text-xs font-semibold text-slate-400">
+                          Осталось получить: {formatMoney(activeProjectFinanceSummary.remainingToReceive)} ₽
+                        </div>
+                      </div>
+                      <div className="rounded-[24px] border border-emerald-100 bg-emerald-50 p-4">
+                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-500">Аванс / оплаты</div>
+                        <div className="mt-3 text-2xl font-black tracking-tight text-emerald-700">
+                          {formatMoney(activeProjectFinanceSummary.income)} ₽
+                        </div>
+                        <div className="mt-1 text-xs font-semibold text-emerald-500">Поступило на проект</div>
+                      </div>
+                      <div className="rounded-[24px] border border-red-100 bg-red-50 p-4">
+                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-red-500">Расходники</div>
+                        <div className="mt-3 text-2xl font-black tracking-tight text-red-700">
+                          {formatMoney(activeProjectFinanceSummary.expenses)} ₽
+                        </div>
+                        <div className="mt-1 text-xs font-semibold text-red-500">Уже списано по проекту</div>
+                      </div>
+                      <div
+                        className={`rounded-[24px] border p-4 ${
+                          activeProjectFinanceSummary.balance < 0
+                            ? "border-red-200 bg-red-600 text-white"
+                            : "border-slate-900 bg-slate-950 text-white"
+                        }`}
+                      >
+                        <div className="text-[11px] font-black uppercase tracking-[0.18em] opacity-70">Сейчас в проекте</div>
+                        <div className="mt-3 text-2xl font-black tracking-tight">
+                          {activeProjectFinanceSummary.balance < 0 ? "− " : ""}
+                          {formatMoney(Math.abs(activeProjectFinanceSummary.balance))} ₽
+                        </div>
+                        <div className="mt-1 text-xs font-semibold opacity-70">Фактический остаток денег</div>
+                      </div>
+                    </div>
+
+                    {activeProjectFinanceSummary.futurePayments ? (
+                      <div className="mt-4 rounded-2xl bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
+                        Запланированные будущие операции не входят в текущий остаток: {activeProjectFinanceSummary.futurePayments}
+                      </div>
+                    ) : null}
+                  </CardBody>
+                </Card>
+
                 <Card className="border border-slate-100 shadow-none ring-0">
                   <CardHeader>
                     <div className="text-lg font-black tracking-tight text-slate-900">Добавить операцию</div>
