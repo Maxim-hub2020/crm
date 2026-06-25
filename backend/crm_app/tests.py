@@ -15,7 +15,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from .ai_assistant import CRMAssistantService, GeminiClient, GeminiRequestError, humanize_gemini_error
 from .live_assistant import AssistantLiveConsumer, _build_low_latency_system_instruction, _build_reference_cache, _has_live_assistant_access
-from .models import Account, ChatIntegrationSettings, Client, ClientBonusTransaction, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, ProjectStatus, SubscriptionInvoice, Task, User, Workspace
+from .models import Account, ChatIntegrationSettings, Client, ClientBonusTransaction, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, ProjectStatus, SubscriptionInvoice, Task, User, Workspace, YandexDiskSettings
 from .subscription import activate_subscription_invoice, ensure_subscription_defaults, issue_subscription_invoice
 
 
@@ -2260,6 +2260,60 @@ class TestProjectStatusesApi(AuthenticatedApiMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertTrue(ProjectStatus.objects.filter(id=self.active_status.id).exists())
+
+
+class TestYandexDiskArchiveApi(AuthenticatedApiMixin, APITestCase):
+    def setUp(self):
+        self.activate_subscription()
+        self.active_status, _ = ProjectStatus.objects.get_or_create(
+            code="active",
+            defaults={"name": "В работе", "short_name": "Работа", "color": "sky", "sort_order": 10, "is_default": True},
+        )
+        self.closed_status, _ = ProjectStatus.objects.get_or_create(
+            code="closed",
+            defaults={"name": "Завершено", "short_name": "Готово", "color": "emerald", "sort_order": 20, "is_default": False},
+        )
+        self.admin = self.create_user("admin.yandex.archive", role=User.Role.ADMIN)
+        YandexDiskSettings.objects.update_or_create(
+            workspace=self.admin.workspace,
+            defaults={
+                "enabled": True,
+                "auto_create_project_folders": True,
+                "base_path": "/CRM/Проекты",
+                "archive_path": "/CRM/Архив",
+                "oauth_token": "test-token",
+            },
+        )
+
+    def test_project_folder_moves_to_archive_when_project_status_becomes_closed(self):
+        project = Project.objects.create(
+            manager=self.admin,
+            title="Душевая",
+            client_name="Антон",
+            client_phone="+7-900-000-00-01",
+            status=self.active_status.code,
+        )
+        project.yandex_disk_path = "disk:/CRM/Проекты/№0001 · Душевая"
+        project.yandex_disk_web_url = "https://disk.yandex.ru/client/disk/CRM/Проекты/old"
+        project.save(update_fields=["yandex_disk_path", "yandex_disk_web_url", "updated_at"])
+        client = self.auth_client_for(self.admin)
+
+        with patch("crm_app.yandex_disk.ensure_folder_tree") as ensure_folder_tree, patch("crm_app.yandex_disk.move_resource") as move_resource:
+            response = client.patch(
+                f"/api/projects/{project.id}/",
+                {"status": self.closed_status.code},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        project.refresh_from_db()
+        expected_path = "disk:/CRM/Архив/№0001 · Душевая"
+        ensure_folder_tree.assert_called_once_with("test-token", "disk:/CRM/Архив")
+        move_resource.assert_called_once_with("test-token", "disk:/CRM/Проекты/№0001 · Душевая", expected_path)
+        self.assertEqual(project.yandex_disk_path, expected_path)
+        self.assertIn("/CRM/%D0%90%D1%80%D1%85%D0%B8%D0%B2/", project.yandex_disk_web_url)
+        self.assertIsNotNone(project.yandex_disk_archived_at)
+        self.assertEqual(project.yandex_disk_error, "")
 
 
 class TestAssistantApi(AuthenticatedApiMixin, APITestCase):

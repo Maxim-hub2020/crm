@@ -165,6 +165,7 @@ class Project(models.Model):
     yandex_disk_path = models.CharField(max_length=600, blank=True, default="")
     yandex_disk_web_url = models.URLField(max_length=1000, blank=True, default="")
     yandex_disk_created_at = models.DateTimeField(blank=True, null=True)
+    yandex_disk_archived_at = models.DateTimeField(blank=True, null=True)
     yandex_disk_error = models.TextField(blank=True, default="")
 
     # MVP: CSV. Можно заменить на ManyToMany позже.
@@ -430,6 +431,7 @@ class YandexDiskSettings(models.Model):
     enabled = models.BooleanField(default=False)
     auto_create_project_folders = models.BooleanField(default=True)
     base_path = models.CharField(max_length=500, blank=True, default="/CRM/Проекты")
+    archive_path = models.CharField(max_length=500, blank=True, default="/CRM/Архив")
     folder_template = models.JSONField(default=default_yandex_disk_folder_template, blank=True)
     oauth_token = models.CharField(max_length=512, blank=True, default="")
     updated_by = models.ForeignKey(

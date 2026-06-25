@@ -78,7 +78,7 @@ from .subscription import (
 )
 from .tenancy import current_workspace
 from .workflow import apply_task_templates_for_project, build_project_status_check, create_audit_log, snapshot_model, user_display_name
-from .yandex_disk import ensure_project_disk_folder
+from .yandex_disk import archive_project_disk_folder, ensure_project_disk_folder, is_archive_project_status
 
 logger = logging.getLogger(__name__)
 
@@ -768,6 +768,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         project = serializer.save()
         if previous_status != project.status:
             apply_task_templates_for_project(project, actor=self.request.user)
+            if is_archive_project_status(project):
+                archive_project_disk_folder(project, actor=self.request.user)
         create_audit_log(
             self.request.user,
             "project",

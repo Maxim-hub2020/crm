@@ -192,6 +192,7 @@ export default function Settings() {
     enabled: false,
     auto_create_project_folders: true,
     base_path: "/CRM/Проекты",
+    archive_path: "/CRM/Архив",
     folder_template_text: "Визуализация\nЗакупочная смета\nМодель\nРаскрой\nСмета\nСогласование\nТЗ\nЧертежи",
     oauth_token: "",
   });
@@ -229,6 +230,7 @@ export default function Settings() {
       enabled: Boolean(yandexDiskRows.enabled),
       auto_create_project_folders: Boolean(yandexDiskRows.auto_create_project_folders),
       base_path: yandexDiskRows.base_path || "/CRM/Проекты",
+      archive_path: yandexDiskRows.archive_path || "/CRM/Архив",
       folder_template_text: yandexDiskRows.folder_template_text || "Визуализация\nЗакупочная смета\nМодель\nРаскрой\nСмета\nСогласование\nТЗ\nЧертежи",
       oauth_token: "",
     });
@@ -469,6 +471,7 @@ export default function Settings() {
         enabled: Boolean(yandexDiskForm.enabled),
         auto_create_project_folders: Boolean(yandexDiskForm.auto_create_project_folders),
         base_path: yandexDiskForm.base_path.trim() || "/CRM/Проекты",
+        archive_path: yandexDiskForm.archive_path.trim() || "/CRM/Архив",
         folder_template: yandexDiskForm.folder_template_text
           .split(/\r?\n/)
           .map((item) => item.trim())
@@ -485,6 +488,7 @@ export default function Settings() {
         enabled: Boolean(updated.enabled),
         auto_create_project_folders: Boolean(updated.auto_create_project_folders),
         base_path: updated.base_path || "/CRM/Проекты",
+        archive_path: updated.archive_path || "/CRM/Архив",
         folder_template_text: updated.folder_template_text || prev.folder_template_text,
         oauth_token: "",
       }));
@@ -584,6 +588,11 @@ export default function Settings() {
               value={yandexDiskForm.base_path}
               onChange={(event) => setYandexDiskForm((prev) => ({ ...prev, base_path: event.target.value }))}
               placeholder="/CRM/Проекты"
+            />
+            <Input
+              value={yandexDiskForm.archive_path}
+              onChange={(event) => setYandexDiskForm((prev) => ({ ...prev, archive_path: event.target.value }))}
+              placeholder="/CRM/Архив"
             />
             <textarea
               className="min-h-40 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"

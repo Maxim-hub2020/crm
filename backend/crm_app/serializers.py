@@ -361,6 +361,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             "yandex_disk_path",
             "yandex_disk_web_url",
             "yandex_disk_created_at",
+            "yandex_disk_archived_at",
             "yandex_disk_error",
         ]
         extra_kwargs = {
@@ -571,6 +572,7 @@ class YandexDiskSettingsSerializer(serializers.ModelSerializer):
             "enabled",
             "auto_create_project_folders",
             "base_path",
+            "archive_path",
             "folder_template",
             "folder_template_text",
             "oauth_token",
@@ -582,6 +584,7 @@ class YandexDiskSettingsSerializer(serializers.ModelSerializer):
         read_only_fields = ["updated_by", "created_at", "updated_at", "has_oauth_token", "folder_template_text"]
         extra_kwargs = {
             "base_path": {"required": False, "allow_blank": True},
+            "archive_path": {"required": False, "allow_blank": True},
             "folder_template": {"required": False},
             "oauth_token": {"required": False, "allow_blank": True, "write_only": True},
         }
@@ -596,6 +599,10 @@ class YandexDiskSettingsSerializer(serializers.ModelSerializer):
     def validate_base_path(self, value):
         value = str(value or "").strip()
         return value or "/CRM/Проекты"
+
+    def validate_archive_path(self, value):
+        value = str(value or "").strip()
+        return value or "/CRM/Архив"
 
     def validate_folder_template(self, value):
         if isinstance(value, str):
