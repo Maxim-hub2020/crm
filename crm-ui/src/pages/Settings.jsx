@@ -208,7 +208,6 @@ export default function Settings() {
     base_path: "/CRM/Проекты",
     archive_path: "/CRM/Архив",
     folder_template_text: "Визуализация\nЗакупочная смета\nМодель\nРаскрой\nСмета\nСогласование\nТЗ\nЧертежи",
-    oauth_token: "",
   });
 
   async function reload() {
@@ -246,7 +245,6 @@ export default function Settings() {
       base_path: yandexDiskRows.base_path || "/CRM/Проекты",
       archive_path: yandexDiskRows.archive_path || "/CRM/Архив",
       folder_template_text: yandexDiskRows.folder_template_text || "Визуализация\nЗакупочная смета\nМодель\nРаскрой\nСмета\nСогласование\nТЗ\nЧертежи",
-      oauth_token: "",
     });
     setTaskTemplateForm((prev) => ({ ...prev, status: prev.status || statusRows[0]?.id || "" }));
   }
@@ -564,10 +562,6 @@ export default function Settings() {
           .map((item) => item.trim())
           .filter(Boolean),
       };
-      if (yandexDiskForm.oauth_token.trim()) {
-        payload.oauth_token = yandexDiskForm.oauth_token.trim();
-      }
-
       const updated = await updateYandexDiskSettings(payload);
       setYandexDiskSettings(updated);
       setYandexDiskForm((prev) => ({
@@ -577,7 +571,6 @@ export default function Settings() {
         base_path: updated.base_path || "/CRM/Проекты",
         archive_path: updated.archive_path || "/CRM/Архив",
         folder_template_text: updated.folder_template_text || prev.folder_template_text,
-        oauth_token: "",
       }));
       setError("");
     } catch (requestError) {
@@ -688,12 +681,6 @@ export default function Settings() {
               value={yandexDiskForm.folder_template_text}
               onChange={(event) => setYandexDiskForm((prev) => ({ ...prev, folder_template_text: event.target.value }))}
               placeholder={"Визуализация\nЗакупочная смета\nМодель\nРаскрой\nСмета\nСогласование\nТЗ\nЧертежи"}
-            />
-            <Input
-              type="password"
-              value={yandexDiskForm.oauth_token}
-              onChange={(event) => setYandexDiskForm((prev) => ({ ...prev, oauth_token: event.target.value }))}
-              placeholder={yandexDiskSettings?.has_oauth_token ? "OAuth-токен сохранён, новый вводить не обязательно" : "OAuth-токен Яндекс.Диска"}
             />
             <p className="text-xs leading-5 text-gray-500">
               Папка проекта будет называться как в CRM: номер проекта и его наименование. Внутри будут созданы подпапки из списка выше.
