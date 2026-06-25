@@ -299,7 +299,7 @@ function yandexRouteUrl(address, lat = "", lon = "") {
   const cleanAddress = cleanAddressForMaps(address);
   const cleanLat = String(lat || "").trim();
   const cleanLon = String(lon || "").trim();
-  const destination = cleanLat && cleanLon ? `${cleanLat},${cleanLon}` : cleanAddress;
+  const destination = cleanAddress || (cleanLat && cleanLon ? `${cleanLat},${cleanLon}` : "");
   if (!destination) return "";
   return `https://yandex.ru/maps/?mode=routes&rtext=~${encodeURIComponent(destination)}&ruri=~&rtt=auto`;
 }
