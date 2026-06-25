@@ -4,6 +4,7 @@ import os
 import tempfile
 from decimal import Decimal
 from io import StringIO
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 from asgiref.sync import async_to_sync
 from django.core.management import call_command
@@ -2314,6 +2315,57 @@ class TestYandexDiskArchiveApi(AuthenticatedApiMixin, APITestCase):
         self.assertIn("/CRM/%D0%90%D1%80%D1%85%D0%B8%D0%B2/", project.yandex_disk_web_url)
         self.assertIsNotNone(project.yandex_disk_archived_at)
         self.assertEqual(project.yandex_disk_error, "")
+
+
+class TestYandexDiskOAuthApi(AuthenticatedApiMixin, APITestCase):
+    def setUp(self):
+        self.activate_subscription()
+        self.admin = self.create_user("admin.yandex.oauth", role=User.Role.ADMIN)
+
+    @patch.dict(
+        os.environ,
+        {
+            "YANDEX_DISK_CLIENT_ID": "test-client-id",
+            "YANDEX_DISK_CLIENT_SECRET": "test-client-secret",
+            "YANDEX_DISK_REDIRECT_URI": "https://cehcrm.ru/api/yandex-disk/oauth/callback/",
+            "CRM_FRONTEND_URL": "https://cehcrm.ru",
+        },
+    )
+    def test_admin_can_connect_yandex_disk_via_oauth_callback(self):
+        client = self.auth_client_for(self.admin)
+        start_response = client.post("/api/yandex-disk/oauth/start/", {}, format="json")
+
+        self.assertEqual(start_response.status_code, status.HTTP_200_OK)
+        auth_url = start_response.data["authorization_url"]
+        parsed = urlparse(auth_url)
+        query = parse_qs(parsed.query)
+        self.assertEqual(parsed.netloc, "oauth.yandex.ru")
+        self.assertEqual(query["client_id"], ["test-client-id"])
+        self.assertEqual(query["redirect_uri"], ["https://cehcrm.ru/api/yandex-disk/oauth/callback/"])
+
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps({"access_token": "saved-yandex-token", "token_type": "bearer"}).encode("utf-8")
+
+        with patch("crm_app.yandex_disk.urllib_request.urlopen", return_value=FakeResponse()):
+            callback_response = self.client.get(
+                "/api/yandex-disk/oauth/callback/",
+                {"code": "oauth-code", "state": query["state"][0]},
+            )
+
+        self.assertEqual(callback_response.status_code, 302)
+        self.assertEqual(callback_response["Location"], "https://cehcrm.ru/settings?yandex_disk=connected")
+        settings = YandexDiskSettings.objects.get(workspace=self.admin.workspace)
+        self.assertTrue(settings.enabled)
+        self.assertEqual(settings.oauth_token, "saved-yandex-token")
 
 
 class TestAssistantApi(AuthenticatedApiMixin, APITestCase):

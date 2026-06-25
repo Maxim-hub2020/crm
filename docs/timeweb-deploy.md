@@ -65,8 +65,19 @@ GEMINI_TTS_AUDIO_ENCODING=MP3
 DADATA_API_KEY=ваш_dadata_api_key
 DADATA_DEFAULT_REGION=Ростовская область
 DADATA_DEFAULT_CITY=Ростов-на-Дону
+YANDEX_DISK_CLIENT_ID=client_id_приложения_яндекса
+YANDEX_DISK_CLIENT_SECRET=client_secret_приложения_яндекса
+YANDEX_DISK_REDIRECT_URI=https://cehcrm.ru/api/yandex-disk/oauth/callback/
 VITE_ASSISTANT_LIVE=0
 ```
+
+Для Яндекс.Диска создайте OAuth-приложение в Яндексе, включите доступ к Яндекс.Диску и укажите Redirect URI:
+
+```text
+https://cehcrm.ru/api/yandex-disk/oauth/callback/
+```
+
+После деплоя откройте `Система -> Яндекс.Диск` и нажмите `Подключить CRM к Яндекс.Диску`.
 
 Сгенерировать секрет Django можно так:
 

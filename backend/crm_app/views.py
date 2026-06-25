@@ -1,13 +1,16 @@
 import json
 import logging
+import os
 import uuid
 from io import BytesIO
+from urllib.parse import urlencode
 
 from django.core.files.storage import default_storage
 from django.db import transaction
 from django.db.models import F, Q, Value
 from django.db.models.functions import Replace
 from django.http import FileResponse
+from django.shortcuts import redirect
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.text import get_valid_filename
@@ -15,6 +18,7 @@ from rest_framework import viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status as drf_status
 
@@ -78,7 +82,17 @@ from .subscription import (
 )
 from .tenancy import current_workspace
 from .workflow import apply_task_templates_for_project, build_project_status_check, create_audit_log, snapshot_model, user_display_name
-from .yandex_disk import YandexDiskError, archive_project_disk_folder, ensure_project_disk_folder, is_archive_project_status, list_disk_folders
+from .yandex_disk import (
+    YandexDiskError,
+    archive_project_disk_folder,
+    build_yandex_disk_authorization_url,
+    connect_yandex_disk_with_code,
+    ensure_project_disk_folder,
+    is_archive_project_status,
+    list_disk_folders,
+    yandex_disk_oauth_configured,
+    yandex_disk_redirect_uri,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -474,7 +488,10 @@ def yandex_disk_settings_view(request):
     settings, _created = YandexDiskSettings.objects.get_or_create(workspace=workspace)
 
     if request.method == "GET":
-        return Response(YandexDiskSettingsSerializer(settings).data)
+        data = YandexDiskSettingsSerializer(settings).data
+        data["oauth_configured"] = yandex_disk_oauth_configured()
+        data["oauth_redirect_uri"] = yandex_disk_redirect_uri(request)
+        return Response(data)
 
     if not request.user.is_admin():
         return Response({"detail": "Настройки Яндекс.Диска может менять только администратор."}, status=drf_status.HTTP_403_FORBIDDEN)
@@ -483,6 +500,44 @@ def yandex_disk_settings_view(request):
     serializer.is_valid(raise_exception=True)
     serializer.save(updated_by=request.user)
     return Response(serializer.data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+def yandex_disk_oauth_start_view(request):
+    if not request.user.is_admin():
+        return Response({"detail": "Подключать Яндекс.Диск может только администратор."}, status=drf_status.HTTP_403_FORBIDDEN)
+
+    workspace = current_workspace(request.user)
+    try:
+        authorization_url = build_yandex_disk_authorization_url(request, workspace)
+    except YandexDiskError as exc:
+        return Response({"detail": str(exc)}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    return Response({"authorization_url": authorization_url, "redirect_uri": yandex_disk_redirect_uri(request)})
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def yandex_disk_oauth_callback_view(request):
+    error = request.query_params.get("error") or ""
+    error_description = request.query_params.get("error_description") or ""
+    frontend_url = _frontend_settings_url(request)
+
+    if error:
+        message = error_description or error
+        return redirect(f"{frontend_url}?{urlencode({'yandex_disk': 'error', 'message': message})}")
+
+    try:
+        connect_yandex_disk_with_code(
+            request,
+            code=request.query_params.get("code") or "",
+            state=request.query_params.get("state") or "",
+        )
+    except YandexDiskError as exc:
+        return redirect(f"{frontend_url}?{urlencode({'yandex_disk': 'error', 'message': str(exc)})}")
+
+    return redirect(f"{frontend_url}?{urlencode({'yandex_disk': 'connected'})}")
 
 
 @api_view(["GET"])
@@ -498,6 +553,13 @@ def yandex_disk_folders_view(request):
         return Response(list_disk_folders(settings.oauth_token, disk_path))
     except YandexDiskError as exc:
         return Response({"detail": str(exc)}, status=drf_status.HTTP_502_BAD_GATEWAY)
+
+
+def _frontend_settings_url(request):
+    base_url = (os.getenv("CRM_FRONTEND_URL") or os.getenv("FRONTEND_URL") or "").strip().rstrip("/")
+    if not base_url:
+        base_url = request.build_absolute_uri("/").rstrip("/")
+    return f"{base_url}/settings"
 
 
 @api_view(["GET"])

@@ -31,6 +31,8 @@ from .views import (
     health_view,
     me_view,
     yandex_disk_folders_view,
+    yandex_disk_oauth_callback_view,
+    yandex_disk_oauth_start_view,
     yandex_disk_settings_view,
 )
 
@@ -65,6 +67,8 @@ urlpatterns = [
     path("address-suggestions/", address_suggestions_view),
     path("chat-settings/", chat_settings_view),
     path("yandex-disk-folders/", yandex_disk_folders_view),
+    path("yandex-disk/oauth/start/", yandex_disk_oauth_start_view),
+    path("yandex-disk/oauth/callback/", yandex_disk_oauth_callback_view),
     path("yandex-disk-settings/", yandex_disk_settings_view),
     path("assistant/chat/", assistant_chat_view),
     path("assistant/voice/", assistant_voice_view),

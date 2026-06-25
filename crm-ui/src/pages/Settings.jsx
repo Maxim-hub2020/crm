@@ -46,6 +46,7 @@ import {
   fetchYandexDiskFolders,
   fetchYandexDiskSettings,
   fetchUsers,
+  startYandexDiskOAuth,
   updateTaskTemplate,
   updateFinanceCategory,
   updateProjectStatus,
@@ -171,6 +172,7 @@ export default function Settings() {
   const [chatSettings, setChatSettings] = useState(null);
   const [yandexDiskSettings, setYandexDiskSettings] = useState(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [draggedRow, setDraggedRow] = useState(null);
   const [reorderSaving, setReorderSaving] = useState("");
 
@@ -186,6 +188,7 @@ export default function Settings() {
   const [templateBusy, setTemplateBusy] = useState(false);
   const [chatSaving, setChatSaving] = useState(false);
   const [yandexDiskSaving, setYandexDiskSaving] = useState(false);
+  const [yandexDiskConnecting, setYandexDiskConnecting] = useState(false);
   const [diskPicker, setDiskPicker] = useState({
     open: false,
     target: "base_path",
@@ -250,6 +253,16 @@ export default function Settings() {
   }
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const yandexDiskStatus = params.get("yandex_disk");
+    if (yandexDiskStatus === "connected") {
+      setNotice("Яндекс.Диск подключен. Теперь CRM может создавать и переносить папки проектов.");
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (yandexDiskStatus === "error") {
+      setError(params.get("message") || "Не удалось подключить Яндекс.Диск.");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+
     reload().catch((requestError) => {
       setError(extractApiErrorMessage(requestError, "Не удалось загрузить системные настройки."));
     });
@@ -526,6 +539,22 @@ export default function Settings() {
     closeDiskPicker();
   }
 
+  async function handleConnectYandexDisk() {
+    setYandexDiskConnecting(true);
+    try {
+      const response = await startYandexDiskOAuth();
+      if (response.authorization_url) {
+        window.location.href = response.authorization_url;
+        return;
+      }
+      setError("Backend не вернул ссылку подключения Яндекс.Диска.");
+    } catch (requestError) {
+      setError(extractApiErrorMessage(requestError, "Не удалось начать подключение Яндекс.Диска."));
+    } finally {
+      setYandexDiskConnecting(false);
+    }
+  }
+
   function renderYandexDiskPathField(target, label, description) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-3">
@@ -585,6 +614,9 @@ export default function Settings() {
     <div className="grid gap-6 xl:grid-cols-3">
       {error ? (
         <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700 xl:col-span-3">{error}</div>
+      ) : null}
+      {notice ? (
+        <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 xl:col-span-3">{notice}</div>
       ) : null}
 
       <div className="space-y-6">
@@ -665,15 +697,18 @@ export default function Settings() {
               />
               <span>Автоматически создавать папку при создании проекта</span>
             </label>
-            <a
-              className="flex w-full items-center justify-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-5 py-3 text-sm font-bold text-blue-700 transition hover:border-blue-200 hover:bg-blue-100"
-              href="https://disk.yandex.ru/client/disk"
-              target="_blank"
-              rel="noreferrer"
+            <div className={`rounded-2xl px-4 py-3 text-sm font-bold ${yandexDiskSettings?.has_oauth_token ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+              {yandexDiskSettings?.has_oauth_token ? "CRM подключена к Яндекс.Диску и может создавать папки." : "CRM ещё не подключена к Яндекс.Диску. Нажмите кнопку ниже и подтвердите доступ."}
+            </div>
+            <button
+              type="button"
+              className="flex w-full items-center justify-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-5 py-3 text-sm font-bold text-blue-700 transition hover:border-blue-200 hover:bg-blue-100 disabled:opacity-60"
+              onClick={handleConnectYandexDisk}
+              disabled={yandexDiskConnecting}
             >
               <ExternalLink size={17} />
-              Войти в Яндекс.Диск
-            </a>
+              {yandexDiskConnecting ? "Открываем Яндекс..." : yandexDiskSettings?.has_oauth_token ? "Переподключить CRM к Яндекс.Диску" : "Подключить CRM к Яндекс.Диску"}
+            </button>
             {renderYandexDiskPathField("base_path", "Папка проектов", "Сюда будут автоматически попадать новые папки проектов.")}
             {renderYandexDiskPathField("archive_path", "Папка архива", "Сюда CRM перенесёт папку проекта после перехода в завершённый статус.")}
             <textarea

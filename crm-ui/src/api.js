@@ -443,6 +443,12 @@ export async function fetchYandexDiskFolders(path = "disk:/") {
   return data;
 }
 
+export async function startYandexDiskOAuth() {
+  initApiAuth();
+  const { data } = await api.post("/api/yandex-disk/oauth/start/");
+  return data;
+}
+
 export async function updateYandexDiskSettings(payload) {
   initApiAuth();
   const { data } = await api.patch("/api/yandex-disk-settings/", payload);
