@@ -811,13 +811,15 @@ def global_search_view(request):
         | Q(description__icontains=query)
     )
     if phone_query:
-        project_filter |= Q(client_phone__icontains=phone_query)
+        project_queryset = project_queryset.annotate(client_phone_digits=phone_digits_expression("client_phone"))
+        project_filter |= Q(client_phone__icontains=phone_query) | Q(client_phone_digits__icontains=phone_query)
     projects = list(project_queryset.filter(project_filter).order_by("-updated_at")[:8])
 
     client_queryset = Client.objects.filter(workspace=workspace)
     client_filter = Q(name__icontains=query) | Q(phone__icontains=query) | Q(email__icontains=query) | Q(address__icontains=query)
     if phone_query:
-        client_filter |= Q(phone__icontains=phone_query)
+        client_queryset = client_queryset.annotate(phone_digits=phone_digits_expression("phone"))
+        client_filter |= Q(phone__icontains=phone_query) | Q(phone_digits__icontains=phone_query)
     clients = list(client_queryset.filter(client_filter).order_by("name")[:6])
 
     task_queryset = Task.objects.select_related("project").filter(assignee__workspace=workspace)

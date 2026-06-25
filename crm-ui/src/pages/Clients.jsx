@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import { createClient, deleteClient, extractApiErrorMessage, fetchClients, fetchPayments, fetchProjects, updateClient } from "../api";
 import { Badge, Button, Input, Label, Modal } from "../components/ui.jsx";
-import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone } from "../utils/phone.js";
+import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneSearchDigits } from "../utils/phone.js";
 
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
@@ -149,6 +149,7 @@ export default function Clients() {
           worksWithContract: Boolean(client.works_with_contract),
           bonusBalance: Number(client.bonus_balance || 0),
           promoCode: client.promo_code || "",
+          phoneSearch: phoneSearchDigits(client.phone),
           paymentsCount: projectPayments.length,
           total,
         };
@@ -158,11 +159,16 @@ export default function Clients() {
 
   const filteredClients = useMemo(() => {
     const value = search.trim().toLowerCase();
+    const phoneQuery = phoneSearchDigits(search);
     if (!value) return clients;
 
-    return clients.filter((client) =>
-      [client.name, client.phone, client.email, client.address].filter(Boolean).some((field) => field.toLowerCase().includes(value))
-    );
+    return clients.filter((client) => {
+      const byText = [client.name, client.phone, client.email, client.address]
+        .filter(Boolean)
+        .some((field) => field.toLowerCase().includes(value));
+      const byPhone = phoneQuery.length >= 3 && String(client.phoneSearch || "").includes(phoneQuery);
+      return byText || byPhone;
+    });
   }, [clients, search]);
 
   const selectedClient = useMemo(

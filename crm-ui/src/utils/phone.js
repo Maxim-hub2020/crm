@@ -42,6 +42,10 @@ export function formatRussianPhoneDigits(value) {
   return parts.filter(Boolean).join("-");
 }
 
+export function phoneSearchDigits(value) {
+  return russianNationalDigits(value, { partial: true });
+}
+
 export function formatRussianPhoneInput(value, { keepEmpty = true } = {}) {
   const raw = String(value || "");
   const nationalDigits = russianNationalDigits(raw, { partial: true });

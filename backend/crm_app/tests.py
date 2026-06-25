@@ -921,6 +921,25 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
             self.assertEqual(len(response.data), 1)
             self.assertEqual(response.data[0]["id"], self.client_card.id)
 
+    def test_global_search_matches_normalized_client_and_project_phone_digits(self):
+        self.client_card.phone = "+7-900-123-45-67"
+        self.client_card.save(update_fields=["phone"])
+        project = Project.objects.create(
+            manager=self.manager,
+            client=self.client_card,
+            title="Searchable Project",
+            client_name=self.client_card.name,
+            client_phone=self.client_card.phone,
+        )
+        api_client = self.auth_client_for(self.manager)
+
+        response = api_client.get("/api/global-search/", {"q": "8900123"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        result_keys = {(row["type"], row["id"]) for row in response.data["results"]}
+        self.assertIn(("client", self.client_card.id), result_keys)
+        self.assertIn(("project", project.id), result_keys)
+
     def test_client_rejects_invalid_phone(self):
         api_client = self.auth_client_for(self.manager)
 

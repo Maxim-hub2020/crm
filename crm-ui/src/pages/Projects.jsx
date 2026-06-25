@@ -68,7 +68,7 @@ import {
   Modal,
   Select,
 } from "../components/ui.jsx";
-import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits } from "../utils/phone.js";
+import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits, phoneSearchDigits } from "../utils/phone.js";
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
 
@@ -1198,7 +1198,7 @@ export default function Projects() {
         project_count: client.project_count || 0,
         updated_at: client.updated_at || client.created_at || "",
         searchText: normalizeSearchText([client.name, client.phone, client.email, client.address].filter(Boolean).join(" ")),
-        phoneDigits: phoneDigits(client.phone),
+        phoneDigits: phoneSearchDigits(client.phone),
       }))
       .sort((left, right) => (right.updated_at || "").localeCompare(left.updated_at || ""));
   }, [clients]);
@@ -1209,7 +1209,7 @@ export default function Projects() {
     }
 
     const textQuery = normalizeSearchText(createForm.client_query || createForm.client_name || createForm.client_phone);
-    const digitsQuery = phoneDigits(createForm.client_query || createForm.client_phone);
+    const digitsQuery = phoneSearchDigits(createForm.client_query || createForm.client_phone);
     const queryReady = textQuery.length >= 2 || digitsQuery.length >= 3;
 
     if (!openCreate || !queryReady) {
@@ -1283,7 +1283,7 @@ export default function Projects() {
     }
 
     const textQuery = normalizeSearchText(projectClientQuery);
-    const digitsQuery = phoneDigits(projectClientQuery);
+    const digitsQuery = phoneSearchDigits(projectClientQuery);
     const queryReady = textQuery.length >= 2 || digitsQuery.length >= 3;
     if (!queryReady) {
       return { queryReady: false, matches: [] };
@@ -1776,7 +1776,9 @@ export default function Projects() {
     window.clearTimeout(detailAutosaveTimerRef.current);
     detailAutosaveRequestRef.current += 1;
 
-    const nextAddress = detailForm.object_address || client.object_address || "";
+    const currentAddress = String(detailForm.object_address || "").trim();
+    const clientAddress = String(client.object_address || "").trim();
+    const nextAddress = currentAddress || clientAddress;
     const payload = {
       ...buildProjectUpdatePayload(detailForm),
       client: client.client_id,
