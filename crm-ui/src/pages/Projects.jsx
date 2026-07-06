@@ -263,9 +263,18 @@ function phoneHref(value) {
   return normalized ? `tel:${normalized}` : "";
 }
 
+function maxMessengerPhone(value) {
+  const digits = phoneDigits(value);
+  if (digits.length === 10) return `7${digits}`;
+  if (digits.length === 11 && digits.startsWith("8")) return `7${digits.slice(1)}`;
+  if (digits.length === 11 && digits.startsWith("7")) return digits;
+  return "";
+}
+
 function maxMessengerHref(project, form) {
   const clientName = String(form?.client_name || project?.client_name || "").trim();
   const clientPhone = String(form?.client_phone || project?.client_phone || "").trim();
+  const maxPhone = maxMessengerPhone(clientPhone);
   const projectTitle = String(form?.title || project?.title || "").trim();
   const orderLabel = projectOrderLabel(project);
   const projectLabel = [orderLabel ? `№${orderLabel}` : "", projectTitle].filter(Boolean).join(" · ");
@@ -273,10 +282,13 @@ function maxMessengerHref(project, form) {
   const messageParts = [
     greeting,
     `Пишу по проекту${projectLabel ? ` ${projectLabel}` : ""}.`,
-    clientPhone ? `Телефон: ${clientPhone}` : "",
   ].filter(Boolean);
+  const params = new URLSearchParams({
+    phone: maxPhone,
+    text: messageParts.join("\n"),
+  });
 
-  return `https://max.ru/:share?text=${encodeURIComponent(messageParts.join("\n"))}`;
+  return maxPhone ? `https://web.max.ru/chat?${params.toString()}` : "";
 }
 
 function formatClientLookupInput(value) {
@@ -3075,12 +3087,10 @@ export default function Projects() {
                             <Phone size={18} />
                           </span>
                         )}
-                        {detailForm.client_name || detailForm.client_phone ? (
+                        {maxMessageUrl ? (
                           <a
                             className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-950 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-950 hover:text-white"
                             href={maxMessageUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
                             title="Написать клиенту в MAX"
                             aria-label="Написать клиенту в MAX"
                           >
@@ -3089,8 +3099,8 @@ export default function Projects() {
                         ) : (
                           <span
                             className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-300 ring-1 ring-slate-200"
-                            title="Клиент не выбран"
-                            aria-label="Клиент не выбран"
+                            title="Телефон клиента не указан"
+                            aria-label="Телефон клиента не указан"
                           >
                             <MessageSquare size={18} />
                           </span>
