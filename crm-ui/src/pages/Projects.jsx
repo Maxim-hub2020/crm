@@ -7,17 +7,21 @@ import {
   Copy,
   FileText,
   FolderOpen,
+  Gift,
   History,
   LayoutGrid,
   List,
   ListTodo,
+  Mail,
   MapPin,
   MessageSquare,
   Paperclip,
   Pencil,
   Phone,
   Plus,
+  Ticket,
   Trash2,
+  Users,
   Wallet,
 } from "lucide-react";
 import { useLocation } from "react-router-dom";
@@ -226,6 +230,28 @@ function labelFor(options, value) {
 
 function formatMoney(value) {
   return moneyFormatter.format(Number(value || 0));
+}
+
+function ClientInfoTile({ icon: Icon, label, value, href }) {
+  const content = (
+    <>
+      <Icon size={16} className="shrink-0 text-slate-400" />
+      <div className="min-w-0">
+        <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{label}</div>
+        <div className="mt-1 truncate text-sm font-semibold text-slate-800">{value || "Не указано"}</div>
+      </div>
+    </>
+  );
+
+  if (href && value) {
+    return (
+      <a className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 transition hover:bg-blue-50" href={href}>
+        {content}
+      </a>
+    );
+  }
+
+  return <div className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3">{content}</div>;
 }
 
 function cleanAmountValue(value) {
@@ -1309,6 +1335,15 @@ export default function Projects() {
   const maxMessageUrl = useMemo(
     () => maxMessengerHref(activeProject, detailForm),
     [activeProject, detailForm.client_name, detailForm.client_phone, detailForm.title]
+  );
+  const projectClientMaxUrl = useMemo(
+    () =>
+      maxMessengerHref(activeProject, {
+        ...projectClientForm,
+        client_name: projectClientForm.name,
+        client_phone: projectClientForm.phone,
+      }),
+    [activeProject, projectClientForm.name, projectClientForm.phone]
   );
 
   const activeProjectTasks = useMemo(() => {
@@ -3935,11 +3970,84 @@ export default function Projects() {
 
       <Modal
         open={projectClientOpen && Boolean(activeProjectClient)}
-        title="Карточка клиента"
+        title={activeProjectClient?.name ? `Клиент · ${activeProjectClient.name}` : "Карточка клиента"}
         onClose={closeProjectClientCard}
         widthClassName="max-w-2xl"
       >
         <form className="space-y-5" onSubmit={submitProjectClient}>
+          <div className="rounded-[28px] bg-white p-4 shadow-sm ring-1 ring-slate-200">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="truncate text-xl font-black text-slate-950">
+                  {activeProjectClient?.name || projectClientForm.name || "Клиент без имени"}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Badge className="gap-1.5 bg-blue-50 text-blue-700">
+                    <Users size={13} />
+                    {activeProjectClient?.project_count || 0} проект(ов)
+                  </Badge>
+                  <Badge className="gap-1.5 bg-emerald-50 text-emerald-700">
+                    <Gift size={13} />
+                    Бонусы {formatMoney(activeProjectClient?.bonus_balance || 0)} ₽
+                  </Badge>
+                  {activeProjectClient?.works_with_contract ? (
+                    <Badge className="bg-slate-100 text-slate-700">Договор</Badge>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="flex shrink-0 gap-2">
+                {phoneHref(activeProjectClient?.phone || projectClientForm.phone) ? (
+                  <a
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-blue-50 text-blue-600 ring-1 ring-blue-100 transition hover:bg-blue-100"
+                    href={phoneHref(activeProjectClient?.phone || projectClientForm.phone)}
+                    title="Позвонить клиенту"
+                    aria-label="Позвонить клиенту"
+                  >
+                    <Phone size={18} />
+                  </a>
+                ) : null}
+                {projectClientMaxUrl ? (
+                  <a
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-slate-950 text-white ring-1 ring-slate-950 transition hover:bg-slate-800"
+                    href={projectClientMaxUrl}
+                    title="Написать в MAX"
+                    aria-label="Написать в MAX"
+                  >
+                    <MessageSquare size={18} />
+                  </a>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <ClientInfoTile
+                icon={Phone}
+                label="Телефон"
+                value={activeProjectClient?.phone || projectClientForm.phone}
+                href={phoneHref(activeProjectClient?.phone || projectClientForm.phone)}
+              />
+              <ClientInfoTile
+                icon={Mail}
+                label="Email"
+                value={activeProjectClient?.email || projectClientForm.email}
+                href={(activeProjectClient?.email || projectClientForm.email) ? `mailto:${activeProjectClient?.email || projectClientForm.email}` : ""}
+              />
+              <div className="sm:col-span-2">
+                <ClientInfoTile icon={MapPin} label="Адрес" value={activeProjectClient?.address || projectClientForm.address} />
+              </div>
+              <ClientInfoTile icon={MapPin} label="Квартира" value={activeProjectClient?.apartment || projectClientForm.apartment} />
+              <ClientInfoTile icon={MapPin} label="Этаж" value={activeProjectClient?.floor || projectClientForm.floor} />
+              <ClientInfoTile icon={Ticket} label="Промокод" value={activeProjectClient?.promo_code || "Недоступен без телефона"} />
+              <ClientInfoTile icon={Wallet} label="Бонусный счёт" value={`${formatMoney(activeProjectClient?.bonus_balance || 0)} ₽`} />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-slate-400">
+            <Pencil size={14} />
+            Редактирование клиента
+          </div>
+
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2 sm:col-span-2">
               <Label>Имя клиента</Label>
