@@ -263,6 +263,22 @@ function phoneHref(value) {
   return normalized ? `tel:${normalized}` : "";
 }
 
+function maxMessengerHref(project, form) {
+  const clientName = String(form?.client_name || project?.client_name || "").trim();
+  const clientPhone = String(form?.client_phone || project?.client_phone || "").trim();
+  const projectTitle = String(form?.title || project?.title || "").trim();
+  const orderLabel = projectOrderLabel(project);
+  const projectLabel = [orderLabel ? `№${orderLabel}` : "", projectTitle].filter(Boolean).join(" · ");
+  const greeting = clientName ? `Здравствуйте, ${clientName}!` : "Здравствуйте!";
+  const messageParts = [
+    greeting,
+    `Пишу по проекту${projectLabel ? ` ${projectLabel}` : ""}.`,
+    clientPhone ? `Телефон: ${clientPhone}` : "",
+  ].filter(Boolean);
+
+  return `https://max.ru/:share?text=${encodeURIComponent(messageParts.join("\n"))}`;
+}
+
 function formatClientLookupInput(value) {
   const raw = String(value || "");
   const digits = phoneDigits(raw);
@@ -1277,6 +1293,10 @@ export default function Projects() {
   const routeUrl = useMemo(
     () => yandexRouteUrl(detailForm.object_address, detailForm.object_lat, detailForm.object_lon),
     [detailForm.object_address, detailForm.object_lat, detailForm.object_lon]
+  );
+  const maxMessageUrl = useMemo(
+    () => maxMessengerHref(activeProject, detailForm),
+    [activeProject, detailForm.client_name, detailForm.client_phone, detailForm.title]
   );
 
   const activeProjectTasks = useMemo(() => {
@@ -3036,7 +3056,7 @@ export default function Projects() {
                           </button>
                         ) : null}
                       </div>
-                      <div className="shrink-0">
+                      <div className="flex shrink-0 items-center gap-2">
                         {phoneHref(detailForm.client_phone) ? (
                           <a
                             className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
@@ -3053,6 +3073,26 @@ export default function Projects() {
                             aria-label="Телефон клиента не указан"
                           >
                             <Phone size={18} />
+                          </span>
+                        )}
+                        {detailForm.client_name || detailForm.client_phone ? (
+                          <a
+                            className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-950 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-950 hover:text-white"
+                            href={maxMessageUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="Написать клиенту в MAX"
+                            aria-label="Написать клиенту в MAX"
+                          >
+                            <MessageSquare size={18} />
+                          </a>
+                        ) : (
+                          <span
+                            className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-300 ring-1 ring-slate-200"
+                            title="Клиент не выбран"
+                            aria-label="Клиент не выбран"
+                          >
+                            <MessageSquare size={18} />
                           </span>
                         )}
                       </div>
