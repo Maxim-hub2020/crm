@@ -459,6 +459,39 @@ class YandexDiskSettings(models.Model):
         super().save(*args, **kwargs)
 
 
+class CalculatorSettings(models.Model):
+    workspace = models.OneToOneField(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="calculator_settings",
+        blank=True,
+        null=True,
+    )
+    shower_catalog = models.JSONField(default=dict, blank=True)
+    mirror_catalog = models.JSONField(default=dict, blank=True)
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="updated_calculator_settings",
+        blank=True,
+        null=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Calculator settings"
+        verbose_name_plural = "Calculator settings"
+
+    def __str__(self):
+        return f"Calculator settings: {self.workspace or 'default'}"
+
+    def save(self, *args, **kwargs):
+        if not self.workspace_id:
+            self.workspace = default_workspace()
+        super().save(*args, **kwargs)
+
+
 class CRMMemorySnapshot(models.Model):
     owner = models.OneToOneField(User, on_delete=models.CASCADE, related_name="crm_memory_snapshot")
     payload = models.JSONField(default=dict, blank=True)

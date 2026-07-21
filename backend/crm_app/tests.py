@@ -16,7 +16,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from .ai_assistant import CRMAssistantService, GeminiClient, GeminiRequestError, humanize_gemini_error
 from .live_assistant import AssistantLiveConsumer, _build_low_latency_system_instruction, _build_reference_cache, _has_live_assistant_access
-from .models import Account, ChatIntegrationSettings, Client, ClientBonusTransaction, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, ProjectStatus, SubscriptionInvoice, Task, User, Workspace, YandexDiskSettings
+from .models import Account, CalculatorSettings, ChatIntegrationSettings, Client, ClientBonusTransaction, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, ProjectStatus, SubscriptionInvoice, Task, User, Workspace, YandexDiskSettings
 from .subscription import activate_subscription_invoice, ensure_subscription_defaults, issue_subscription_invoice
 
 
@@ -178,6 +178,41 @@ class TestWorkspaceIsolation(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response_b.status_code, status.HTTP_200_OK)
         self.assertEqual(read_a.data["app_url"], "https://a.example.ru/app")
         self.assertEqual(read_b.data["app_url"], "https://b.example.ru/app")
+
+    def test_calculator_settings_are_per_workspace(self):
+        api_a = self.auth_client_for(self.admin_a)
+        api_b = self.auth_client_for(self.admin_b)
+
+        response_a = api_a.patch(
+            "/api/calculator-settings/",
+            {"shower_catalog": {"services": {"productMarkupPercent": 15}}},
+            format="json",
+        )
+        response_b = api_b.patch(
+            "/api/calculator-settings/",
+            {"shower_catalog": {"services": {"productMarkupPercent": 25}}},
+            format="json",
+        )
+        read_a = api_a.get("/api/calculator-settings/")
+        read_b = api_b.get("/api/calculator-settings/")
+
+        self.assertEqual(response_a.status_code, status.HTTP_200_OK)
+        self.assertEqual(response_b.status_code, status.HTTP_200_OK)
+        self.assertEqual(read_a.data["shower_catalog"]["services"]["productMarkupPercent"], 15)
+        self.assertEqual(read_b.data["shower_catalog"]["services"]["productMarkupPercent"], 25)
+        self.assertEqual(CalculatorSettings.objects.count(), 2)
+
+    def test_manager_cannot_change_calculator_settings(self):
+        api_client = self.auth_client_for(self.manager_a)
+        self.activate_subscription(actor=self.admin_a)
+
+        response = api_client.patch(
+            "/api/calculator-settings/",
+            {"shower_catalog": {"services": {"productMarkupPercent": 99}}},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class TestDadataAddressApi(AuthenticatedApiMixin, APITestCase):

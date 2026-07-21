@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     Account,
     AuditLog,
+    CalculatorSettings,
     ChatIntegrationSettings,
     Client,
     ClientBonusTransaction,
@@ -34,6 +35,7 @@ admin.site.register(Account)
 admin.site.register(ProjectCustomField)
 admin.site.register(DocumentTemplate)
 admin.site.register(ChatIntegrationSettings)
+admin.site.register(CalculatorSettings)
 admin.site.register(YandexDiskSettings)
 admin.site.register(CRMMemorySnapshot)
 admin.site.register(AuditLog)

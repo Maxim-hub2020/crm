@@ -1,3 +1,4 @@
+import json
 import logging
 
 from django.db import transaction
@@ -10,6 +11,7 @@ from .bonuses import apply_project_bonus_promo_code, ensure_project_bonus_accrua
 from .models import (
     Account,
     AuditLog,
+    CalculatorSettings,
     ChatIntegrationSettings,
     Client,
     ClientBonusTransaction,
@@ -619,6 +621,34 @@ class YandexDiskSettingsSerializer(serializers.ModelSerializer):
             if folder and folder not in folders:
                 folders.append(folder)
         return folders
+
+
+class CalculatorSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CalculatorSettings
+        fields = [
+            "id",
+            "shower_catalog",
+            "mirror_catalog",
+            "updated_by",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["updated_by", "created_at", "updated_at"]
+
+    @staticmethod
+    def _validate_catalog(value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Каталог должен быть объектом.")
+        if len(json.dumps(value, ensure_ascii=False)) > 1_000_000:
+            raise serializers.ValidationError("Каталог слишком большой.")
+        return value
+
+    def validate_shower_catalog(self, value):
+        return self._validate_catalog(value)
+
+    def validate_mirror_catalog(self, value):
+        return self._validate_catalog(value)
 
 
 class PaymentSerializer(serializers.ModelSerializer):

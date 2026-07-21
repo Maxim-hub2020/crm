@@ -35,6 +35,7 @@ from .finance_analytics import (
 from .models import (
     Account,
     AuditLog,
+    CalculatorSettings,
     ChatIntegrationSettings,
     Client,
     ClientBonusTransaction,
@@ -57,6 +58,7 @@ from .serializers import (
     AdminUserSerializer,
     AccountSerializer,
     AuditLogSerializer,
+    CalculatorSettingsSerializer,
     ChatIntegrationSettingsSerializer,
     ClientBonusTransactionSerializer,
     ClientSerializer,
@@ -599,6 +601,27 @@ def yandex_disk_settings_view(request):
         return Response({"detail": "Настройки Яндекс.Диска может менять только администратор."}, status=drf_status.HTTP_403_FORBIDDEN)
 
     serializer = YandexDiskSettingsSerializer(settings, data=request.data, partial=True)
+    serializer.is_valid(raise_exception=True)
+    serializer.save(updated_by=request.user)
+    return Response(serializer.data)
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+def calculator_settings_view(request):
+    workspace = current_workspace(request.user)
+    settings, _created = CalculatorSettings.objects.get_or_create(workspace=workspace)
+
+    if request.method == "GET":
+        return Response(CalculatorSettingsSerializer(settings).data)
+
+    if not request.user.is_admin():
+        return Response(
+            {"detail": "Настройки калькулятора может менять только администратор."},
+            status=drf_status.HTTP_403_FORBIDDEN,
+        )
+
+    serializer = CalculatorSettingsSerializer(settings, data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
     serializer.save(updated_by=request.user)
     return Response(serializer.data)
