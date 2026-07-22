@@ -890,6 +890,8 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
                 "phone": "+70000000099",
                 "email": "updated@example.com",
                 "address": "Updated address",
+                "address_lat": "47.222",
+                "address_lon": "39.72",
                 "apartment": "12",
                 "floor": "7",
                 "works_with_contract": True,
@@ -903,6 +905,8 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(self.client_card.phone, "+7-000-000-00-99")
         self.assertEqual(self.client_card.email, "updated@example.com")
         self.assertEqual(self.client_card.address, "Updated address")
+        self.assertEqual(self.client_card.address_lat, "47.222")
+        self.assertEqual(self.client_card.address_lon, "39.72")
         self.assertEqual(self.client_card.apartment, "12")
         self.assertEqual(self.client_card.floor, "7")
         self.assertTrue(self.client_card.works_with_contract)

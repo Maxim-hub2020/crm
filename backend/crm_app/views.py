@@ -1200,12 +1200,12 @@ class ClientViewSet(viewsets.ModelViewSet):
             "client",
             client.id,
             "create",
-            after=snapshot_model(client, ["id", "name", "phone", "email", "address", "apartment", "floor", "works_with_contract", "bonus_balance"]),
+            after=snapshot_model(client, ["id", "name", "phone", "email", "address", "address_lat", "address_lon", "apartment", "floor", "works_with_contract", "bonus_balance"]),
             workspace=client.workspace,
         )
 
     def perform_update(self, serializer):
-        before = snapshot_model(serializer.instance, ["id", "name", "phone", "email", "address", "apartment", "floor", "works_with_contract", "bonus_balance"])
+        before = snapshot_model(serializer.instance, ["id", "name", "phone", "email", "address", "address_lat", "address_lon", "apartment", "floor", "works_with_contract", "bonus_balance"])
         client = serializer.save()
         Project.objects.filter(workspace=client.workspace, client=client).update(
             client_name=client.name,
@@ -1219,12 +1219,12 @@ class ClientViewSet(viewsets.ModelViewSet):
             client.id,
             "update",
             before=before,
-            after=snapshot_model(client, ["id", "name", "phone", "email", "address", "apartment", "floor", "works_with_contract", "bonus_balance"]),
+            after=snapshot_model(client, ["id", "name", "phone", "email", "address", "address_lat", "address_lon", "apartment", "floor", "works_with_contract", "bonus_balance"]),
             workspace=client.workspace,
         )
 
     def perform_destroy(self, instance):
-        before = snapshot_model(instance, ["id", "name", "phone", "email", "address", "apartment", "floor", "works_with_contract", "bonus_balance"])
+        before = snapshot_model(instance, ["id", "name", "phone", "email", "address", "address_lat", "address_lon", "apartment", "floor", "works_with_contract", "bonus_balance"])
         create_audit_log(self.request.user, "client", instance.id, "delete", before=before, workspace=instance.workspace)
         instance.delete()
 

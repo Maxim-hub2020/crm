@@ -145,6 +145,8 @@ function createClientEditForm(client = {}) {
     phone: client.phone || client.client_phone || "",
     email: client.email || client.client_email || "",
     address: client.address || client.object_address || "",
+    address_lat: client.address_lat || client.object_lat || "",
+    address_lon: client.address_lon || client.object_lon || "",
     apartment: client.apartment || "",
     floor: client.floor || "",
     works_with_contract: Boolean(client.works_with_contract ?? client.worksWithContract),
@@ -232,7 +234,7 @@ function formatMoney(value) {
   return moneyFormatter.format(Number(value || 0));
 }
 
-function ClientInfoTile({ icon: Icon, label, value, href }) {
+function ClientInfoTile({ icon: Icon, label, value, href, onClick }) {
   const content = (
     <>
       <Icon size={16} className="shrink-0 text-slate-400" />
@@ -248,6 +250,18 @@ function ClientInfoTile({ icon: Icon, label, value, href }) {
       <a className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 transition hover:bg-blue-50" href={href}>
         {content}
       </a>
+    );
+  }
+
+  if (onClick && value) {
+    return (
+      <button
+        type="button"
+        className="flex w-full items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-left transition hover:bg-blue-50"
+        onClick={onClick}
+      >
+        {content}
+      </button>
     );
   }
 
@@ -349,13 +363,51 @@ function cleanAddressForMaps(value) {
     .trim();
 }
 
-function yandexRouteUrl(address, lat = "", lon = "") {
+function yandexRouteLinks(address, lat = "", lon = "") {
   const cleanAddress = cleanAddressForMaps(address);
   const cleanLat = String(lat || "").trim();
   const cleanLon = String(lon || "").trim();
-  const destination = cleanAddress || (cleanLat && cleanLon ? `${cleanLat},${cleanLon}` : "");
-  if (!destination) return "";
-  return `https://yandex.ru/maps/?mode=routes&rtext=~${encodeURIComponent(destination)}&ruri=~&rtt=auto`;
+  const hasCoordinates = Boolean(cleanLat && cleanLon);
+  const destination = hasCoordinates ? `${cleanLat},${cleanLon}` : cleanAddress;
+  if (!destination) return { webUrl: "", appUrl: "", hasCoordinates: false };
+
+  const routeText = `~${destination}`;
+  const params = new URLSearchParams({
+    mode: "routes",
+    rtext: routeText,
+    rtt: "auto",
+  });
+
+  return {
+    webUrl: `https://yandex.ru/maps/?${params.toString()}`,
+    appUrl: `yandexmaps://maps.yandex.ru/?${params.toString()}`,
+    hasCoordinates,
+  };
+}
+
+function openYandexRouteLinks(links) {
+  if (!links?.webUrl) return;
+
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+  if (!isMobile || !links.appUrl) {
+    window.open(links.webUrl, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  let appOpened = false;
+  const handleVisibilityChange = () => {
+    if (document.hidden) appOpened = true;
+  };
+
+  document.addEventListener("visibilitychange", handleVisibilityChange, { once: true });
+  window.location.href = links.appUrl;
+
+  window.setTimeout(() => {
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    if (!appOpened) {
+      window.location.href = links.webUrl;
+    }
+  }, 900);
 }
 
 function formatDateTime(value) {
@@ -1205,6 +1257,8 @@ export default function Projects() {
         client_phone: client.phone || "",
         client_email: client.email || "",
         object_address: client.address || "",
+        object_lat: client.address_lat || "",
+        object_lon: client.address_lon || "",
         apartment: client.apartment || "",
         floor: client.floor || "",
         works_with_contract: Boolean(client.works_with_contract),
@@ -1328,8 +1382,8 @@ export default function Projects() {
     [activeProject, activeProjectPayments]
   );
 
-  const routeUrl = useMemo(
-    () => yandexRouteUrl(detailForm.object_address, detailForm.object_lat, detailForm.object_lon),
+  const routeLinks = useMemo(
+    () => yandexRouteLinks(detailForm.object_address, detailForm.object_lat, detailForm.object_lon),
     [detailForm.object_address, detailForm.object_lat, detailForm.object_lon]
   );
   const maxMessageUrl = useMemo(
@@ -1344,6 +1398,22 @@ export default function Projects() {
         client_phone: projectClientForm.phone,
       }),
     [activeProject, projectClientForm.name, projectClientForm.phone]
+  );
+  const projectClientRouteLinks = useMemo(
+    () =>
+      yandexRouteLinks(
+        projectClientForm.address || activeProjectClient?.address || "",
+        projectClientForm.address_lat || activeProjectClient?.address_lat || "",
+        projectClientForm.address_lon || activeProjectClient?.address_lon || ""
+      ),
+    [
+      activeProjectClient?.address,
+      activeProjectClient?.address_lat,
+      activeProjectClient?.address_lon,
+      projectClientForm.address,
+      projectClientForm.address_lat,
+      projectClientForm.address_lon,
+    ]
   );
 
   const activeProjectTasks = useMemo(() => {
@@ -1614,6 +1684,8 @@ export default function Projects() {
       client_phone: client.client_phone || prev.client_phone,
       client_email: client.client_email || prev.client_email,
       object_address: client.object_address || prev.object_address,
+      object_lat: client.object_lat || prev.object_lat,
+      object_lon: client.object_lon || prev.object_lon,
       apartment: client.apartment || prev.apartment,
       floor: client.floor || prev.floor,
       works_with_contract: Boolean(client.works_with_contract),
@@ -1792,7 +1864,10 @@ export default function Projects() {
 
     const currentAddress = String(detailForm.object_address || "").trim();
     const clientAddress = String(client.object_address || "").trim();
+    const shouldUseClientAddress = !currentAddress && Boolean(clientAddress);
     const nextAddress = currentAddress || clientAddress;
+    const nextLat = shouldUseClientAddress ? String(client.object_lat || "").trim() : String(detailForm.object_lat || "").trim();
+    const nextLon = shouldUseClientAddress ? String(client.object_lon || "").trim() : String(detailForm.object_lon || "").trim();
     const nextApartment = String(detailForm.apartment || "").trim() || String(client.apartment || "").trim();
     const nextFloor = String(detailForm.floor || "").trim() || String(client.floor || "").trim();
     const payload = {
@@ -1802,6 +1877,8 @@ export default function Projects() {
       client_phone: normalizeOptionalClientPhone(client.client_phone) || "",
       client_email: client.client_email || null,
       object_address: nextAddress,
+      object_lat: nextLat || null,
+      object_lon: nextLon || null,
       apartment: nextApartment,
       floor: nextFloor,
     };
@@ -1845,6 +1922,8 @@ export default function Projects() {
         name,
         phone: hasPhone ? normalizeOptionalClientPhone(projectClientQuery) : "",
         address: detailForm.object_address || null,
+        address_lat: detailForm.object_lat || null,
+        address_lon: detailForm.object_lon || null,
         apartment: detailForm.apartment.trim(),
         floor: detailForm.floor.trim(),
       });
@@ -1855,6 +1934,8 @@ export default function Projects() {
         client_phone: created.phone || "",
         client_email: created.email || "",
         object_address: created.address || "",
+        object_lat: created.address_lat || "",
+        object_lon: created.address_lon || "",
         apartment: created.apartment || "",
         floor: created.floor || "",
       });
@@ -1887,6 +1968,8 @@ export default function Projects() {
         phone: normalizeOptionalClientPhone(projectClientForm.phone),
         email: projectClientForm.email.trim() || null,
         address: projectClientForm.address.trim() || null,
+        address_lat: projectClientForm.address_lat || null,
+        address_lon: projectClientForm.address_lon || null,
         apartment: projectClientForm.apartment.trim(),
         floor: projectClientForm.floor.trim(),
         works_with_contract: Boolean(projectClientForm.works_with_contract),
@@ -1908,6 +1991,8 @@ export default function Projects() {
             client_phone: updated.phone || "",
             client_email: updated.email || "",
             object_address: project.object_address || updated.address || "",
+            object_lat: project.object_lat || updated.address_lat || "",
+            object_lon: project.object_lon || updated.address_lon || "",
             apartment: project.apartment || updated.apartment || "",
             floor: project.floor || updated.floor || "",
             works_with_contract: Boolean(updated.works_with_contract),
@@ -1927,6 +2012,8 @@ export default function Projects() {
           client_phone: updated.phone || "",
           client_email: updated.email || "",
           object_address: objectAddress,
+          object_lat: prev.object_lat || updated.address_lat || "",
+          object_lon: prev.object_lon || updated.address_lon || "",
           apartment: prev.apartment || updated.apartment || "",
           floor: prev.floor || updated.floor || "",
           works_with_contract: Boolean(updated.works_with_contract),
@@ -3240,8 +3327,8 @@ export default function Projects() {
                     <button
                       type="button"
                       className="absolute right-2 top-1/2 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-white"
-                      disabled={!routeUrl}
-                      onClick={() => routeUrl && window.open(routeUrl, "_blank", "noopener,noreferrer")}
+                      disabled={!routeLinks.webUrl}
+                      onClick={() => openYandexRouteLinks(routeLinks)}
                       title="Построить маршрут"
                       aria-label="Построить маршрут"
                     >
@@ -4034,7 +4121,12 @@ export default function Projects() {
                 href={(activeProjectClient?.email || projectClientForm.email) ? `mailto:${activeProjectClient?.email || projectClientForm.email}` : ""}
               />
               <div className="sm:col-span-2">
-                <ClientInfoTile icon={MapPin} label="Адрес" value={activeProjectClient?.address || projectClientForm.address} />
+                <ClientInfoTile
+                  icon={MapPin}
+                  label="Адрес"
+                  value={activeProjectClient?.address || projectClientForm.address}
+                  onClick={projectClientRouteLinks.webUrl ? () => openYandexRouteLinks(projectClientRouteLinks) : null}
+                />
               </div>
               <ClientInfoTile icon={MapPin} label="Квартира" value={activeProjectClient?.apartment || projectClientForm.apartment} />
               <ClientInfoTile icon={MapPin} label="Этаж" value={activeProjectClient?.floor || projectClientForm.floor} />
@@ -4086,7 +4178,14 @@ export default function Projects() {
               <Label>Адрес клиента</Label>
               <Input
                 value={projectClientForm.address}
-                onChange={(event) => setProjectClientForm((prev) => ({ ...prev, address: event.target.value }))}
+                onChange={(event) =>
+                  setProjectClientForm((prev) => ({
+                    ...prev,
+                    address: event.target.value,
+                    address_lat: "",
+                    address_lon: "",
+                  }))
+                }
                 placeholder="Адрес клиента, если нужен для документов"
               />
             </div>

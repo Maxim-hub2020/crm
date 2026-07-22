@@ -57,6 +57,8 @@ function createClientEditForm(client = {}) {
     phone: client.phone || "",
     email: client.email || "",
     address: client.address || "",
+    address_lat: client.address_lat || "",
+    address_lon: client.address_lon || "",
     apartment: client.apartment || "",
     floor: client.floor || "",
     works_with_contract: Boolean(client.worksWithContract ?? client.works_with_contract),
@@ -140,6 +142,8 @@ function ClientAddressFields({ form, setForm }) {
     setForm((prev) => ({
       ...prev,
       address: selectedAddress || prev.address,
+      address_lat: suggestion.lat || "",
+      address_lon: suggestion.lon || "",
       apartment: suggestion.apartment || prev.apartment,
       floor: suggestion.floor || prev.floor,
     }));
@@ -158,7 +162,7 @@ function ClientAddressFields({ form, setForm }) {
           onClick={() => setAddressOpen(true)}
           onChange={(event) => {
             selectedAddressValueRef.current = "";
-            setForm((prev) => ({ ...prev, address: event.target.value }));
+            setForm((prev) => ({ ...prev, address: event.target.value, address_lat: "", address_lon: "" }));
           }}
           placeholder="Начните вводить адрес"
         />
@@ -278,6 +282,8 @@ export default function Clients() {
           phone: client.phone,
           email: client.email,
           address: client.address,
+          address_lat: client.address_lat || "",
+          address_lon: client.address_lon || "",
           apartment: client.apartment || "",
           floor: client.floor || "",
           projects: clientProjects,
@@ -347,6 +353,8 @@ export default function Clients() {
         phone: normalizeOptionalClientPhone(editForm.phone),
         email: editForm.email.trim() || null,
         address: editForm.address.trim() || null,
+        address_lat: editForm.address_lat || null,
+        address_lon: editForm.address_lon || null,
         apartment: editForm.apartment.trim(),
         floor: editForm.floor.trim(),
         works_with_contract: editForm.works_with_contract,
@@ -411,6 +419,8 @@ export default function Clients() {
         phone: normalizeOptionalClientPhone(createForm.phone),
         email: createForm.email.trim() || null,
         address: createForm.address.trim() || null,
+        address_lat: createForm.address_lat || null,
+        address_lon: createForm.address_lon || null,
         apartment: createForm.apartment.trim(),
         floor: createForm.floor.trim(),
         works_with_contract: createForm.works_with_contract,
