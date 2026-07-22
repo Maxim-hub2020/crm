@@ -7,7 +7,6 @@ const api = axios.create({
 const TOKEN_KEY = "crm_token";
 const REFRESH_TOKEN_KEY = "crm_refresh_token";
 const USER_KEY = "crm_user";
-const BILLING_KEY = "crm_billing_summary";
 let refreshRequest = null;
 
 export function getToken() {
@@ -31,7 +30,6 @@ export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
-  localStorage.removeItem(BILLING_KEY);
   delete api.defaults.headers.common.Authorization;
 }
 
@@ -41,15 +39,6 @@ export function setUser(user) {
 
 export function getUser() {
   const raw = localStorage.getItem(USER_KEY);
-  return raw ? JSON.parse(raw) : null;
-}
-
-export function setBillingSummary(summary) {
-  localStorage.setItem(BILLING_KEY, JSON.stringify(summary));
-}
-
-export function getBillingSummary() {
-  const raw = localStorage.getItem(BILLING_KEY);
   return raw ? JSON.parse(raw) : null;
 }
 
@@ -196,31 +185,6 @@ export async function fetchMe() {
   initApiAuth();
   const { data } = await api.get("/api/me/");
   setUser(data);
-  return data;
-}
-
-export async function fetchBillingSummary() {
-  initApiAuth();
-  const { data } = await api.get("/api/billing/summary/");
-  setBillingSummary(data);
-  return data;
-}
-
-export async function createBillingInvoice(planCode) {
-  initApiAuth();
-  const { data } = await api.post("/api/billing/invoices/", planCode ? { plan_code: planCode } : {});
-  if (data?.summary) {
-    setBillingSummary(data.summary);
-  }
-  return data;
-}
-
-export async function activateBillingInvoice(invoiceId) {
-  initApiAuth();
-  const { data } = await api.post("/api/billing/activate/", { invoice_id: invoiceId });
-  if (data?.summary) {
-    setBillingSummary(data.summary);
-  }
   return data;
 }
 

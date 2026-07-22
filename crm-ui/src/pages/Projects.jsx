@@ -367,9 +367,11 @@ function yandexRouteLinks(address, lat = "", lon = "") {
   const cleanAddress = cleanAddressForMaps(address);
   const cleanLat = String(lat || "").trim();
   const cleanLon = String(lon || "").trim();
-  const hasCoordinates = Boolean(cleanLat && cleanLon);
+  const latNumber = Number(cleanLat);
+  const lonNumber = Number(cleanLon);
+  const hasCoordinates = Number.isFinite(latNumber) && Number.isFinite(lonNumber);
   const destination = hasCoordinates ? `${cleanLat},${cleanLon}` : cleanAddress;
-  if (!destination) return { webUrl: "", appUrl: "", hasCoordinates: false };
+  if (!destination) return { webUrl: "", appUrls: [], hasCoordinates: false };
 
   const routeText = `~${destination}`;
   const params = new URLSearchParams({
@@ -377,19 +379,106 @@ function yandexRouteLinks(address, lat = "", lon = "") {
     rtext: routeText,
     rtt: "auto",
   });
+  if (hasCoordinates) {
+    params.set("ll", `${cleanLon},${cleanLat}`);
+    params.set("z", "16");
+  }
+  if (cleanAddress) {
+    params.set("text", cleanAddress);
+  }
+
+  const appUrls = [];
+  appUrls.push(`yandexmaps://maps.yandex.ru/?${params.toString()}`);
+  if (hasCoordinates) {
+    const navigatorParams = new URLSearchParams({
+      lat_to: cleanLat,
+      lon_to: cleanLon,
+    });
+    if (cleanAddress) {
+      navigatorParams.set("text", cleanAddress);
+    }
+    appUrls.push(`yandexnavi://build_route_on_map?${navigatorParams.toString()}`);
+  }
 
   return {
     webUrl: `https://yandex.ru/maps/?${params.toString()}`,
-    appUrl: `yandexmaps://maps.yandex.ru/?${params.toString()}`,
+    appUrls,
     hasCoordinates,
+    destination,
+    cleanAddress,
+    lat: cleanLat,
+    lon: cleanLon,
   };
+}
+
+function yandexRouteLinksWithOrigin(links, origin) {
+  if (!links?.destination || !origin?.lat || !origin?.lon) return links;
+
+  const routeText = `${origin.lat},${origin.lon}~${links.destination}`;
+  const params = new URLSearchParams({
+    mode: "routes",
+    rtext: routeText,
+    rtt: "auto",
+  });
+  if (links.hasCoordinates && links.lat && links.lon) {
+    params.set("ll", `${links.lon},${links.lat}`);
+    params.set("z", "16");
+  }
+  if (links.cleanAddress) {
+    params.set("text", links.cleanAddress);
+  }
+
+  const appUrls = [`yandexmaps://maps.yandex.ru/?${params.toString()}`];
+  if (links.hasCoordinates && links.lat && links.lon) {
+    const navigatorParams = new URLSearchParams({
+      lat_to: links.lat,
+      lon_to: links.lon,
+    });
+    appUrls.push(`yandexnavi://build_route_on_map?${navigatorParams.toString()}`);
+  }
+
+  return {
+    ...links,
+    webUrl: `https://yandex.ru/maps/?${params.toString()}`,
+    appUrls,
+  };
+}
+
+function getCurrentRouteOrigin() {
+  if (!navigator.geolocation) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          lat: String(position.coords.latitude),
+          lon: String(position.coords.longitude),
+        });
+      },
+      () => resolve(null),
+      { enableHighAccuracy: false, maximumAge: 60000, timeout: 2500 }
+    );
+  });
 }
 
 function openYandexRouteLinks(links) {
   if (!links?.webUrl) return;
 
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
-  if (!isMobile || !links.appUrl) {
+  if (isMobile && links.hasCoordinates) {
+    getCurrentRouteOrigin().then((origin) => {
+      openPreparedYandexRouteLinks(origin ? yandexRouteLinksWithOrigin(links, origin) : links);
+    });
+    return;
+  }
+
+  openPreparedYandexRouteLinks(links);
+}
+
+function openPreparedYandexRouteLinks(links) {
+  const appUrls = Array.isArray(links.appUrls) ? links.appUrls.filter(Boolean) : [];
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+  if (!isMobile || appUrls.length === 0) {
     window.open(links.webUrl, "_blank", "noopener,noreferrer");
     return;
   }
@@ -400,7 +489,7 @@ function openYandexRouteLinks(links) {
   };
 
   document.addEventListener("visibilitychange", handleVisibilityChange, { once: true });
-  window.location.href = links.appUrl;
+  window.location.href = appUrls[0];
 
   window.setTimeout(() => {
     document.removeEventListener("visibilitychange", handleVisibilityChange);

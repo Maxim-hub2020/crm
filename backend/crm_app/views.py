@@ -47,13 +47,12 @@ from .models import (
     ProjectComment,
     ProjectCustomField,
     ProjectStatus,
-    SubscriptionInvoice,
     Task,
     TaskTemplate,
     User,
     YandexDiskSettings,
 )
-from .permissions import HasActiveSubscription, IsAdmin, IsAuthenticatedAny
+from .permissions import IsAdmin, IsAuthenticatedAny
 from .phones import phone_search_digits
 from .serializers import (
     AdminUserSerializer,
@@ -74,15 +73,6 @@ from .serializers import (
     TaskSerializer,
     TaskTemplateSerializer,
     YandexDiskSettingsSerializer,
-)
-from .subscription import (
-    activate_subscription_invoice,
-    billing_summary_payload,
-    can_create_trial_project,
-    get_workspace_subscription,
-    is_subscription_active,
-    issue_subscription_invoice,
-    record_project_created,
 )
 from .tenancy import current_workspace
 from .workflow import apply_task_templates_for_project, build_project_status_check, create_audit_log, snapshot_model, user_display_name
@@ -506,48 +496,8 @@ def health_view(_request):
     return Response({"status": "ok"})
 
 
-@api_view(["GET"])
+@api_view(["POST"])
 @permission_classes([IsAuthenticatedAny])
-def billing_summary_view(request):
-    return Response(billing_summary_payload(request.user))
-
-
-@api_view(["POST"])
-@permission_classes([IsAdmin])
-def billing_create_invoice_view(request):
-    invoice = issue_subscription_invoice(actor=request.user, plan_code=request.data.get("plan_code"))
-    return Response(
-        {
-            "detail": "Счет на подписку создан.",
-            "invoice_id": invoice.id,
-            "summary": billing_summary_payload(request.user),
-        },
-        status=drf_status.HTTP_201_CREATED,
-    )
-
-
-@api_view(["POST"])
-@permission_classes([IsAdmin])
-def billing_activate_invoice_view(request):
-    invoice_id = request.data.get("invoice_id")
-    if not invoice_id:
-        return Response({"detail": "Укажите invoice_id."}, status=drf_status.HTTP_400_BAD_REQUEST)
-
-    invoice = SubscriptionInvoice.objects.select_related("subscription", "plan").filter(id=invoice_id).first()
-    if not invoice:
-        return Response({"detail": "Счет не найден."}, status=drf_status.HTTP_404_NOT_FOUND)
-
-    activate_subscription_invoice(invoice)
-    return Response(
-        {
-            "detail": "Подписка активирована.",
-            "summary": billing_summary_payload(request.user),
-        }
-    )
-
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
 def bonus_promo_preview_view(request):
     try:
         preview = preview_project_bonus_promo_code(
@@ -569,7 +519,7 @@ def bonus_promo_preview_view(request):
 
 
 @api_view(["GET", "PATCH"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny])
 def chat_settings_view(request):
     workspace = current_workspace(request.user)
     settings, _created = ChatIntegrationSettings.objects.get_or_create(workspace=workspace)
@@ -587,7 +537,7 @@ def chat_settings_view(request):
 
 
 @api_view(["GET", "PATCH"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny])
 def yandex_disk_settings_view(request):
     workspace = current_workspace(request.user)
     settings, _created = YandexDiskSettings.objects.get_or_create(workspace=workspace)
@@ -608,7 +558,7 @@ def yandex_disk_settings_view(request):
 
 
 @api_view(["GET", "PATCH"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny])
 def calculator_settings_view(request):
     workspace = current_workspace(request.user)
     settings, _created = CalculatorSettings.objects.get_or_create(workspace=workspace)
@@ -629,7 +579,7 @@ def calculator_settings_view(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny])
 def yandex_disk_oauth_start_view(request):
     if not request.user.is_admin():
         return Response({"detail": "Подключать Яндекс.Диск может только администратор."}, status=drf_status.HTTP_403_FORBIDDEN)
@@ -644,7 +594,7 @@ def yandex_disk_oauth_start_view(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny])
 def yandex_disk_oauth_complete_view(request):
     if not request.user.is_admin():
         return Response({"detail": "Подключать Яндекс.Диск может только администратор."}, status=drf_status.HTTP_403_FORBIDDEN)
@@ -686,7 +636,7 @@ def yandex_disk_oauth_callback_view(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny])
 def yandex_disk_folders_view(request):
     workspace = current_workspace(request.user)
     settings, _created = YandexDiskSettings.objects.get_or_create(workspace=workspace)
@@ -708,7 +658,7 @@ def _frontend_settings_url(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny])
 def address_suggestions_view(request):
     query = (request.query_params.get("q") or "").strip()
     if len(query) < 3:
@@ -745,7 +695,7 @@ def address_suggestions_view(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny])
 def finance_analytics_view(request):
     project_queryset, payment_queryset, filters = _finance_scope(request)
     reference_queryset = _visible_finance_projects(request.user)
@@ -760,7 +710,7 @@ def finance_analytics_view(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny])
 def finance_analytics_ai_view(request):
     project_queryset, payment_queryset, filters = _finance_scope(request)
     reference_queryset = _visible_finance_projects(request.user)
@@ -782,7 +732,7 @@ def finance_analytics_ai_view(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny])
 def cash_forecast_view(request):
     project_queryset, payment_queryset, filters = _finance_scope(request)
     reference_queryset = _visible_finance_projects(request.user)
@@ -796,7 +746,7 @@ def cash_forecast_view(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny])
 def cash_forecast_ai_view(request):
     project_queryset, payment_queryset, filters = _finance_scope(request)
     reference_queryset = _visible_finance_projects(request.user)
@@ -817,7 +767,7 @@ def cash_forecast_ai_view(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
+@permission_classes([IsAuthenticatedAny])
 def global_search_view(request):
     query = str(request.query_params.get("q") or "").strip()
     if len(query) < 2:
@@ -882,7 +832,7 @@ def global_search_view(request):
 
 class ProjectViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectSerializer
-    permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
+    permission_classes = [IsAuthenticatedAny]
 
     def handle_exception(self, exc):
         try:
@@ -903,20 +853,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         workspace = current_workspace(self.request.user)
-        subscription = get_workspace_subscription(workspace=workspace)
         user = self.request.user
-        if not user.is_admin() and not is_subscription_active(subscription) and not can_create_trial_project(subscription):
-            raise ValidationError(
-                {
-                    "subscription": (
-                        "Бесплатный лимит 10 созданных проектов исчерпан. "
-                        "Оформите подписку CRM за 1000 ₽/мес."
-                    )
-                }
-            )
-
         project = serializer.save(manager=user, workspace=workspace)
-        record_project_created(subscription)
         apply_task_templates_for_project(project, actor=user)
         ensure_project_disk_folder(project, actor=user)
         create_audit_log(
@@ -1114,7 +1052,7 @@ def render_pdf_template(template, project):
 
 class ClientViewSet(viewsets.ModelViewSet):
     serializer_class = ClientSerializer
-    permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
+    permission_classes = [IsAuthenticatedAny]
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
 
     def get_queryset(self):
@@ -1173,7 +1111,7 @@ class ClientViewSet(viewsets.ModelViewSet):
 
 class PaymentViewSet(viewsets.ModelViewSet):
     serializer_class = PaymentSerializer
-    permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
+    permission_classes = [IsAuthenticatedAny]
 
     def get_queryset(self):
         workspace = current_workspace(self.request.user)
@@ -1228,7 +1166,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
 
 class ClientBonusTransactionViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ClientBonusTransactionSerializer
-    permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
+    permission_classes = [IsAuthenticatedAny]
 
     def get_queryset(self):
         workspace = current_workspace(self.request.user)
@@ -1248,7 +1186,7 @@ class ClientBonusTransactionViewSet(viewsets.ReadOnlyModelViewSet):
 
 class ProjectCommentViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectCommentSerializer
-    permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
+    permission_classes = [IsAuthenticatedAny]
 
     def get_queryset(self):
         workspace = current_workspace(self.request.user)
@@ -1302,8 +1240,8 @@ class ProjectStatusViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
-            return [IsAuthenticatedAny(), HasActiveSubscription()]
-        return [IsAdmin(), HasActiveSubscription()]
+            return [IsAuthenticatedAny()]
+        return [IsAdmin()]
 
     def perform_destroy(self, instance):
         if Project.objects.filter(workspace=instance.workspace, status=instance.code).exists():
@@ -1331,8 +1269,8 @@ class FinanceCategoryViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
-            return [IsAuthenticatedAny(), HasActiveSubscription()]
-        return [IsAdmin(), HasActiveSubscription()]
+            return [IsAuthenticatedAny()]
+        return [IsAdmin()]
 
     def perform_create(self, serializer):
         serializer.save(workspace=current_workspace(self.request.user))
@@ -1347,8 +1285,8 @@ class AccountViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
-            return [IsAuthenticatedAny(), HasActiveSubscription()]
-        return [IsAdmin(), HasActiveSubscription()]
+            return [IsAuthenticatedAny()]
+        return [IsAdmin()]
 
     def perform_create(self, serializer):
         serializer.save(workspace=current_workspace(self.request.user))
@@ -1363,8 +1301,8 @@ class ProjectCustomFieldViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
-            return [IsAuthenticatedAny(), HasActiveSubscription()]
-        return [IsAdmin(), HasActiveSubscription()]
+            return [IsAuthenticatedAny()]
+        return [IsAdmin()]
 
     def perform_create(self, serializer):
         serializer.save(workspace=current_workspace(self.request.user))
@@ -1372,7 +1310,7 @@ class ProjectCustomFieldViewSet(viewsets.ModelViewSet):
 
 class DocumentTemplateViewSet(viewsets.ModelViewSet):
     serializer_class = DocumentTemplateSerializer
-    permission_classes = [IsAdmin, HasActiveSubscription]
+    permission_classes = [IsAdmin]
     parser_classes = [MultiPartParser, FormParser]
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
 
@@ -1392,7 +1330,7 @@ class DocumentTemplateViewSet(viewsets.ModelViewSet):
 
 class TaskViewSet(viewsets.ModelViewSet):
     serializer_class = TaskSerializer
-    permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
+    permission_classes = [IsAuthenticatedAny]
 
     def get_queryset(self):
         workspace = current_workspace(self.request.user)
@@ -1452,8 +1390,8 @@ class TaskTemplateViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
-            return [IsAuthenticatedAny(), HasActiveSubscription()]
-        return [IsAdmin(), HasActiveSubscription()]
+            return [IsAuthenticatedAny()]
+        return [IsAdmin()]
 
     def perform_create(self, serializer):
         template = serializer.save(workspace=current_workspace(self.request.user))
@@ -1487,7 +1425,7 @@ class TaskTemplateViewSet(viewsets.ModelViewSet):
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = AuditLogSerializer
-    permission_classes = [IsAdmin, HasActiveSubscription]
+    permission_classes = [IsAdmin]
 
     def get_queryset(self):
         return AuditLog.objects.select_related("actor").filter(workspace=current_workspace(self.request.user)).order_by("-created_at", "-id")
@@ -1495,7 +1433,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
 
 class UserViewSet(viewsets.ModelViewSet):
     serializer_class = AdminUserSerializer
-    permission_classes = [IsAdmin, HasActiveSubscription]
+    permission_classes = [IsAdmin]
     http_method_names = ["get", "post", "patch", "put", "head", "options"]
 
     def get_queryset(self):

@@ -28,7 +28,6 @@ from .models import (
     YandexDiskSettings,
 )
 from .phones import PHONE_VALIDATION_ERROR, normalize_russian_phone, phone_digits
-from .subscription import has_trial_access, is_subscription_active
 from .tenancy import current_workspace
 
 logger = logging.getLogger(__name__)
@@ -43,7 +42,6 @@ def normalize_client_phone(value):
 class MeSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     is_admin = serializers.SerializerMethodField()
-    subscription_active = serializers.SerializerMethodField()
     workspace = serializers.SerializerMethodField()
 
     class Meta:
@@ -57,7 +55,6 @@ class MeSerializer(serializers.ModelSerializer):
             "is_staff",
             "is_superuser",
             "is_admin",
-            "subscription_active",
             "workspace",
         ]
 
@@ -67,14 +64,6 @@ class MeSerializer(serializers.ModelSerializer):
 
     def get_is_admin(self, obj):
         return obj.is_admin()
-
-    def get_subscription_active(self, obj):
-        if obj.is_admin():
-            return True
-        from .subscription import get_workspace_subscription
-
-        subscription = get_workspace_subscription(obj)
-        return is_subscription_active(subscription) or has_trial_access(subscription)
 
     def get_workspace(self, obj):
         workspace = current_workspace(obj)

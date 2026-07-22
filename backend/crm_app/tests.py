@@ -14,8 +14,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from .dadata import dadata_query
 from .gemini_client import GeminiClient
-from .models import Account, CalculatorSettings, ChatIntegrationSettings, Client, ClientBonusTransaction, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, ProjectStatus, SubscriptionInvoice, Task, User, Workspace, YandexDiskSettings
-from .subscription import activate_subscription_invoice, ensure_subscription_defaults, issue_subscription_invoice
+from .models import Account, CalculatorSettings, ChatIntegrationSettings, Client, ClientBonusTransaction, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, ProjectStatus, Task, User, Workspace, YandexDiskSettings
 
 
 class AuthenticatedApiMixin:
@@ -39,12 +38,6 @@ class AuthenticatedApiMixin:
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['access']}")
         return client
-
-    def activate_subscription(self, actor=None, plan_code=None):
-        ensure_subscription_defaults()
-        invoice = issue_subscription_invoice(actor=actor, plan_code=plan_code)
-        return activate_subscription_invoice(invoice)
-
 
 class TestHealthApi(APITestCase):
     @override_settings(SECURE_SSL_REDIRECT=True, SECURE_REDIRECT_EXEMPT=[r"^api/health/$"])
@@ -202,7 +195,6 @@ class TestWorkspaceIsolation(AuthenticatedApiMixin, APITestCase):
 
     def test_manager_cannot_change_calculator_settings(self):
         api_client = self.auth_client_for(self.manager_a)
-        self.activate_subscription(actor=self.admin_a)
 
         response = api_client.patch(
             "/api/calculator-settings/",
@@ -215,7 +207,6 @@ class TestWorkspaceIsolation(AuthenticatedApiMixin, APITestCase):
 
 class TestDadataAddressApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
-        self.activate_subscription()
         self.user = self.create_user("address.user")
 
     @patch.dict(os.environ, {"DADATA_DEFAULT_REGION": "Ростовская область", "DADATA_DEFAULT_CITY": "Ростов-на-Дону"})
@@ -257,7 +248,6 @@ class TestDadataAddressApi(AuthenticatedApiMixin, APITestCase):
 
 class TestProjectApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
-        self.activate_subscription()
         ProjectStatus.objects.get_or_create(
             code="active",
             defaults={"name": "В работе", "short_name": "Работа", "color": "sky", "sort_order": 10, "is_default": True},
@@ -846,7 +836,6 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
 
 class TestClientApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
-        self.activate_subscription()
         self.manager = self.create_user("manager.one")
         self.admin = self.create_user("admin.user", role=User.Role.ADMIN)
         self.client_card = Client.objects.create(
@@ -1042,7 +1031,6 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
 
 class TestChatSettingsApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
-        self.activate_subscription()
         self.admin = self.create_user("admin.user", role=User.Role.ADMIN)
         self.manager = self.create_user("manager.user")
 
@@ -1082,7 +1070,6 @@ class TestChatSettingsApi(AuthenticatedApiMixin, APITestCase):
 
 class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
-        self.activate_subscription()
         self.manager = self.create_user("manager.one")
         self.other_manager = self.create_user("manager.two")
         self.admin = self.create_user("admin.user", role=User.Role.ADMIN)
@@ -1946,10 +1933,10 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         response = client.post("/api/cash-forecast/ai/", {"project": project.id}, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn("Сейчас в кассе", response.data["analysis"])
-        self.assertIn("₽", response.data["analysis"])
-        self.assertIn("Новочек", response.data["analysis"])
-        self.assertNotIn("составляет 14", response.data["analysis"])
+        self.assertIn("40 000", response.data["analysis"])
+        self.assertIn("29 465", response.data["analysis"])
+        self.assertIn("0003", response.data["analysis"])
+        self.assertNotIn("14", response.data["analysis"])
         mocked_client.generate_content.assert_called_once()
 
     def test_manager_can_update_own_payment(self):
@@ -2002,7 +1989,6 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
 
 class TestTaskApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
-        self.activate_subscription()
         self.manager = self.create_user("manager.one")
         self.other_manager = self.create_user("manager.two")
         self.admin = self.create_user("admin.user", role=User.Role.ADMIN)
@@ -2137,7 +2123,6 @@ class TestTaskApi(AuthenticatedApiMixin, APITestCase):
 
 class TestAdminUsersApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
-        self.activate_subscription()
         self.admin = self.create_user("admin.user", role=User.Role.ADMIN)
         self.manager = self.create_user("manager.user")
 
@@ -2178,7 +2163,6 @@ class TestAdminUsersApi(AuthenticatedApiMixin, APITestCase):
 
 class TestProjectCommentsApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
-        self.activate_subscription()
         self.manager = self.create_user("manager.one")
         self.other_manager = self.create_user("manager.two")
         self.admin = self.create_user("admin.user", role=User.Role.ADMIN)
@@ -2305,7 +2289,6 @@ class TestProjectCommentsApi(AuthenticatedApiMixin, APITestCase):
 
 class TestProjectStatusesApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
-        self.activate_subscription()
         self.active_status, _ = ProjectStatus.objects.get_or_create(
             code="active",
             defaults={"name": "В работе", "short_name": "Работа", "color": "sky", "sort_order": 10, "is_default": True},
@@ -2378,7 +2361,6 @@ class TestProjectStatusesApi(AuthenticatedApiMixin, APITestCase):
 
 class TestYandexDiskArchiveApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
-        self.activate_subscription()
         self.active_status, _ = ProjectStatus.objects.get_or_create(
             code="active",
             defaults={"name": "В работе", "short_name": "Работа", "color": "sky", "sort_order": 10, "is_default": True},
@@ -2432,7 +2414,6 @@ class TestYandexDiskArchiveApi(AuthenticatedApiMixin, APITestCase):
 
 class TestYandexDiskOAuthApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
-        self.activate_subscription()
         self.admin = self.create_user("admin.yandex.oauth", role=User.Role.ADMIN)
 
     @patch.dict(
@@ -2510,112 +2491,3 @@ class TestYandexDiskOAuthApi(AuthenticatedApiMixin, APITestCase):
         settings = YandexDiskSettings.objects.get(workspace=self.admin.workspace)
         self.assertTrue(settings.enabled)
         self.assertEqual(settings.oauth_token, "manual-yandex-token")
-
-
-
-class TestBillingApi(AuthenticatedApiMixin, APITestCase):
-    def setUp(self):
-        self.admin = self.create_user("admin.user", role=User.Role.ADMIN)
-        self.manager = self.create_user("manager.user")
-
-    def test_summary_bootstraps_default_plan(self):
-        client = self.auth_client_for(self.admin)
-
-        response = client.get("/api/billing/summary/")
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["plan"]["price_rub"], "1000.00")
-        self.assertEqual(
-            {plan["code"]: plan["price_rub"] for plan in response.data["plans"]},
-            {"crm-basic-monthly": "1000.00"},
-        )
-        self.assertEqual(response.data["trial"]["project_limit"], 10)
-        self.assertEqual(response.data["trial"]["project_creations_count"], 0)
-        self.assertFalse(response.data["subscription"]["is_active_now"])
-
-    def test_admin_profile_reports_subscription_access(self):
-        client = self.auth_client_for(self.admin)
-
-        response = client.get("/api/me/")
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data["is_admin"])
-        self.assertTrue(response.data["subscription_active"])
-
-    def test_inactive_subscription_allows_trial_business_api(self):
-        client = self.auth_client_for(self.manager)
-
-        response = client.get("/api/projects/")
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-    def test_trial_limit_blocks_eleventh_project_even_after_delete(self):
-        ProjectStatus.objects.get_or_create(
-            code="active",
-            defaults={"name": "Active", "short_name": "Active", "color": "sky", "sort_order": 10, "is_default": True},
-        )
-        client = self.auth_client_for(self.manager)
-        created_project_ids = []
-
-        for index in range(9):
-            response = client.post(
-                "/api/projects/",
-                {
-                    "title": f"Trial project {index + 1}",
-                    "client_name": f"Client {index + 1}",
-                },
-                format="json",
-            )
-            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-            created_project_ids.append(response.data["id"])
-
-        delete_response = client.delete(f"/api/projects/{created_project_ids[0]}/")
-        self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
-
-        tenth_response = client.post(
-            "/api/projects/",
-            {
-                "title": "Trial project 10",
-                "client_name": "Last Trial Client",
-            },
-            format="json",
-        )
-        self.assertEqual(tenth_response.status_code, status.HTTP_201_CREATED)
-
-        blocked_response = client.post(
-            "/api/projects/",
-            {
-                "title": "Trial project 11",
-                "client_name": "Blocked Client",
-            },
-            format="json",
-        )
-
-        self.assertEqual(blocked_response.status_code, status.HTTP_403_FORBIDDEN)
-
-    def test_admin_can_use_business_api_without_active_subscription(self):
-        client = self.auth_client_for(self.admin)
-
-        response = client.get("/api/projects/")
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-    def test_admin_can_create_and_activate_invoice(self):
-        client = self.auth_client_for(self.admin)
-
-        invoice_response = client.post("/api/billing/invoices/", {}, format="json")
-        self.assertEqual(invoice_response.status_code, status.HTTP_201_CREATED)
-        invoice_id = invoice_response.data["invoice_id"]
-
-        activate_response = client.post(
-            "/api/billing/activate/",
-            {"invoice_id": invoice_id},
-            format="json",
-        )
-
-        self.assertEqual(activate_response.status_code, status.HTTP_200_OK)
-        self.assertTrue(activate_response.data["summary"]["subscription"]["is_active_now"])
-        self.assertEqual(
-            SubscriptionInvoice.objects.get(id=invoice_id).status,
-            SubscriptionInvoice.Status.PAID,
-        )
