@@ -3,7 +3,6 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { fetchBillingSummary, fetchMe, getBillingSummary, getToken, getUser, initApiAuth, isAdminUser } from "./api";
 import Layout from "./components/Layout";
-import Assistant from "./pages/Assistant";
 import Chats from "./pages/Chats";
 import Clients from "./pages/Clients";
 import Dashboard from "./pages/Dashboard";
@@ -128,18 +127,6 @@ export default function App() {
           element={
             <Private>
               <Subscription />
-            </Private>
-          }
-        />
-        <Route
-          path="/assistant"
-          element={
-            <Private>
-              <SubscriptionOnly>
-                <Layout>
-                  <Assistant />
-                </Layout>
-              </SubscriptionOnly>
             </Private>
           }
         />

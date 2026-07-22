@@ -23,8 +23,8 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status as drf_status
 
-from .ai_assistant import CRMAssistantService, GeminiClient, GeminiConfigurationError, GeminiRequestError
 from .bonuses import ensure_project_bonus_accrual, preview_project_bonus_promo_code, reverse_project_bonus_effects
+from .dadata import dadata_api_key, dadata_default_region, suggest_dadata_address
 from .finance_analytics import (
     build_cash_forecast,
     build_finance_overview,
@@ -32,6 +32,7 @@ from .finance_analytics import (
     compact_cash_forecast_for_ai,
     compact_finance_overview_for_ai,
 )
+from .gemini_client import GeminiClient, GeminiConfigurationError, GeminiRequestError
 from .models import (
     Account,
     AuditLog,
@@ -52,7 +53,7 @@ from .models import (
     User,
     YandexDiskSettings,
 )
-from .permissions import HasActiveSubscription, HasAssistantSubscription, IsAdmin, IsAuthenticatedAny
+from .permissions import HasActiveSubscription, IsAdmin, IsAuthenticatedAny
 from .phones import phone_search_digits
 from .serializers import (
     AdminUserSerializer,
@@ -711,9 +712,9 @@ def _frontend_settings_url(request):
 def address_suggestions_view(request):
     query = (request.query_params.get("q") or "").strip()
     if len(query) < 3:
-        return Response({"suggestions": [], "configured": bool(CRMAssistantService._dadata_api_key())})
+        return Response({"suggestions": [], "configured": bool(dadata_api_key())})
 
-    if not CRMAssistantService._dadata_api_key():
+    if not dadata_api_key():
         return Response(
             {
                 "suggestions": [],
@@ -722,11 +723,11 @@ def address_suggestions_view(request):
             }
         )
 
-    suggestions = CRMAssistantService._suggest_dadata_address(query, count=6)
+    suggestions = suggest_dadata_address(query, count=6)
     return Response(
         {
-            "configured": bool(CRMAssistantService._dadata_api_key()),
-            "default_region": CRMAssistantService._dadata_default_region(),
+            "configured": bool(dadata_api_key()),
+            "default_region": dadata_default_region(),
             "suggestions": [
                 {
                     "value": item.get("value") or "",
@@ -759,7 +760,7 @@ def finance_analytics_view(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticatedAny, HasAssistantSubscription])
+@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
 def finance_analytics_ai_view(request):
     project_queryset, payment_queryset, filters = _finance_scope(request)
     reference_queryset = _visible_finance_projects(request.user)
@@ -795,7 +796,7 @@ def cash_forecast_view(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticatedAny, HasAssistantSubscription])
+@permission_classes([IsAuthenticatedAny, HasActiveSubscription])
 def cash_forecast_ai_view(request):
     project_queryset, payment_queryset, filters = _finance_scope(request)
     reference_queryset = _visible_finance_projects(request.user)
@@ -879,65 +880,6 @@ def global_search_view(request):
     return Response({"query": query, "results": results[:30]})
 
 
-@api_view(["POST"])
-@permission_classes([IsAuthenticatedAny, HasAssistantSubscription])
-def assistant_chat_view(request):
-    message = (request.data.get("message") or "").strip()
-    history = request.data.get("history") or []
-
-    if not message:
-        return Response({"detail": "Сообщение не может быть пустым."}, status=drf_status.HTTP_400_BAD_REQUEST)
-
-    try:
-        fast_service = CRMAssistantService(request.user, init_gemini_client=False)
-        fast_result = fast_service._fast_mutation_clarification(message) or fast_service._fast_crm_answer(message)
-        if fast_result:
-            return Response(fast_result)
-
-        result = CRMAssistantService(request.user).handle_message(message, history=history)
-        return Response(result)
-    except GeminiConfigurationError as exc:
-        return Response({"detail": str(exc)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
-    except GeminiRequestError as exc:
-        return Response({"detail": str(exc)}, status=drf_status.HTTP_502_BAD_GATEWAY)
-    except ValueError as exc:
-        return Response({"detail": str(exc)}, status=drf_status.HTTP_400_BAD_REQUEST)
-
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticatedAny, HasAssistantSubscription])
-def assistant_voice_view(request):
-    audio_file = request.FILES.get("audio")
-    raw_history = request.data.get("history") or "[]"
-    include_audio = str(request.data.get("include_audio", "1")).strip().lower() not in {"0", "false", "no", "off"}
-
-    if isinstance(raw_history, str):
-        try:
-            history = json.loads(raw_history)
-        except json.JSONDecodeError:
-            history = []
-    else:
-        history = raw_history or []
-
-    if not audio_file:
-        return Response({"detail": "Аудиофайл не был передан."}, status=drf_status.HTTP_400_BAD_REQUEST)
-
-    try:
-        result = CRMAssistantService(request.user).handle_audio(
-            audio_bytes=audio_file.read(),
-            mime_type=audio_file.content_type or "audio/wav",
-            history=history,
-            include_audio=include_audio,
-        )
-        return Response(result)
-    except GeminiConfigurationError as exc:
-        return Response({"detail": str(exc)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
-    except GeminiRequestError as exc:
-        return Response({"detail": str(exc)}, status=drf_status.HTTP_502_BAD_GATEWAY)
-    except ValueError as exc:
-        return Response({"detail": str(exc)}, status=drf_status.HTTP_400_BAD_REQUEST)
-
-
 class ProjectViewSet(viewsets.ModelViewSet):
     serializer_class = ProjectSerializer
     permission_classes = [IsAuthenticatedAny, HasActiveSubscription]
@@ -968,7 +910,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 {
                     "subscription": (
                         "Бесплатный лимит 10 созданных проектов исчерпан. "
-                        "Оформите подписку: 1000 ₽/мес без AI-помощника или 1500 ₽/мес с AI-помощником."
+                        "Оформите подписку CRM за 1000 ₽/мес."
                     )
                 }
             )

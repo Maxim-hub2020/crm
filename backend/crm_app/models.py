@@ -494,18 +494,6 @@ class CalculatorSettings(models.Model):
         super().save(*args, **kwargs)
 
 
-class CRMMemorySnapshot(models.Model):
-    owner = models.OneToOneField(User, on_delete=models.CASCADE, related_name="crm_memory_snapshot")
-    payload = models.JSONField(default=dict, blank=True)
-    summary_text = models.TextField(blank=True, default="")
-    refreshed_at = models.DateTimeField(default=timezone.now, db_index=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["-refreshed_at"]
-
-
 class Payment(models.Model):
     class Type(models.TextChoices):
         ADVANCE = "advance", "Advance"
@@ -609,7 +597,6 @@ class SubscriptionPlan(models.Model):
     description = models.TextField(blank=True, default="")
     price_rub = models.DecimalField(max_digits=10, decimal_places=2, default="1500.00")
     interval_months = models.PositiveIntegerField(default=1)
-    includes_assistant = models.BooleanField(default=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

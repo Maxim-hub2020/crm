@@ -155,14 +155,6 @@ After webhooks, the CRM can show:
 - latest message in client/project card;
 - quick link from project to Chatwoot conversation.
 
-5. AI assistant:
-
-After webhook sync, include latest client messages in the CRM memory snapshot so the assistant can answer questions like:
-
-```text
-что последний раз написал клиент по проекту?
-```
-
 ## Notes
 
 - Do not store Chatwoot data inside the CRM database in the first stage.

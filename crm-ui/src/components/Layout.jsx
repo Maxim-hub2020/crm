@@ -1,13 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Briefcase, FolderKanban, Home, ListTodo, LogOut, Menu, MessageCircle, Mic, Search, Settings, ShieldQuestion, Users, Wallet, X } from "lucide-react";
-import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
+import { Briefcase, FolderKanban, Home, ListTodo, LogOut, Menu, MessageCircle, Search, Settings, ShieldQuestion, Users, Wallet, X } from "lucide-react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { clearToken, fetchGlobalSearch, fetchMe, getUser, isAdminUser } from "../api";
 import { BrandMark } from "./BrandLogo.jsx";
 
 const ROUTE_META = {
   "/": { title: "Дашборд", icon: Home },
-  "/assistant": { title: "Ассистент", icon: Mic },
   "/projects": { title: "Проекты", icon: FolderKanban },
   "/chats": { title: "Чаты", icon: MessageCircle },
   "/finances": { title: "Финансы", icon: Wallet },
@@ -65,14 +64,8 @@ export default function Layout({ children }) {
 
   const currentMeta = useMemo(() => ROUTE_META[location.pathname] || { title: "CRM", icon: Briefcase }, [location.pathname]);
   const isAdmin = isAdminUser(user);
-  const isAssistantMode = location.pathname === "/assistant";
 
   useEffect(() => {
-    if (isAssistantMode) {
-      setGlobalSearchOpen(false);
-      return undefined;
-    }
-
     const query = globalQuery.trim();
     if (query.length < 2) {
       setGlobalResults([]);
@@ -96,13 +89,11 @@ export default function Layout({ children }) {
       active = false;
       window.clearTimeout(timerId);
     };
-  }, [globalQuery, isAssistantMode]);
+  }, [globalQuery]);
 
   useEffect(() => {
-    if (!isAssistantMode) {
-      localStorage.setItem("crm_last_screen", location.pathname);
-    }
-  }, [isAssistantMode, location.pathname]);
+    localStorage.setItem("crm_last_screen", location.pathname);
+  }, [location.pathname]);
 
   function logout() {
     clearToken();
@@ -142,8 +133,8 @@ export default function Layout({ children }) {
 
       <aside
         className={`group/sidebar fixed z-50 flex h-full w-64 shrink-0 flex-col border-r border-slate-200/70 bg-white transition-[width,transform] duration-200 md:relative md:w-20 md:translate-x-0 md:hover:w-64 ${
-          isAssistantMode ? "pointer-events-none opacity-20 blur-[2px] saturate-50" : ""
-        } ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
+          sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+        }`}
       >
         <div className="flex h-16 shrink-0 items-center gap-3 overflow-hidden border-b border-slate-100 px-4">
           <BrandMark className="h-10 w-10" />
@@ -162,7 +153,6 @@ export default function Layout({ children }) {
           <NavItem to="/clients" icon={Users} label="Клиенты" onClick={closeSidebar} />
           {isAdmin && <NavItem to="/requests" icon={ShieldQuestion} label="Запросы" onClick={closeSidebar} />}
           {isAdmin && <NavItem to="/settings" icon={Settings} label="Система" onClick={closeSidebar} />}
-          <NavItem to="/assistant" icon={Mic} label="AI-помощник" onClick={closeSidebar} />
         </nav>
 
         <div className="flex shrink-0 justify-center border-t border-slate-100 px-3 py-3">
@@ -181,8 +171,7 @@ export default function Layout({ children }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {!isAssistantMode && (
-          <header className="z-10 flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 bg-white px-4 py-2 sm:flex-nowrap sm:px-6">
+        <header className="z-10 flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 bg-white px-4 py-2 sm:flex-nowrap sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
               <button onClick={() => setSidebarOpen(true)} className="-ml-2 p-2 text-slate-500 md:hidden" type="button">
                 <Menu size={20} />
@@ -245,19 +234,9 @@ export default function Layout({ children }) {
               ) : null}
             </div>
 
-            <Link
-              to="/assistant"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
-            >
-              <Mic size={13} />
-              AI-помощник
-            </Link>
-          </header>
-        )}
+        </header>
 
-        <main className={`no-scrollbar flex-1 overflow-auto ${isAssistantMode ? "relative p-0" : "relative p-4 sm:p-6"}`}>
-          {children}
-        </main>
+        <main className="no-scrollbar flex-1 overflow-auto relative p-4 sm:p-6">{children}</main>
       </div>
     </div>
   );

@@ -14,25 +14,6 @@ export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-export function getAssistantLiveWebSocketUrl(options = {}) {
-  const token = getToken();
-  const configuredBase = import.meta.env.VITE_API_BASE || window.location.origin;
-  const url = new URL(configuredBase, window.location.origin);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = "/ws/assistant/live/";
-  url.search = "";
-  if (token) {
-    url.searchParams.set("token", token);
-  }
-  if (options.screen) {
-    url.searchParams.set("screen", String(options.screen).slice(0, 120));
-  }
-  if (Array.isArray(options.history) && options.history.length) {
-    url.searchParams.set("history", JSON.stringify(options.history.slice(-5)));
-  }
-  return url.toString();
-}
-
 export function getRefreshToken() {
   return localStorage.getItem(REFRESH_TOKEN_KEY);
 }
@@ -624,22 +605,6 @@ export async function updateProjectComment(commentId, payload) {
 export async function deleteProjectComment(commentId) {
   initApiAuth();
   await api.delete(`/api/project-comments/${commentId}/`);
-}
-
-export async function sendAssistantMessage(payload) {
-  initApiAuth();
-  const { data } = await api.post("/api/assistant/chat/", payload, { timeout: 20000 });
-  return data;
-}
-
-export async function sendAssistantVoiceMessage({ audioBlob, history, includeAudio = true }) {
-  initApiAuth();
-  const formData = new FormData();
-  formData.append("audio", audioBlob, "voice-command.wav");
-  formData.append("history", JSON.stringify(history || []));
-  formData.append("include_audio", includeAudio ? "1" : "0");
-  const { data } = await api.post("/api/assistant/voice/", formData, { timeout: 60000 });
-  return data;
 }
 
 export default api;

@@ -20,8 +20,6 @@ from .views import (
     billing_summary_view,
     address_suggestions_view,
     chat_settings_view,
-    assistant_chat_view,
-    assistant_voice_view,
     bonus_promo_preview_view,
     cash_forecast_ai_view,
     cash_forecast_view,
@@ -74,8 +72,6 @@ urlpatterns = [
     path("yandex-disk/oauth/complete/", yandex_disk_oauth_complete_view),
     path("yandex-disk/oauth/callback/", yandex_disk_oauth_callback_view),
     path("yandex-disk-settings/", yandex_disk_settings_view),
-    path("assistant/chat/", assistant_chat_view),
-    path("assistant/voice/", assistant_voice_view),
     path("projects", ProjectViewSet.as_view({"get": "list", "post": "create"}), name="projects-no-slash"),
     path("", include(router.urls)),
 ]

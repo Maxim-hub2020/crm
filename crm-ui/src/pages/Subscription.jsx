@@ -69,7 +69,7 @@ export default function Subscription() {
   const plans = summary?.plans || [];
   const trial = summary?.trial || null;
   const isActiveNow = Boolean(subscription?.is_active_now);
-  const priceLabel = useMemo(() => formatRub(plan?.price_rub || 1500), [plan?.price_rub]);
+  const priceLabel = useMemo(() => formatRub(plan?.price_rub || 1000), [plan?.price_rub]);
   const trialRemaining = Math.max(Number(trial?.remaining_projects || 0), 0);
 
   async function handleCreateInvoice(planCode) {
@@ -126,7 +126,7 @@ export default function Subscription() {
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-500 sm:text-base">
               CRM работает по ежемесячной подписке. Первые 10 созданных проектов доступны как пробный
-              период, дальше можно выбрать тариф без помощника или с AI-помощником.
+              период, дальше можно оформить единый тариф CRM.
             </p>
           </div>
 
@@ -154,7 +154,7 @@ export default function Subscription() {
 
                 <div className="rounded-[28px] bg-slate-900 px-6 py-5 text-white shadow-lg shadow-slate-900/10">
                   <div className="text-[11px] font-black uppercase tracking-[0.2em] text-white/60">Стоимость</div>
-                  <div className="mt-2 text-3xl font-black">{isActiveNow ? priceLabel : "от 1 000 ₽"}</div>
+                  <div className="mt-2 text-3xl font-black">{isActiveNow ? priceLabel : "1 000 ₽"}</div>
                   <div className="mt-1 text-sm text-white/70">в месяц</div>
                 </div>
               </div>
@@ -296,10 +296,10 @@ export default function Subscription() {
                   1. Подписка единая для всей CRM и всей команды.
                 </div>
                 <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-4 text-sm text-slate-600">
-                  2. Доступны два тарифа: CRM без помощника за 1 000 ₽ и CRM с AI-помощником за 1 500 ₽.
+                  2. Единый тариф CRM стоит 1 000 ₽ в месяц.
                 </div>
                 <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-4 text-sm text-slate-600">
-                  3. После активации снова доступны проекты, финансы и задачи; голосовой помощник работает только на тарифе с AI.
+                  3. После активации снова доступны проекты, финансы, клиенты, чаты и задачи.
                 </div>
               </div>
             </CardBody>

@@ -24,17 +24,3 @@ class HasActiveSubscription(BasePermission):
         subscription = get_workspace_subscription(request.user)
         return is_subscription_active(subscription) or has_trial_access(subscription)
 
-
-class HasAssistantSubscription(BasePermission):
-    message = "AI-помощник доступен только на тарифе CRM + AI-помощник."
-
-    def has_permission(self, request, view):
-        if not request.user.is_authenticated:
-            return False
-
-        if getattr(request.user, "is_superuser", False) or getattr(request.user, "is_admin", lambda: False)():
-            return True
-
-        from .subscription import get_workspace_subscription, has_assistant_access
-
-        return has_assistant_access(get_workspace_subscription(request.user))

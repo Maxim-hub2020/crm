@@ -7,7 +7,6 @@ from .models import (
     ChatIntegrationSettings,
     Client,
     ClientBonusTransaction,
-    CRMMemorySnapshot,
     DocumentTemplate,
     FinanceCategory,
     Payment,
@@ -37,5 +36,4 @@ admin.site.register(DocumentTemplate)
 admin.site.register(ChatIntegrationSettings)
 admin.site.register(CalculatorSettings)
 admin.site.register(YandexDiskSettings)
-admin.site.register(CRMMemorySnapshot)
 admin.site.register(AuditLog)

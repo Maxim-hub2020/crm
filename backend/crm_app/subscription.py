@@ -10,25 +10,14 @@ from .tenancy import current_workspace, ensure_default_workspace
 
 TRIAL_PROJECT_LIMIT = 10
 BASIC_PLAN_CODE = "crm-basic-monthly"
-ASSISTANT_PLAN_CODE = "crm-ai-monthly"
 
 SUBSCRIPTION_PLANS = [
     {
         "code": BASIC_PLAN_CODE,
-        "name": "CRM без AI-помощника",
-        "description": "Доступ к CRM, проектам, клиентам, задачам и финансам без голосового AI-помощника.",
+        "name": "CRM",
+        "description": "Доступ к CRM, проектам, клиентам, задачам и финансам.",
         "price_rub": Decimal("1000.00"),
         "interval_months": 1,
-        "includes_assistant": False,
-        "is_active": True,
-    },
-    {
-        "code": ASSISTANT_PLAN_CODE,
-        "name": "CRM + AI-помощник",
-        "description": "Полный доступ к CRM и голосовому AI-помощнику.",
-        "price_rub": Decimal("1500.00"),
-        "interval_months": 1,
-        "includes_assistant": True,
         "is_active": True,
     },
 ]
@@ -52,20 +41,20 @@ def ensure_subscription_defaults(workspace=None):
             defaults=plan_data,
         )
         plans_by_code[plan.code] = plan
-    SubscriptionPlan.objects.filter(code="procrm-monthly").update(is_active=False)
+    SubscriptionPlan.objects.filter(code__in=["procrm-monthly", "crm-ai-monthly"]).update(is_active=False)
 
-    assistant_plan = plans_by_code[ASSISTANT_PLAN_CODE]
+    basic_plan = plans_by_code[BASIC_PLAN_CODE]
     subscription = WorkspaceSubscription.objects.select_related("plan").filter(workspace=workspace).first()
     if not subscription:
         subscription = WorkspaceSubscription.objects.create(
             workspace=workspace,
-            plan=assistant_plan,
+            plan=basic_plan,
             project_creations_count=Project.objects.filter(workspace=workspace).count(),
         )
-    elif not subscription.plan_id or subscription.plan.code == "procrm-monthly":
-        subscription.plan = assistant_plan
+    elif not subscription.plan_id or subscription.plan.code in {"procrm-monthly", "crm-ai-monthly"}:
+        subscription.plan = basic_plan
         subscription.save(update_fields=["plan", "updated_at"])
-    return assistant_plan, subscription
+    return basic_plan, subscription
 
 
 def get_workspace_subscription(user=None, workspace=None):
@@ -94,11 +83,6 @@ def can_create_trial_project(subscription=None):
     return active_subscription.project_creations_count < TRIAL_PROJECT_LIMIT
 
 
-def has_assistant_access(subscription=None):
-    active_subscription = subscription or get_workspace_subscription()
-    return active_subscription.is_active_now() and bool(active_subscription.plan.includes_assistant)
-
-
 def record_project_created(subscription=None):
     active_subscription = subscription or get_workspace_subscription()
     active_subscription.project_creations_count += 1
@@ -108,8 +92,8 @@ def record_project_created(subscription=None):
 
 def get_subscription_plan(plan_code=None, workspace=None):
     ensure_subscription_defaults(workspace)
-    code = plan_code or ASSISTANT_PLAN_CODE
-    return SubscriptionPlan.objects.filter(code=code, is_active=True).first() or SubscriptionPlan.objects.get(code=ASSISTANT_PLAN_CODE)
+    code = plan_code or BASIC_PLAN_CODE
+    return SubscriptionPlan.objects.filter(code=code, is_active=True).first() or SubscriptionPlan.objects.get(code=BASIC_PLAN_CODE)
 
 
 def issue_subscription_invoice(actor=None, plan_code=None):
@@ -199,7 +183,6 @@ def billing_summary_payload(user):
             "description": subscription.plan.description,
             "price_rub": str(subscription.plan.price_rub),
             "interval_months": subscription.plan.interval_months,
-            "includes_assistant": subscription.plan.includes_assistant,
             "is_active": subscription.plan.is_active,
         },
         "plans": [
@@ -210,7 +193,6 @@ def billing_summary_payload(user):
                 "description": plan.description,
                 "price_rub": str(plan.price_rub),
                 "interval_months": plan.interval_months,
-                "includes_assistant": plan.includes_assistant,
                 "is_active": plan.is_active,
             }
             for plan in plans
