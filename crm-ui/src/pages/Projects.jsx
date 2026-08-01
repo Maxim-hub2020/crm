@@ -566,6 +566,11 @@ function isPastDateValue(value) {
   return Boolean(value && value < todayDateValue());
 }
 
+function isPaymentDateChanged(payment, nextDate) {
+  if (!payment) return true;
+  return toDateInputValue(payment.paid_at) !== nextDate;
+}
+
 function isFuturePayment(payment) {
   return toDateInputValue(payment?.paid_at) > todayDateValue();
 }
@@ -1466,6 +1471,11 @@ export default function Projects() {
     return paymentsByProject.get(activeProjectId) || [];
   }, [activeProjectId, paymentsByProject]);
 
+  const editingPayment = useMemo(
+    () => activeProjectPayments.find((payment) => payment.id === editingPaymentId) || null,
+    [activeProjectPayments, editingPaymentId]
+  );
+
   const activeProjectFinanceSummary = useMemo(
     () => buildProjectFinanceSummary(activeProject, activeProjectPayments),
     [activeProject, activeProjectPayments]
@@ -2334,7 +2344,7 @@ export default function Projects() {
         setPaymentError("Выберите дату операции.");
         return;
       }
-      if (isPastDateValue(paymentForm.paid_at)) {
+      if (isPastDateValue(paymentForm.paid_at) && isPaymentDateChanged(editingPayment, paymentForm.paid_at)) {
         setPaymentError("Нельзя поставить операцию задним числом.");
         return;
       }
@@ -3901,8 +3911,14 @@ export default function Projects() {
 
                 <Card className="border border-slate-100 shadow-none ring-0">
                   <CardHeader>
-                    <div className="text-lg font-black tracking-tight text-slate-900">Добавить операцию</div>
-                    <div className="mt-1 text-sm text-slate-500">Операция сразу появится в карточке проекта и в разделе финансов.</div>
+                    <div className="text-lg font-black tracking-tight text-slate-900">
+                      {editingPaymentId ? "Редактировать операцию" : "Добавить операцию"}
+                    </div>
+                    <div className="mt-1 text-sm text-slate-500">
+                      {editingPaymentId
+                        ? "Изменения сразу обновят карточку проекта и общий раздел финансов."
+                        : "Операция сразу появится в карточке проекта и в разделе финансов."}
+                    </div>
                   </CardHeader>
                   <CardBody>
                     <form className="space-y-4" onSubmit={submitPayment}>
@@ -3956,7 +3972,7 @@ export default function Projects() {
                           <Label>Дата</Label>
                           <Input
                             type="date"
-                            min={todayDateValue()}
+                            min={editingPaymentId ? undefined : todayDateValue()}
                             value={paymentForm.paid_at}
                             onChange={(event) => setPaymentForm((prev) => ({ ...prev, paid_at: event.target.value }))}
                           />

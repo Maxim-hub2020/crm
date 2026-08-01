@@ -61,6 +61,11 @@ function isPastDateValue(value) {
   return Boolean(value && value < todayDateValue());
 }
 
+function isPaymentDateChanged(payment, nextDate) {
+  if (!payment) return true;
+  return toDateInputValue(payment.paid_at) !== nextDate;
+}
+
 function isFuturePayment(payment) {
   return toDateInputValue(payment?.paid_at) > todayDateValue();
 }
@@ -757,7 +762,7 @@ export default function Finances() {
         setActionError("Выберите дату операции.");
         return;
       }
-      if (isPastDateValue(paymentForm.paid_at)) {
+      if (isPastDateValue(paymentForm.paid_at) && isPaymentDateChanged(editingPayment, paymentForm.paid_at)) {
         setActionError("Нельзя поставить операцию задним числом.");
         return;
       }
@@ -1177,7 +1182,7 @@ export default function Finances() {
               <Label>Дата</Label>
               <Input
                 type="date"
-                min={todayDateValue()}
+                min={editingPayment ? undefined : todayDateValue()}
                 value={paymentForm.paid_at}
                 onChange={(event) => setPaymentForm((prev) => ({ ...prev, paid_at: event.target.value }))}
               />

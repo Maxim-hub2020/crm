@@ -1956,6 +1956,41 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(str(self.manager_payment.amount), "22000.00")
         self.assertEqual(self.manager_payment.comment, "Updated payment")
 
+    def test_manager_can_update_existing_past_payment_without_changing_date(self):
+        self.manager_payment.paid_at = timezone.now() - timezone.timedelta(days=1)
+        self.manager_payment.save(update_fields=["paid_at"])
+        client = self.auth_client_for(self.manager)
+        original_date = timezone.localtime(self.manager_payment.paid_at).date().isoformat()
+
+        response = client.patch(
+            f"/api/payments/{self.manager_payment.id}/",
+            {
+                "amount": "23000.00",
+                "paid_at": f"{original_date}T12:00:00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.manager_payment.refresh_from_db()
+        self.assertEqual(str(self.manager_payment.amount), "23000.00")
+        self.assertEqual(timezone.localtime(self.manager_payment.paid_at).date().isoformat(), original_date)
+
+    def test_manager_cannot_move_payment_to_another_past_date(self):
+        self.manager_payment.paid_at = timezone.now() - timezone.timedelta(days=1)
+        self.manager_payment.save(update_fields=["paid_at"])
+        client = self.auth_client_for(self.manager)
+        another_past_date = (timezone.localdate() - timezone.timedelta(days=2)).isoformat()
+
+        response = client.patch(
+            f"/api/payments/{self.manager_payment.id}/",
+            {"paid_at": f"{another_past_date}T12:00:00"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("paid_at", response.data)
+
     def test_manager_can_delete_own_payment(self):
         client = self.auth_client_for(self.manager)
 

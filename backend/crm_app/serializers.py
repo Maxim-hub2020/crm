@@ -691,8 +691,13 @@ class PaymentSerializer(serializers.ModelSerializer):
         if paid_at is None and self.instance is None:
             attrs["paid_at"] = timezone.now()
             paid_at = attrs["paid_at"]
-        if paid_at is not None and timezone.localtime(paid_at).date() < timezone.localdate():
-            raise serializers.ValidationError({"paid_at": "Нельзя ставить операцию задним числом."})
+        if paid_at is not None:
+            paid_date = timezone.localtime(paid_at).date()
+            current_paid_at = getattr(self.instance, "paid_at", None)
+            current_paid_date = timezone.localtime(current_paid_at).date() if current_paid_at else None
+            is_existing_unchanged_date = self.instance is not None and paid_date == current_paid_date
+            if paid_date < timezone.localdate() and not is_existing_unchanged_date:
+                raise serializers.ValidationError({"paid_at": "Нельзя ставить операцию задним числом."})
 
         account = attrs.get("account", getattr(self.instance, "account", None))
         account_queryset = Account.objects.filter(workspace=workspace)
