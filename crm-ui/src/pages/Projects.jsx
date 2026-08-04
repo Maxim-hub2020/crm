@@ -76,6 +76,7 @@ import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalC
 const VIEW_MODE_KEY = "crm_projects_view_mode";
 const PROJECT_DRAG_HOLD_MS = 3000;
 const PROJECT_DRAG_MOVE_CANCEL_PX = 12;
+const PROJECT_DRAG_MOUSE_MOVE_CANCEL_PX = 48;
 
 const DEFAULT_STATUS_OPTIONS = [
   { value: "active", label: "В работе", short: "Работа", color: "sky", is_default: true },
@@ -2844,6 +2845,7 @@ export default function Projects() {
     const cardRect = event.currentTarget.getBoundingClientRect();
     pointerDragRef.current = {
       projectId,
+      pointerType: event.pointerType || "mouse",
       startX: event.clientX,
       startY: event.clientY,
       currentX: event.clientX,
@@ -2870,9 +2872,11 @@ export default function Projects() {
     const deltaX = event.clientX - drag.startX;
     const deltaY = event.clientY - drag.startY;
     const distance = Math.hypot(deltaX, deltaY);
+    const moveCancelDistance =
+      drag.pointerType === "mouse" ? PROJECT_DRAG_MOUSE_MOVE_CANCEL_PX : PROJECT_DRAG_MOVE_CANCEL_PX;
 
     if (!drag.dragging) {
-      if (distance > PROJECT_DRAG_MOVE_CANCEL_PX) {
+      if (distance > moveCancelDistance) {
         clearProjectDragHoldTimer(drag);
         drag.holdCancelled = true;
 
