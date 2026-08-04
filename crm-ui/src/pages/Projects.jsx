@@ -76,7 +76,6 @@ import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalC
 const VIEW_MODE_KEY = "crm_projects_view_mode";
 const PROJECT_DRAG_HOLD_MS = 3000;
 const PROJECT_DRAG_MOVE_CANCEL_PX = 12;
-const PROJECT_DRAG_MOUSE_MOVE_CANCEL_PX = 48;
 
 const DEFAULT_STATUS_OPTIONS = [
   { value: "active", label: "В работе", short: "Работа", color: "sky", is_default: true },
@@ -2855,6 +2854,7 @@ export default function Projects() {
       width: cardRect.width,
       dragging: false,
       holdCancelled: false,
+      pointerMoved: false,
       scrolling: false,
       scrollLeft: kanbanScrollRef.current?.scrollLeft || 0,
       holdTimerId: window.setTimeout(beginProjectDrag, PROJECT_DRAG_HOLD_MS),
@@ -2872,11 +2872,13 @@ export default function Projects() {
     const deltaX = event.clientX - drag.startX;
     const deltaY = event.clientY - drag.startY;
     const distance = Math.hypot(deltaX, deltaY);
-    const moveCancelDistance =
-      drag.pointerType === "mouse" ? PROJECT_DRAG_MOUSE_MOVE_CANCEL_PX : PROJECT_DRAG_MOVE_CANCEL_PX;
 
     if (!drag.dragging) {
-      if (distance > moveCancelDistance) {
+      if (distance > PROJECT_DRAG_MOVE_CANCEL_PX) {
+        drag.pointerMoved = true;
+      }
+
+      if (drag.pointerType !== "mouse" && distance > PROJECT_DRAG_MOVE_CANCEL_PX) {
         clearProjectDragHoldTimer(drag);
         drag.holdCancelled = true;
 
@@ -2895,6 +2897,10 @@ export default function Projects() {
         if (scrollContainer) {
           scrollContainer.scrollLeft = drag.scrollLeft - deltaX;
         }
+      }
+
+      if (drag.pointerType === "mouse" && drag.pointerMoved) {
+        event.preventDefault();
       }
       return;
     }
@@ -2933,7 +2939,7 @@ export default function Projects() {
     event.currentTarget.releasePointerCapture?.(event.pointerId);
 
     if (!drag.dragging) {
-      const shouldOpenProject = !drag.scrolling && !drag.holdCancelled;
+      const shouldOpenProject = !drag.scrolling && !drag.holdCancelled && !drag.pointerMoved;
       cleanupProjectDrag();
       if (!shouldOpenProject) {
         suppressProjectClickOnce();
