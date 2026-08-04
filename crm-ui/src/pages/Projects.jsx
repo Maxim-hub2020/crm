@@ -74,6 +74,8 @@ import {
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits, phoneSearchDigits } from "../utils/phone.js";
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
+const PROJECT_DRAG_HOLD_MS = 3000;
+const PROJECT_DRAG_MOVE_CANCEL_PX = 12;
 
 const DEFAULT_STATUS_OPTIONS = [
   { value: "active", label: "В работе", short: "Работа", color: "sky", is_default: true },
@@ -2720,6 +2722,47 @@ export default function Projects() {
     }
   }
 
+  function clearProjectDragHoldTimer(drag = pointerDragRef.current) {
+    if (drag?.holdTimerId) {
+      window.clearTimeout(drag.holdTimerId);
+      drag.holdTimerId = null;
+    }
+  }
+
+  function beginProjectDrag() {
+    const drag = pointerDragRef.current;
+    if (!drag || drag.dragging || drag.holdCancelled || drag.scrolling) return;
+
+    clearProjectDragHoldTimer(drag);
+    drag.dragging = true;
+
+    bodyDragStyleRef.current = {
+      cursor: document.body.style.cursor,
+      userSelect: document.body.style.userSelect,
+      webkitUserSelect: document.body.style.webkitUserSelect,
+    };
+    document.body.style.cursor = "grabbing";
+    document.body.style.userSelect = "none";
+    document.body.style.webkitUserSelect = "none";
+
+    setTouchDragProjectId(drag.projectId);
+    setDragPreview({
+      projectId: drag.projectId,
+      left: drag.currentX - drag.offsetX,
+      top: drag.currentY - drag.offsetY,
+      width: drag.width,
+    });
+    setProjectDragTargetFromPoint(drag.currentX, drag.currentY);
+    updateProjectDragAutoScroll(drag.currentX);
+  }
+
+  function suppressProjectClickOnce() {
+    suppressProjectClickRef.current = true;
+    window.setTimeout(() => {
+      suppressProjectClickRef.current = false;
+    }, 120);
+  }
+
   function handleProjectPointerDown(event, projectId) {
     if (event.pointerType === "mouse" && event.button !== 0) return;
 
@@ -2735,15 +2778,11 @@ export default function Projects() {
       offsetY: event.clientY - cardRect.top,
       width: cardRect.width,
       dragging: false,
+      holdCancelled: false,
+      scrolling: false,
+      scrollLeft: kanbanScrollRef.current?.scrollLeft || 0,
+      holdTimerId: window.setTimeout(beginProjectDrag, PROJECT_DRAG_HOLD_MS),
     };
-    bodyDragStyleRef.current = {
-      cursor: document.body.style.cursor,
-      userSelect: document.body.style.userSelect,
-      webkitUserSelect: document.body.style.webkitUserSelect,
-    };
-    document.body.style.cursor = "grabbing";
-    document.body.style.userSelect = "none";
-    document.body.style.webkitUserSelect = "none";
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
 
@@ -2754,26 +2793,47 @@ export default function Projects() {
     drag.currentX = event.clientX;
     drag.currentY = event.clientY;
 
-    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
-    if (!drag.dragging && distance > 12) {
-      drag.dragging = true;
-      setTouchDragProjectId(drag.projectId);
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    const distance = Math.hypot(deltaX, deltaY);
+
+    if (!drag.dragging) {
+      if (distance > PROJECT_DRAG_MOVE_CANCEL_PX) {
+        clearProjectDragHoldTimer(drag);
+        drag.holdCancelled = true;
+
+        if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+          drag.scrolling = true;
+          const scrollContainer = kanbanScrollRef.current;
+          if (scrollContainer) {
+            scrollContainer.scrollLeft = drag.scrollLeft - deltaX;
+          }
+        }
+      }
+
+      if (drag.scrolling) {
+        event.preventDefault();
+        const scrollContainer = kanbanScrollRef.current;
+        if (scrollContainer) {
+          scrollContainer.scrollLeft = drag.scrollLeft - deltaX;
+        }
+      }
+      return;
     }
 
-    if (drag.dragging) {
-      event.preventDefault();
-      setDragPreview({
-        projectId: drag.projectId,
-        left: event.clientX - drag.offsetX,
-        top: event.clientY - drag.offsetY,
-        width: drag.width,
-      });
-      setProjectDragTargetFromPoint(event.clientX, event.clientY);
-      updateProjectDragAutoScroll(event.clientX);
-    }
+    event.preventDefault();
+    setDragPreview({
+      projectId: drag.projectId,
+      left: event.clientX - drag.offsetX,
+      top: event.clientY - drag.offsetY,
+      width: drag.width,
+    });
+    setProjectDragTargetFromPoint(event.clientX, event.clientY);
+    updateProjectDragAutoScroll(event.clientX);
   }
 
   function cleanupProjectDrag() {
+    clearProjectDragHoldTimer();
     const previousBodyStyle = bodyDragStyleRef.current;
     if (previousBodyStyle) {
       document.body.style.cursor = previousBodyStyle.cursor;
@@ -2795,19 +2855,20 @@ export default function Projects() {
     event.currentTarget.releasePointerCapture?.(event.pointerId);
 
     if (!drag.dragging) {
+      const shouldOpenProject = !drag.scrolling && !drag.holdCancelled;
       cleanupProjectDrag();
-      const project = projects.find((item) => item.id === drag.projectId);
-      if (project) {
-        openProject(project);
+      if (!shouldOpenProject) {
+        suppressProjectClickOnce();
+        return;
       }
+
+      const project = projects.find((item) => item.id === drag.projectId);
+      if (project) openProject(project);
       return;
     }
 
     event.preventDefault();
-    suppressProjectClickRef.current = true;
-    window.setTimeout(() => {
-      suppressProjectClickRef.current = false;
-    }, 120);
+    suppressProjectClickOnce();
 
     const targetColumn = document
       .elementFromPoint(event.clientX, event.clientY)
