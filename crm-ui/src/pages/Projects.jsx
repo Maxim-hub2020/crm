@@ -1102,6 +1102,8 @@ export default function Projects() {
   const handledOpenProjectStateRef = useRef("");
   const bodyDragStyleRef = useRef(null);
   const kanbanScrollRef = useRef(null);
+  const kanbanPanRef = useRef(null);
+  const kanbanPanBodyStyleRef = useRef(null);
   const dragAutoScrollRef = useRef(null);
   const dragAutoScrollFrameRef = useRef(null);
 
@@ -2763,9 +2765,81 @@ export default function Projects() {
     }, 120);
   }
 
+  function startKanbanPanCursor() {
+    if (kanbanPanBodyStyleRef.current) return;
+    kanbanPanBodyStyleRef.current = {
+      cursor: document.body.style.cursor,
+      userSelect: document.body.style.userSelect,
+      webkitUserSelect: document.body.style.webkitUserSelect,
+    };
+    document.body.style.cursor = "grabbing";
+    document.body.style.userSelect = "none";
+    document.body.style.webkitUserSelect = "none";
+  }
+
+  function cleanupKanbanPan() {
+    const previousBodyStyle = kanbanPanBodyStyleRef.current;
+    if (previousBodyStyle) {
+      document.body.style.cursor = previousBodyStyle.cursor;
+      document.body.style.userSelect = previousBodyStyle.userSelect;
+      document.body.style.webkitUserSelect = previousBodyStyle.webkitUserSelect;
+    }
+    kanbanPanBodyStyleRef.current = null;
+    kanbanPanRef.current = null;
+  }
+
+  function handleKanbanPanPointerDown(event) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest("button, a, input, textarea, select, [data-project-card]")) return;
+
+    const scrollContainer = kanbanScrollRef.current;
+    if (!scrollContainer) return;
+
+    kanbanPanRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: scrollContainer.scrollLeft,
+      panning: false,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function handleKanbanPanPointerMove(event) {
+    const pan = kanbanPanRef.current;
+    const scrollContainer = kanbanScrollRef.current;
+    if (!pan || !scrollContainer || pan.pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - pan.startX;
+    const deltaY = event.clientY - pan.startY;
+
+    if (!pan.panning) {
+      if (Math.abs(deltaX) < 8) return;
+      if (Math.abs(deltaY) > Math.abs(deltaX)) {
+        event.currentTarget.releasePointerCapture?.(event.pointerId);
+        cleanupKanbanPan();
+        return;
+      }
+      pan.panning = true;
+      startKanbanPanCursor();
+    }
+
+    event.preventDefault();
+    scrollContainer.scrollLeft = pan.scrollLeft - deltaX;
+  }
+
+  function handleKanbanPanPointerEnd(event) {
+    const pan = kanbanPanRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    cleanupKanbanPan();
+  }
+
   function handleProjectPointerDown(event, projectId) {
     if (event.pointerType === "mouse" && event.button !== 0) return;
 
+    event.stopPropagation();
     event.preventDefault();
     const cardRect = event.currentTarget.getBoundingClientRect();
     pointerDragRef.current = {
@@ -2923,7 +2997,15 @@ export default function Projects() {
           <CardBody className="p-12 text-center text-sm text-slate-500">Загружаем проекты и операции...</CardBody>
         </Card>
       ) : viewMode === "kanban" ? (
-        <div ref={kanbanScrollRef} className="-mx-4 select-none overflow-x-auto px-4 pb-3 sm:mx-0 sm:px-0">
+        <div
+          ref={kanbanScrollRef}
+          className="-mx-4 cursor-grab select-none overflow-x-auto px-4 pb-3 active:cursor-grabbing sm:mx-0 sm:px-0"
+          onPointerDown={handleKanbanPanPointerDown}
+          onPointerMove={handleKanbanPanPointerMove}
+          onPointerUp={handleKanbanPanPointerEnd}
+          onPointerCancel={handleKanbanPanPointerEnd}
+          style={{ touchAction: "pan-y" }}
+        >
           <div className="grid snap-x snap-mandatory grid-flow-col auto-cols-[calc(100vw-2rem)] gap-5 sm:auto-cols-[minmax(360px,420px)]">
           {statusOptions.map((status) => {
             const columnProjects = groupedProjects[status.value] || [];
@@ -2953,6 +3035,7 @@ export default function Projects() {
                       return (
                         <div
                           key={project.id}
+                          data-project-card
                           onPointerDown={(event) => handleProjectPointerDown(event, project.id)}
                           onPointerMove={handleProjectPointerMove}
                           onPointerUp={handleProjectPointerEnd}
