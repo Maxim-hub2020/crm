@@ -74,7 +74,7 @@ import {
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits, phoneSearchDigits } from "../utils/phone.js";
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
-const PROJECT_DRAG_HOLD_MS = 3000;
+const PROJECT_DRAG_HOLD_MS = 1500;
 const PROJECT_DRAG_MOVE_CANCEL_PX = 12;
 
 const DEFAULT_STATUS_OPTIONS = [
