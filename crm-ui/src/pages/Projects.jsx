@@ -2737,6 +2737,7 @@ export default function Projects() {
 
     clearProjectDragHoldTimer(drag);
     drag.dragging = true;
+    drag.targetElement?.setPointerCapture?.(drag.pointerId);
 
     bodyDragStyleRef.current = {
       cursor: document.body.style.cursor,
@@ -2790,6 +2791,7 @@ export default function Projects() {
 
   function handleKanbanPanPointerDown(event) {
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (event.pointerType !== "mouse") return;
     const target = event.target instanceof Element ? event.target : null;
     if (target?.closest("button, a, input, textarea, select, [data-project-card]")) return;
 
@@ -2840,11 +2842,15 @@ export default function Projects() {
     if (event.pointerType === "mouse" && event.button !== 0) return;
 
     event.stopPropagation();
-    event.preventDefault();
+    if (event.pointerType === "mouse") {
+      event.preventDefault();
+    }
     const cardRect = event.currentTarget.getBoundingClientRect();
     pointerDragRef.current = {
       projectId,
+      pointerId: event.pointerId,
       pointerType: event.pointerType || "mouse",
+      targetElement: event.currentTarget,
       startX: event.clientX,
       startY: event.clientY,
       currentX: event.clientX,
@@ -2859,7 +2865,9 @@ export default function Projects() {
       scrollLeft: kanbanScrollRef.current?.scrollLeft || 0,
       holdTimerId: window.setTimeout(beginProjectDrag, PROJECT_DRAG_HOLD_MS),
     };
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    if (event.pointerType === "mouse") {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    }
   }
 
   function handleProjectPointerMove(event) {
@@ -2881,14 +2889,8 @@ export default function Projects() {
       if (drag.pointerType !== "mouse" && distance > PROJECT_DRAG_MOVE_CANCEL_PX) {
         clearProjectDragHoldTimer(drag);
         drag.holdCancelled = true;
-
-        if (Math.abs(deltaX) >= Math.abs(deltaY)) {
-          drag.scrolling = true;
-          const scrollContainer = kanbanScrollRef.current;
-          if (scrollContainer) {
-            scrollContainer.scrollLeft = drag.scrollLeft - deltaX;
-          }
-        }
+        drag.scrolling = Math.abs(deltaX) >= Math.abs(deltaY);
+        return;
       }
 
       if (drag.scrolling) {
@@ -3014,7 +3016,7 @@ export default function Projects() {
           onPointerMove={handleKanbanPanPointerMove}
           onPointerUp={handleKanbanPanPointerEnd}
           onPointerCancel={handleKanbanPanPointerEnd}
-          style={{ touchAction: "pan-y" }}
+          style={{ touchAction: "pan-x pan-y" }}
         >
           <div className="grid snap-x snap-mandatory grid-flow-col auto-cols-[calc(100vw-2rem)] gap-5 sm:auto-cols-[minmax(360px,420px)]">
           {statusOptions.map((status) => {
@@ -3050,7 +3052,7 @@ export default function Projects() {
                           onPointerMove={handleProjectPointerMove}
                           onPointerUp={handleProjectPointerEnd}
                           onPointerCancel={cleanupProjectDrag}
-                          style={{ touchAction: "none" }}
+                          style={{ touchAction: "pan-x pan-y" }}
                         >
                           <ProjectKanbanCard
                             project={project}
