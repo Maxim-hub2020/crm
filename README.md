@@ -72,6 +72,8 @@ Backend:
 - `GET/POST /api/payments/`
 - `GET /api/address-suggestions/`
 - `GET/PATCH /api/calculator-settings/`
+- `GET/POST /api/calculator-quotes/`
+- `DELETE /api/calculator-quotes/<quote_id>/`
 - `GET/PATCH /api/yandex-disk/settings/`
 - `POST /api/finance-analytics/ai/`
 - `POST /api/cash-forecast/ai/`

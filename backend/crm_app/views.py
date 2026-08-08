@@ -13,7 +13,7 @@ from django.db.models.functions import Replace
 from django.http import FileResponse
 from django.shortcuts import redirect
 from django.utils import timezone
-from django.utils.dateparse import parse_date
+from django.utils.dateparse import parse_date, parse_datetime
 from django.utils.text import get_valid_filename
 from rest_framework import viewsets
 from rest_framework.decorators import action, api_view, permission_classes
@@ -36,6 +36,7 @@ from .gemini_client import GeminiClient, GeminiConfigurationError, GeminiRequest
 from .models import (
     Account,
     AuditLog,
+    CalculatorQuote,
     CalculatorSettings,
     ChatIntegrationSettings,
     Client,
@@ -58,6 +59,7 @@ from .serializers import (
     AdminUserSerializer,
     AccountSerializer,
     AuditLogSerializer,
+    CalculatorQuoteSyncSerializer,
     CalculatorSettingsSerializer,
     ChatIntegrationSettingsSerializer,
     ClientBonusTransactionSerializer,
@@ -576,6 +578,69 @@ def calculator_settings_view(request):
     serializer.is_valid(raise_exception=True)
     serializer.save(updated_by=request.user)
     return Response(serializer.data)
+
+
+def _calculator_quote_payloads(workspace):
+    return list(
+        CalculatorQuote.objects.filter(workspace=workspace)
+        .order_by("-quote_created_at", "-id")
+        .values_list("payload", flat=True)
+    )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticatedAny])
+def calculator_quotes_view(request):
+    workspace = current_workspace(request.user)
+
+    if request.method == "GET":
+        return Response({"quotes": _calculator_quote_payloads(workspace)})
+
+    if not request.user.is_admin():
+        return Response(
+            {"detail": "Архив КП может изменять только администратор."},
+            status=drf_status.HTTP_403_FORBIDDEN,
+        )
+
+    serializer = CalculatorQuoteSyncSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    with transaction.atomic():
+        for payload in serializer.validated_data["quotes"]:
+            quote_id = str(payload["id"]).strip()
+            quote_created_at = parse_datetime(str(payload.get("createdAt") or ""))
+            if quote_created_at and timezone.is_naive(quote_created_at):
+                quote_created_at = timezone.make_aware(quote_created_at)
+            record, created = CalculatorQuote.objects.select_for_update().get_or_create(
+                workspace=workspace,
+                quote_id=quote_id,
+                defaults={
+                    "created_by": request.user,
+                    "quote_created_at": quote_created_at or timezone.now(),
+                },
+            )
+            record.number = str(payload.get("number") or "")[:32]
+            record.payload = payload
+            record.updated_by = request.user
+            if quote_created_at:
+                record.quote_created_at = quote_created_at
+            if created and not record.created_by_id:
+                record.created_by = request.user
+            record.save()
+
+    return Response({"quotes": _calculator_quote_payloads(workspace)})
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticatedAny])
+def calculator_quote_detail_view(request, quote_id):
+    if not request.user.is_admin():
+        return Response(
+            {"detail": "Архив КП может изменять только администратор."},
+            status=drf_status.HTTP_403_FORBIDDEN,
+        )
+    workspace = current_workspace(request.user)
+    CalculatorQuote.objects.filter(workspace=workspace, quote_id=quote_id).delete()
+    return Response(status=drf_status.HTTP_204_NO_CONTENT)
 
 
 @api_view(["POST"])

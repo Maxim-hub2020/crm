@@ -14,7 +14,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from .dadata import dadata_query
 from .gemini_client import GeminiClient
-from .models import Account, CalculatorSettings, ChatIntegrationSettings, Client, ClientBonusTransaction, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, ProjectStatus, Task, User, Workspace, YandexDiskSettings
+from .models import Account, CalculatorQuote, CalculatorSettings, ChatIntegrationSettings, Client, ClientBonusTransaction, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, ProjectStatus, Task, User, Workspace, YandexDiskSettings
 
 
 class AuthenticatedApiMixin:
@@ -199,6 +199,57 @@ class TestWorkspaceIsolation(AuthenticatedApiMixin, APITestCase):
         response = api_client.patch(
             "/api/calculator-settings/",
             {"shower_catalog": {"services": {"productMarkupPercent": 99}}},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_calculator_quotes_are_merged_and_isolated_by_workspace(self):
+        api_a = self.auth_client_for(self.admin_a)
+        api_b = self.auth_client_for(self.admin_b)
+        quote_a1 = {
+            "id": "quote-a-1",
+            "number": "1001",
+            "createdAt": "2026-08-01T10:00:00Z",
+            "items": [],
+        }
+        quote_a2 = {
+            "id": "quote-a-2",
+            "number": "1002",
+            "createdAt": "2026-08-02T10:00:00Z",
+            "items": [],
+        }
+        quote_b = {
+            "id": "quote-b-1",
+            "number": "2001",
+            "createdAt": "2026-08-03T10:00:00Z",
+            "items": [],
+        }
+
+        first_sync = api_a.post("/api/calculator-quotes/", {"quotes": [quote_a1]}, format="json")
+        second_sync = api_a.post("/api/calculator-quotes/", {"quotes": [quote_a2]}, format="json")
+        api_b.post("/api/calculator-quotes/", {"quotes": [quote_b]}, format="json")
+        read_a = api_a.get("/api/calculator-quotes/")
+        read_b = api_b.get("/api/calculator-quotes/")
+
+        self.assertEqual(first_sync.status_code, status.HTTP_200_OK)
+        self.assertEqual(second_sync.status_code, status.HTTP_200_OK)
+        self.assertEqual([item["id"] for item in read_a.data["quotes"]], ["quote-a-2", "quote-a-1"])
+        self.assertEqual([item["id"] for item in read_b.data["quotes"]], ["quote-b-1"])
+        self.assertEqual(CalculatorQuote.objects.count(), 3)
+
+        delete_response = api_a.delete("/api/calculator-quotes/quote-a-1/")
+        self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(
+            [item["id"] for item in api_a.get("/api/calculator-quotes/").data["quotes"]],
+            ["quote-a-2"],
+        )
+
+    def test_manager_cannot_change_calculator_quotes(self):
+        api_client = self.auth_client_for(self.manager_a)
+        response = api_client.post(
+            "/api/calculator-quotes/",
+            {"quotes": [{"id": "manager-quote", "number": "3001"}]},
             format="json",
         )
 

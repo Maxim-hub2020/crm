@@ -494,6 +494,46 @@ class CalculatorSettings(models.Model):
         super().save(*args, **kwargs)
 
 
+class CalculatorQuote(models.Model):
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="calculator_quotes",
+    )
+    quote_id = models.CharField(max_length=64)
+    number = models.CharField(max_length=32, blank=True, default="")
+    payload = models.JSONField(default=dict)
+    quote_created_at = models.DateTimeField(default=timezone.now)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        related_name="created_calculator_quotes",
+        blank=True,
+        null=True,
+    )
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        related_name="updated_calculator_quotes",
+        blank=True,
+        null=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-quote_created_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "quote_id"],
+                name="unique_workspace_calculator_quote_id",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Calculator quote {self.number or self.quote_id}"
+
+
 class Payment(models.Model):
     class Type(models.TextChoices):
         ADVANCE = "advance", "Advance"

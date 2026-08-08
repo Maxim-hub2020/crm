@@ -11,6 +11,7 @@ from .bonuses import apply_project_bonus_promo_code, ensure_project_bonus_accrua
 from .models import (
     Account,
     AuditLog,
+    CalculatorQuote,
     CalculatorSettings,
     ChatIntegrationSettings,
     Client,
@@ -642,6 +643,26 @@ class CalculatorSettingsSerializer(serializers.ModelSerializer):
 
     def validate_mirror_catalog(self, value):
         return self._validate_catalog(value)
+
+
+class CalculatorQuoteSyncSerializer(serializers.Serializer):
+    quotes = serializers.ListField(child=serializers.JSONField(), max_length=5000)
+
+    def validate_quotes(self, value):
+        if len(json.dumps(value, ensure_ascii=False)) > 20_000_000:
+            raise serializers.ValidationError("Архив КП слишком большой.")
+
+        seen_ids = set()
+        for quote in value:
+            if not isinstance(quote, dict):
+                raise serializers.ValidationError("Каждое КП должно быть объектом.")
+            quote_id = str(quote.get("id") or "").strip()
+            if not quote_id or len(quote_id) > CalculatorQuote._meta.get_field("quote_id").max_length:
+                raise serializers.ValidationError("У КП отсутствует корректный идентификатор.")
+            if quote_id in seen_ids:
+                raise serializers.ValidationError("Архив содержит повторяющиеся КП.")
+            seen_ids.add(quote_id)
+        return value
 
 
 class PaymentSerializer(serializers.ModelSerializer):
