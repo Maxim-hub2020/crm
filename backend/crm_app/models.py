@@ -534,6 +534,40 @@ class CalculatorQuote(models.Model):
         return f"Calculator quote {self.number or self.quote_id}"
 
 
+class CalculatorLead(models.Model):
+    class Status(models.TextChoices):
+        NEW = "new", "New"
+        IN_PROGRESS = "in_progress", "In progress"
+        DONE = "done", "Done"
+
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="calculator_leads",
+        db_index=True,
+    )
+    calculation_id = models.CharField(max_length=64, unique=True)
+    client_name = models.CharField(max_length=200)
+    client_phone = models.CharField(max_length=50, db_index=True)
+    client_email = models.EmailField(blank=True, default="")
+    product = models.CharField(max_length=20)
+    configuration = models.JSONField(default=dict)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    price_version = models.CharField(max_length=80)
+    source_url = models.URLField(max_length=1000, blank=True, default="")
+    referrer = models.URLField(max_length=1000, blank=True, default="")
+    utm = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.NEW, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"Calculator lead {self.client_phone}"
+
+
 class Payment(models.Model):
     class Type(models.TextChoices):
         ADVANCE = "advance", "Advance"

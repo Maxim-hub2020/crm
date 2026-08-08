@@ -4,6 +4,7 @@ from .models import (
     Account,
     AuditLog,
     CalculatorQuote,
+    CalculatorLead,
     CalculatorSettings,
     ChatIntegrationSettings,
     Client,
@@ -36,6 +37,7 @@ admin.site.register(ProjectCustomField)
 admin.site.register(DocumentTemplate)
 admin.site.register(ChatIntegrationSettings)
 admin.site.register(CalculatorQuote)
+admin.site.register(CalculatorLead)
 admin.site.register(CalculatorSettings)
 admin.site.register(YandexDiskSettings)
 admin.site.register(AuditLog)

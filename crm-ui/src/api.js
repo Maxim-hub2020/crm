@@ -212,6 +212,18 @@ export async function fetchProjects() {
   return data;
 }
 
+export async function fetchCalculatorLeads() {
+  initApiAuth();
+  const { data } = await api.get("/api/calculator-leads/");
+  return data;
+}
+
+export async function updateCalculatorLead(leadId, payload) {
+  initApiAuth();
+  const { data } = await api.patch(`/api/calculator-leads/${leadId}/`, payload);
+  return data;
+}
+
 export async function fetchGlobalSearch(query) {
   initApiAuth();
   const { data } = await api.get("/api/global-search/", { params: { q: query } });

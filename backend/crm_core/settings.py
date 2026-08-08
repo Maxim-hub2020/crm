@@ -64,8 +64,9 @@ APP_DOMAINS = [
     if item.strip()
 ]
 CALCULATOR_DOMAIN = os.getenv("CALCULATOR_DOMAIN", "calc.cehcrm.ru").strip()
+PUBLIC_CALCULATOR_DOMAIN = os.getenv("PUBLIC_CALCULATOR_DOMAIN", "amalgama.cehcrm.ru").strip()
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1")
-for internal_host in ["localhost", "127.0.0.1", "backend", CALCULATOR_DOMAIN, *APP_DOMAINS]:
+for internal_host in ["localhost", "127.0.0.1", "backend", CALCULATOR_DOMAIN, PUBLIC_CALCULATOR_DOMAIN, *APP_DOMAINS]:
     if internal_host not in ALLOWED_HOSTS:
         ALLOWED_HOSTS.append(internal_host)
 

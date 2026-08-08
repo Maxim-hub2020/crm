@@ -34,6 +34,13 @@ from .views import (
     yandex_disk_oauth_start_view,
     yandex_disk_settings_view,
 )
+from .public_calculator import (
+    calculator_lead_detail_view,
+    calculator_leads_view,
+    public_calculator_calculate_view,
+    public_calculator_config_view,
+    public_calculator_lead_view,
+)
 
 router = DefaultRouter()
 router.register(r"clients", ClientViewSet, basename="clients")
@@ -65,6 +72,11 @@ urlpatterns = [
     path("calculator-quotes/", calculator_quotes_view),
     path("calculator-quotes/<str:quote_id>/", calculator_quote_detail_view),
     path("calculator-settings/", calculator_settings_view),
+    path("public-calculator/config/", public_calculator_config_view),
+    path("public-calculator/calculate/", public_calculator_calculate_view),
+    path("public-calculator/lead/", public_calculator_lead_view),
+    path("calculator-leads/", calculator_leads_view),
+    path("calculator-leads/<int:lead_id>/", calculator_lead_detail_view),
     path("yandex-disk-folders/", yandex_disk_folders_view),
     path("yandex-disk/oauth/start/", yandex_disk_oauth_start_view),
     path("yandex-disk/oauth/complete/", yandex_disk_oauth_complete_view),
