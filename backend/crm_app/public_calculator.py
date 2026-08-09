@@ -94,8 +94,8 @@ def _public_config(shower, mirror, price_version):
         },
         "delivery": {"insideLabel": "По городу", "outsideLabel": "За городом"},
         "legal": {
-            "consent_url": "/privacy",
-            "privacy_url": "/privacy",
+            "consent_url": "https://amalgama.cehcrm.ru/#privacy",
+            "privacy_url": "https://amalgama.cehcrm.ru/#privacy",
         },
     }
 

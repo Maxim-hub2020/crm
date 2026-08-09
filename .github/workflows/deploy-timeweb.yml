@@ -17,6 +17,8 @@ env:
   DEPLOY_USER: ${{ secrets.TIMEWEB_USER }}
   BACKEND_IMAGE: crm-backend:prod
   NGINX_IMAGE: crm-nginx:latest
+  SITE_IMAGE: amalgama-site:prod
+  NOTIFIER_IMAGE: amalgama-notifier:prod
 
 jobs:
   deploy:
@@ -56,9 +58,33 @@ jobs:
             -f docker/nginx/Dockerfile \
             .
 
+          build_with_retry "$SITE_IMAGE" \
+            -f company-site/Dockerfile \
+            company-site
+
+          build_with_retry "$NOTIFIER_IMAGE" \
+            -f site-notifier/Dockerfile \
+            site-notifier
+
+      - name: Validate production routing
+        run: |
+          touch .env
+          APP_DOMAIN=crm.cehcrm.ru \
+          POSTGRES_DB=crm \
+          POSTGRES_USER=crm \
+          POSTGRES_PASSWORD=validation-only \
+          DATABASE_URL=postgresql://crm:validation-only@db:5432/crm \
+          docker compose -f docker-compose.prod.yml config --quiet
+
+          docker run --rm \
+            -e APP_DOMAIN=crm.cehcrm.ru \
+            -v "$PWD/docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.8-alpine \
+            caddy validate --config /etc/caddy/Caddyfile
+
       - name: Pack Docker images and project files
         run: |
-          docker save "$BACKEND_IMAGE" "$NGINX_IMAGE" | gzip > /tmp/crm-images.tar.gz
+          docker save "$BACKEND_IMAGE" "$NGINX_IMAGE" "$SITE_IMAGE" "$NOTIFIER_IMAGE" | gzip > /tmp/crm-images.tar.gz
           tar \
             --exclude=".git" \
             --exclude=".github" \
@@ -131,7 +157,7 @@ jobs:
           ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" '
             set -eu
             cd /opt/crm
-            docker compose -p crm --env-file .env -f docker-compose.prod.yml up -d --no-build --force-recreate --remove-orphans db backend nginx caddy
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml up -d --no-build --force-recreate --remove-orphans db backend nginx amalgama-site amalgama-notifier caddy
             checked=0
             for i in 1 2 3 4 5 6; do
               if docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T backend python manage.py check; then
@@ -175,7 +201,19 @@ jobs:
             docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=120 nginx
             echo "== caddy logs =="
             docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=120 caddy
+            echo "== company site logs =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=80 amalgama-site
+            echo "== company site notifier logs =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=80 amalgama-notifier
           '
+
+      - name: Verify corporate website
+        run: |
+          set -Eeuo pipefail
+          curl --fail --silent --show-error \
+            --retry 10 --retry-delay 3 --retry-all-errors \
+            https://amalgama.cehcrm.ru/ \
+            | grep -F "Душевые, зеркала и мебель на заказ"
 
       - name: Notify Telegram
         if: always()

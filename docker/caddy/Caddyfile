@@ -53,20 +53,33 @@ amalgama.cehcrm.ru {
         X-Frame-Options "SAMEORIGIN"
     }
 
-    @immutable path /assets/*
+    @immutable path /assets/* /calculator/assets/*
     header @immutable Cache-Control "public, max-age=31536000, immutable"
 
-    @no_cache path /index.html /version.json
+    @no_cache path / /index.html /calculator /calculator/ /calculator/index.html /calculator/version.json
     header @no_cache Cache-Control "no-cache, no-store, must-revalidate"
 
-    handle /api/* {
+    @site_leads path /api/site-leads
+    handle @site_leads {
+        header Cache-Control "no-store"
+        reverse_proxy amalgama-notifier:8080
+    }
+
+    @calculator_api path /api/public-calculator/*
+    handle @calculator_api {
         header Cache-Control "no-store"
         reverse_proxy backend:8000
     }
 
-    handle {
-        root * /srv/shower-calculator/current
+    redir /calculator /calculator/ 308
+
+    handle_path /calculator/* {
+        root * /srv/shower-calculator-public/current
         try_files {path} {path}/ /index.html
         file_server
+    }
+
+    handle {
+        reverse_proxy amalgama-site:80
     }
 }

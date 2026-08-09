@@ -83,11 +83,47 @@ services:
       timeout: 5s
       retries: 10
 
+  amalgama-site:
+    image: amalgama-site:prod
+    build:
+      context: ./company-site
+    restart: unless-stopped
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  amalgama-notifier:
+    image: amalgama-notifier:prod
+    build:
+      context: ./site-notifier
+    restart: unless-stopped
+    environment:
+      MAX_API_BASE_URL: ${MAX_API_BASE_URL:-https://platform-api2.max.ru}
+      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
+      MAX_USER_ID: ${MAX_USER_ID:-}
+      MAX_CHAT_ID: ${MAX_CHAT_ID:-}
+      ALLOWED_ORIGIN: https://amalgama.cehcrm.ru
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
   caddy:
     image: caddy:2.8-alpine
     restart: unless-stopped
     depends_on:
       nginx:
+        condition: service_healthy
+      amalgama-site:
+        condition: service_healthy
+      amalgama-notifier:
         condition: service_healthy
     environment:
       APP_DOMAIN: ${APP_DOMAIN}
@@ -99,6 +135,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
       - /var/www/shower-calculator:/srv/shower-calculator:ro
+      - /var/www/shower-calculator-public:/srv/shower-calculator-public:ro
 
 volumes:
   pgdata:
