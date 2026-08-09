@@ -190,7 +190,7 @@ jobs:
               exit 1
             fi
             docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T amalgama-notifier \
-              python -c "import json, urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5)); assert data.get('configured') and data.get('channel') == 'telegram', data; print('Notifier:', data['channel'])"
+              python -c "import json, urllib.request; data=json.load(urllib.request.urlopen(\"http://127.0.0.1:8080/health\", timeout=5)); assert data.get(\"configured\") and data.get(\"channel\") == \"telegram\", data; print(\"Notifier:\", data[\"channel\"])"
             docker image prune -f
             docker compose -p crm --env-file .env -f docker-compose.prod.yml ps
           '
