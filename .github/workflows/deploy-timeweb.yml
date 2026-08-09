@@ -159,6 +159,10 @@ jobs:
             tar -xzf /tmp/crm-files.tar.gz -C /opt/crm
             cp /tmp/crm-preserve/.env /opt/crm/.env
             cp /tmp/site-notifier.env /opt/crm/site-notifier.env
+            if [ -f /opt/amalgama-notifier/.env ]; then
+              grep -E "^(MAX_API_BASE_URL|MAX_BOT_TOKEN|MAX_USER_ID|MAX_CHAT_ID)=" \
+                /opt/amalgama-notifier/.env >> /opt/crm/site-notifier.env || true
+            fi
             chmod 600 /opt/crm/site-notifier.env
             if [ -d /tmp/crm-preserve/backend/secrets ]; then
               mkdir -p /opt/crm/backend
@@ -175,6 +179,7 @@ jobs:
           ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" '
             set -eu
             cd /opt/crm
+            docker rm -f amalgama-site amalgama-notifier >/dev/null 2>&1 || true
             docker compose -p crm --env-file .env -f docker-compose.prod.yml up -d --no-build --force-recreate --remove-orphans db backend nginx amalgama-site amalgama-notifier caddy
             checked=0
             for i in 1 2 3 4 5 6; do
@@ -190,7 +195,7 @@ jobs:
               exit 1
             fi
             docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T amalgama-notifier \
-              python -c "import json, urllib.request; data=json.load(urllib.request.urlopen(\"http://127.0.0.1:8080/health\", timeout=5)); assert data.get(\"configured\") and data.get(\"channel\") == \"telegram\", data; print(\"Notifier:\", data[\"channel\"])"
+              python -c "import json, urllib.request; data=json.load(urllib.request.urlopen(\"http://127.0.0.1:8080/health\", timeout=5)); assert data.get(\"configured\") and data.get(\"channel\") == \"telegram\" and data.get(\"fallback\") == \"max\", data; print(\"Notifier:\", data[\"channel\"], \"fallback:\", data[\"fallback\"])"
             docker image prune -f
             docker compose -p crm --env-file .env -f docker-compose.prod.yml ps
           '

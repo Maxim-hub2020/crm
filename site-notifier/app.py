@@ -152,10 +152,21 @@ def _notification_channel():
     return ""
 
 
+def _fallback_channel():
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and MAX_BOT_TOKEN and _recipient_query():
+        return "max"
+    return ""
+
+
 def _send_notification(text):
     if _notification_channel() == "telegram":
-        _send_to_telegram(text)
-        return
+        try:
+            _send_to_telegram(text)
+            return
+        except RuntimeError:
+            if not _fallback_channel():
+                raise
+            print("telegram_delivery_failed fallback=max", flush=True)
     _send_to_max(text)
 
 
@@ -176,7 +187,15 @@ class LeadHandler(BaseHTTPRequestHandler):
         if urlsplit(self.path).path != "/health":
             self._send_json(404, {"ok": False})
             return
-        self._send_json(200, {"ok": True, "configured": bool(_notification_channel()), "channel": _notification_channel()})
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "configured": bool(_notification_channel()),
+                "channel": _notification_channel(),
+                "fallback": _fallback_channel(),
+            },
+        )
 
     def do_POST(self):
         request_path = urlsplit(self.path).path
