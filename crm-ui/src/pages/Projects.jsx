@@ -71,6 +71,7 @@ import {
   Modal,
   Select,
 } from "../components/ui.jsx";
+import ClientAddressFields from "../components/ClientAddressFields.jsx";
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits, phoneSearchDigits } from "../utils/phone.js";
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
@@ -2078,6 +2079,16 @@ export default function Projects() {
         works_with_contract: Boolean(projectClientForm.works_with_contract),
       });
 
+      const previousClientAddress = String(activeProjectClient?.address || "").trim();
+      const currentProjectAddress = String(detailForm.object_address || "").trim();
+      const shouldSyncClientAddress =
+        Boolean(activeProject?.id) && (!currentProjectAddress || currentProjectAddress === previousClientAddress);
+      const syncedProjectAddress = shouldSyncClientAddress ? updated.address || "" : detailForm.object_address || "";
+      const syncedProjectLat = shouldSyncClientAddress ? updated.address_lat || "" : detailForm.object_lat || "";
+      const syncedProjectLon = shouldSyncClientAddress ? updated.address_lon || "" : detailForm.object_lon || "";
+      const syncedProjectApartment = shouldSyncClientAddress ? updated.apartment || "" : detailForm.apartment || "";
+      const syncedProjectFloor = shouldSyncClientAddress ? updated.floor || "" : detailForm.floor || "";
+
       setClients((prev) => prev.map((client) => (client.id === updated.id ? updated : client)));
       setProjects((prev) =>
         prev.map((project) => {
@@ -2093,17 +2104,18 @@ export default function Projects() {
             client_name: updated.name || "",
             client_phone: updated.phone || "",
             client_email: updated.email || "",
-            object_address: project.object_address || updated.address || "",
-            object_lat: project.object_lat || updated.address_lat || "",
-            object_lon: project.object_lon || updated.address_lon || "",
-            apartment: project.apartment || updated.apartment || "",
-            floor: project.floor || updated.floor || "",
+            object_address:
+              project.id === activeProject?.id && shouldSyncClientAddress ? syncedProjectAddress : project.object_address || "",
+            object_lat: project.id === activeProject?.id && shouldSyncClientAddress ? syncedProjectLat : project.object_lat || "",
+            object_lon: project.id === activeProject?.id && shouldSyncClientAddress ? syncedProjectLon : project.object_lon || "",
+            apartment: project.id === activeProject?.id && shouldSyncClientAddress ? syncedProjectApartment : project.apartment || "",
+            floor: project.id === activeProject?.id && shouldSyncClientAddress ? syncedProjectFloor : project.floor || "",
             works_with_contract: Boolean(updated.works_with_contract),
           };
         })
       );
       setDetailForm((prev) => {
-        const objectAddress = prev.object_address || updated.address || "";
+        const objectAddress = syncedProjectAddress;
         if (objectAddress) {
           selectedAddressValueRef.current = objectAddress.trim();
         }
@@ -2115,13 +2127,30 @@ export default function Projects() {
           client_phone: updated.phone || "",
           client_email: updated.email || "",
           object_address: objectAddress,
-          object_lat: prev.object_lat || updated.address_lat || "",
-          object_lon: prev.object_lon || updated.address_lon || "",
-          apartment: prev.apartment || updated.apartment || "",
-          floor: prev.floor || updated.floor || "",
+          object_lat: syncedProjectLat,
+          object_lon: syncedProjectLon,
+          apartment: syncedProjectApartment,
+          floor: syncedProjectFloor,
           works_with_contract: Boolean(updated.works_with_contract),
         };
       });
+
+      if (shouldSyncClientAddress) {
+        const updatedProject = await updateProject(activeProject.id, {
+          ...buildProjectUpdatePayload(detailForm),
+          client: updated.id,
+          client_name: updated.name || "",
+          client_phone: normalizeOptionalClientPhone(updated.phone) || "",
+          client_email: updated.email || null,
+          object_address: syncedProjectAddress,
+          object_lat: syncedProjectLat || null,
+          object_lon: syncedProjectLon || null,
+          apartment: syncedProjectApartment,
+          floor: syncedProjectFloor,
+        });
+        applyUpdatedProject(updatedProject);
+      }
+
       setProjectClientForm(createClientEditForm(updated));
       setProjectClientOpen(false);
     } catch (error) {
@@ -4435,37 +4464,12 @@ export default function Projects() {
                 placeholder="client@example.ru"
               />
             </div>
-            <div className="space-y-2 sm:col-span-2">
-              <Label>Адрес клиента</Label>
-              <Input
-                value={projectClientForm.address}
-                onChange={(event) =>
-                  setProjectClientForm((prev) => ({
-                    ...prev,
-                    address: event.target.value,
-                    address_lat: "",
-                    address_lon: "",
-                  }))
-                }
-                placeholder="Адрес клиента, если нужен для документов"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Квартира</Label>
-              <Input
-                value={projectClientForm.apartment}
-                onChange={(event) => setProjectClientForm((prev) => ({ ...prev, apartment: event.target.value }))}
-                placeholder="12"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Этаж</Label>
-              <Input
-                value={projectClientForm.floor}
-                onChange={(event) => setProjectClientForm((prev) => ({ ...prev, floor: event.target.value }))}
-                placeholder="7"
-              />
-            </div>
+            <ClientAddressFields
+              form={projectClientForm}
+              setForm={setProjectClientForm}
+              addressLabel="Адрес клиента"
+              addressPlaceholder="Начните вводить адрес клиента"
+            />
           </div>
 
           <label className="flex items-start gap-3 rounded-[22px] bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600 ring-1 ring-slate-200/70">
