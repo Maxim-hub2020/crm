@@ -60,6 +60,7 @@ class PublicCalculatorApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertNotIn("price", response.data["shower"]["glass"][0])
         self.assertNotIn("basePrice", response.data["shower"]["constructions"][0])
+        self.assertEqual(response.data["delivery"]["insideLabel"], "По г. Ростов-на-Дону")
 
     @override_settings(CALCULATOR_NOTIFIER_URL="http://notifier/api/calculator-leads")
     @patch("crm_app.public_calculator.urlopen")

@@ -25,6 +25,7 @@ MAX_BODY_BYTES = 16 * 1024
 RATE_LIMIT_COUNT = 5
 RATE_LIMIT_WINDOW = 10 * 60
 ALLOWED_SERVICES = {"Душевые", "Зеркала", "Мебель", "Комплексный проект"}
+CALCULATOR_SERVICES = {"shower": "Душевые", "mirror": "Зеркала"}
 
 _requests_by_ip = defaultdict(deque)
 _rate_lock = threading.Lock()
@@ -249,7 +250,7 @@ class LeadHandler(BaseHTTPRequestHandler):
         lead = {
             "name": _clean_text(payload.get("name"), 80),
             "phone": _clean_text(payload.get("phone"), 32),
-            "service": "Душевая" if product == "shower" else "Зеркало" if product == "mirror" else _clean_text(payload.get("service"), 40),
+            "service": CALCULATOR_SERVICES.get(product, _clean_text(payload.get("service"), 40)),
             "message": _clean_text(payload.get("message"), 1000),
             "amount": _clean_text(payload.get("amount"), 40),
             "source": "calculator" if is_calculator_lead else "site",

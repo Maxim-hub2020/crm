@@ -99,7 +99,7 @@ def _public_config(shower, mirror, price_version):
                 if item.get("category") != "delivery" and item.get("visibleInQuote", True)
             ],
         },
-        "delivery": {"insideLabel": "По городу", "outsideLabel": "За городом"},
+        "delivery": {"insideLabel": "По г. Ростов-на-Дону", "outsideLabel": "За городом"},
         "legal": {
             "consent_url": "https://amalgama.cehcrm.ru/#privacy",
             "privacy_url": "https://amalgama.cehcrm.ru/#privacy",

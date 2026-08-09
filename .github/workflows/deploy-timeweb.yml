@@ -28,6 +28,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Test calculator notification contract
+        run: python -m unittest discover -s site-notifier -p 'test_*.py'
+
       - name: Build Docker images on GitHub
         run: |
           build_with_retry() {
