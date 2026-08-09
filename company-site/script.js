@@ -10,6 +10,59 @@ const year = document.querySelector("[data-year]");
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let flowFrame = 0;
 
+const calculatorLinks = document.querySelectorAll('a[href^="/calculator/"]');
+let calculatorDialog;
+let calculatorFrame;
+
+const ensureCalculatorDialog = () => {
+  if (calculatorDialog && calculatorFrame) return calculatorDialog;
+
+  calculatorDialog = document.createElement("dialog");
+  calculatorDialog.className = "calculator-dialog";
+  calculatorDialog.setAttribute("aria-label", "Калькулятор стоимости");
+
+  const shell = document.createElement("div");
+  shell.className = "calculator-dialog-shell";
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "calculator-dialog-close";
+  closeButton.type = "button";
+  closeButton.setAttribute("aria-label", "Закрыть калькулятор");
+  closeButton.textContent = "×";
+
+  calculatorFrame = document.createElement("iframe");
+  calculatorFrame.className = "calculator-dialog-frame";
+  calculatorFrame.title = "Калькулятор AMALGAMA";
+
+  shell.append(closeButton, calculatorFrame);
+  calculatorDialog.append(shell);
+  document.body.append(calculatorDialog);
+
+  closeButton.addEventListener("click", () => calculatorDialog.close());
+  calculatorDialog.addEventListener("click", (event) => {
+    if (event.target === calculatorDialog) calculatorDialog.close();
+  });
+  calculatorDialog.addEventListener("close", () => {
+    document.body.classList.remove("calculator-open");
+  });
+
+  return calculatorDialog;
+};
+
+calculatorLinks.forEach((link) => {
+  link.addEventListener("click", (event) => {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+
+    event.preventDefault();
+    const dialog = ensureCalculatorDialog();
+    const target = new URL(link.href, window.location.href);
+    target.searchParams.set("embed", "1");
+    calculatorFrame.src = `${target.pathname}${target.search}`;
+    document.body.classList.add("calculator-open");
+    dialog.showModal();
+  });
+});
+
 const syncHeader = () => {
   header?.classList.toggle("is-scrolled", window.scrollY > 24);
 };

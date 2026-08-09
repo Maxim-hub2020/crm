@@ -1,10 +1,14 @@
 import hashlib
 import json
+import logging
 import math
 import re
 import uuid
 from datetime import timedelta
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
+from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
@@ -15,6 +19,9 @@ from rest_framework.response import Response
 
 from .models import CalculatorLead, CalculatorSettings, default_workspace
 from .permissions import IsAdmin
+
+
+logger = logging.getLogger(__name__)
 
 
 def _number(value, fallback=0):
@@ -174,6 +181,36 @@ def _rate_limited(request, scope, limit=12, seconds=60):
     return count > limit
 
 
+def _notify_calculator_lead(lead):
+    notifier_url = str(getattr(settings, "CALCULATOR_NOTIFIER_URL", "")).strip()
+    if not notifier_url:
+        return
+
+    amount = f"{lead.amount:,.0f} ₽".replace(",", " ")
+    payload = json.dumps(
+        {
+            "name": lead.client_name,
+            "phone": lead.client_phone,
+            "product": lead.product,
+            "amount": amount,
+            "message": f"Расчёт №{lead.calculation_id[:8].upper()} сохранён в CRM.",
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    request = Request(
+        notifier_url,
+        data=payload,
+        method="POST",
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
+    try:
+        with urlopen(request, timeout=6) as response:
+            if response.status < 200 or response.status >= 300:
+                raise RuntimeError(f"notifier returned {response.status}")
+    except (HTTPError, URLError, TimeoutError, RuntimeError):
+        logger.exception("calculator_lead_notification_failed lead_id=%s", lead.id)
+
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def public_calculator_config_view(request):
@@ -246,7 +283,7 @@ def public_calculator_lead_view(request):
     source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
     configuration = {**calculation["configuration"], "delivery": calculation["delivery"], "fingerprint": fingerprint}
     with transaction.atomic():
-        lead, _ = CalculatorLead.objects.get_or_create(
+        lead, created = CalculatorLead.objects.get_or_create(
             calculation_id=calculation_id,
             defaults={
                 "workspace": workspace,
@@ -262,6 +299,8 @@ def public_calculator_lead_view(request):
                 "utm": source.get("utm") if isinstance(source.get("utm"), dict) else {},
             },
         )
+    if created:
+        _notify_calculator_lead(lead)
     return Response({"ok": True, "lead_id": lead.id}, status=status.HTTP_201_CREATED)
 
 

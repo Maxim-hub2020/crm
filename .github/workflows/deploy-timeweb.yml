@@ -69,6 +69,7 @@ jobs:
       - name: Validate production routing
         run: |
           touch .env
+          touch site-notifier.env
           APP_DOMAIN=crm.cehcrm.ru \
           POSTGRES_DB=crm \
           POSTGRES_USER=crm \
@@ -90,6 +91,7 @@ jobs:
             --exclude=".github" \
             --exclude=".codex-temp" \
             --exclude=".env" \
+            --exclude="site-notifier.env" \
             --exclude="backend/.venv" \
             --exclude="backend/.venv_test" \
             --exclude="backend/secrets" \
@@ -105,6 +107,19 @@ jobs:
           chmod 600 ~/.ssh/timeweb_key
           touch ~/.ssh/known_hosts
           ssh-keyscan -4 -T 45 -p "${{ env.DEPLOY_PORT }}" "${{ env.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Prepare notifier secrets
+        env:
+          SITE_TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SITE_TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$SITE_TELEGRAM_BOT_TOKEN"
+          test -n "$SITE_TELEGRAM_CHAT_ID"
+          umask 077
+          printf 'TELEGRAM_BOT_TOKEN=%s\nTELEGRAM_CHAT_ID=%s\n' \
+            "$SITE_TELEGRAM_BOT_TOKEN" "$SITE_TELEGRAM_CHAT_ID" \
+            > /tmp/site-notifier.env
 
       - name: Prepare server directory
         run: |
@@ -127,6 +142,7 @@ jobs:
           SCP_OPTS="-4 -i ~/.ssh/timeweb_key -P ${{ env.DEPLOY_PORT }} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
           scp $SCP_OPTS /tmp/crm-files.tar.gz "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:/tmp/crm-files.tar.gz"
           scp $SCP_OPTS /tmp/crm-images.tar.gz "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:/tmp/crm-images.tar.gz"
+          scp $SCP_OPTS /tmp/site-notifier.env "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:/tmp/site-notifier.env"
 
       - name: Install release on TimeWeb
         run: |
@@ -142,13 +158,15 @@ jobs:
             find /opt/crm -mindepth 1 ! -name ".env" -exec rm -rf {} +
             tar -xzf /tmp/crm-files.tar.gz -C /opt/crm
             cp /tmp/crm-preserve/.env /opt/crm/.env
+            cp /tmp/site-notifier.env /opt/crm/site-notifier.env
+            chmod 600 /opt/crm/site-notifier.env
             if [ -d /tmp/crm-preserve/backend/secrets ]; then
               mkdir -p /opt/crm/backend
               cp -a /tmp/crm-preserve/backend/secrets /opt/crm/backend/secrets
             fi
             docker image prune -af >/dev/null 2>&1 || true
             docker load < /tmp/crm-images.tar.gz
-            rm -rf /tmp/crm-files.tar.gz /tmp/crm-images.tar.gz /tmp/crm-preserve
+            rm -rf /tmp/crm-files.tar.gz /tmp/crm-images.tar.gz /tmp/site-notifier.env /tmp/crm-preserve
           '
 
       - name: Deploy with Docker Compose
@@ -171,6 +189,8 @@ jobs:
               echo "Django check failed after retries."
               exit 1
             fi
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T amalgama-notifier \
+              python -c "import json, urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5)); assert data.get('configured') and data.get('channel') == 'telegram', data; print('Notifier:', data['channel'])"
             docker image prune -f
             docker compose -p crm --env-file .env -f docker-compose.prod.yml ps
           '

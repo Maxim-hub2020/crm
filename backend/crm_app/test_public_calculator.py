@@ -1,4 +1,8 @@
+import json
+from unittest.mock import patch
+
 from django.core.cache import cache
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -57,7 +61,10 @@ class PublicCalculatorApiTests(APITestCase):
         self.assertNotIn("price", response.data["shower"]["glass"][0])
         self.assertNotIn("basePrice", response.data["shower"]["constructions"][0])
 
-    def test_calculation_can_be_sent_as_lead_and_read_by_admin(self):
+    @override_settings(CALCULATOR_NOTIFIER_URL="http://notifier/api/calculator-leads")
+    @patch("crm_app.public_calculator.urlopen")
+    def test_calculation_can_be_sent_as_lead_and_read_by_admin(self, mock_urlopen):
+        mock_urlopen.return_value.__enter__.return_value.status = 200
         calculation = self.client.post(
             "/api/public-calculator/calculate/",
             {
@@ -89,6 +96,10 @@ class PublicCalculatorApiTests(APITestCase):
         )
         self.assertEqual(lead_response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(CalculatorLead.objects.count(), 1)
+        mock_urlopen.assert_called_once()
+        notification = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(notification["phone"], "+79991234567")
+        self.assertEqual(notification["product"], "shower")
 
         admin = User.objects.create_user(username="admin-public-calc", password="test", role=User.Role.ADMIN, workspace=self.workspace)
         self.client.force_authenticate(admin)

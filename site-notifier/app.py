@@ -17,6 +17,9 @@ MAX_API_BASE_URL = os.getenv("MAX_API_BASE_URL", "https://platform-api2.max.ru")
 MAX_BOT_TOKEN = os.getenv("MAX_BOT_TOKEN", "").strip()
 MAX_USER_ID = os.getenv("MAX_USER_ID", "").strip()
 MAX_CHAT_ID = os.getenv("MAX_CHAT_ID", "").strip()
+TELEGRAM_API_BASE_URL = os.getenv("TELEGRAM_API_BASE_URL", "https://api.telegram.org").rstrip("/")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "https://amalgama.cehcrm.ru").rstrip("/")
 MAX_BODY_BYTES = 16 * 1024
 RATE_LIMIT_COUNT = 5
@@ -64,18 +67,52 @@ def _recipient_query():
 def _build_message(lead, request_id):
     timestamp = datetime.now(timezone(timedelta(hours=3))).strftime("%d.%m.%Y %H:%M МСК")
     message = lead["message"] or "Не указано"
-    return "\n".join(
-        [
-            "Новая заявка с сайта AMALGAMA",
-            f"Номер заявки: {request_id}",
-            f"Дата: {timestamp}",
-            "",
-            f"Имя: {lead['name']}",
-            f"Телефон: {lead['phone']}",
-            f"Направление: {lead['service']}",
-            f"Задача: {message}",
-        ]
+    heading = "Новая заявка из калькулятора AMALGAMA" if lead.get("source") == "calculator" else "Новая заявка с сайта AMALGAMA"
+    lines = [
+        heading,
+        f"Номер заявки: {request_id}",
+        f"Дата: {timestamp}",
+        "",
+        f"Имя: {lead['name']}",
+        f"Телефон: {lead['phone']}",
+        f"Направление: {lead['service']}",
+        f"Задача: {message}",
+    ]
+    if lead.get("amount"):
+        lines.append(f"Ориентировочная стоимость: {lead['amount']}")
+    return "\n".join(lines)
+
+
+def _send_to_telegram(text):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        raise RuntimeError("Telegram integration is not configured")
+
+    body = urlencode(
+        {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": text,
+            "disable_web_page_preview": "true",
+        }
+    ).encode("utf-8")
+    request = Request(
+        f"{TELEGRAM_API_BASE_URL}/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+            "User-Agent": "amalgama-site-notifier/2.0",
+        },
     )
+
+    try:
+        with urlopen(request, timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            if response.status < 200 or response.status >= 300 or not payload.get("ok"):
+                raise RuntimeError(f"Telegram API returned {response.status}")
+    except HTTPError as error:
+        raise RuntimeError(f"Telegram API returned {error.code}") from error
+    except (URLError, TimeoutError, json.JSONDecodeError) as error:
+        raise RuntimeError("Telegram API request failed") from error
 
 
 def _send_to_max(text):
@@ -107,6 +144,21 @@ def _send_to_max(text):
         raise RuntimeError("MAX API request failed") from error
 
 
+def _notification_channel():
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        return "telegram"
+    if MAX_BOT_TOKEN and _recipient_query():
+        return "max"
+    return ""
+
+
+def _send_notification(text):
+    if _notification_channel() == "telegram":
+        _send_to_telegram(text)
+        return
+    _send_to_max(text)
+
+
 class LeadHandler(BaseHTTPRequestHandler):
     server_version = "AMALGAMA-Notifier/1.0"
 
@@ -124,22 +176,25 @@ class LeadHandler(BaseHTTPRequestHandler):
         if urlsplit(self.path).path != "/health":
             self._send_json(404, {"ok": False})
             return
-        self._send_json(200, {"ok": True, "configured": bool(MAX_BOT_TOKEN and _recipient_query())})
+        self._send_json(200, {"ok": True, "configured": bool(_notification_channel()), "channel": _notification_channel()})
 
     def do_POST(self):
-        if urlsplit(self.path).path != "/api/site-leads":
+        request_path = urlsplit(self.path).path
+        is_calculator_lead = request_path == "/api/calculator-leads"
+        if request_path not in {"/api/site-leads", "/api/calculator-leads"}:
             self._send_json(404, {"ok": False})
             return
 
-        origin = self.headers.get("Origin")
-        if origin and origin.rstrip("/") != ALLOWED_ORIGIN:
-            self._send_json(403, {"ok": False})
-            return
+        if not is_calculator_lead:
+            origin = self.headers.get("Origin")
+            if origin and origin.rstrip("/") != ALLOWED_ORIGIN:
+                self._send_json(403, {"ok": False})
+                return
 
-        fetch_site = self.headers.get("Sec-Fetch-Site")
-        if fetch_site and fetch_site not in {"same-origin", "same-site"}:
-            self._send_json(403, {"ok": False})
-            return
+            fetch_site = self.headers.get("Sec-Fetch-Site")
+            if fetch_site and fetch_site not in {"same-origin", "same-site"}:
+                self._send_json(403, {"ok": False})
+                return
 
         content_type = self.headers.get("Content-Type", "")
         if not content_type.lower().startswith("application/json"):
@@ -163,19 +218,22 @@ class LeadHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False})
             return
 
-        if _clean_text(payload.get("company"), 100):
+        if not is_calculator_lead and _clean_text(payload.get("company"), 100):
             self._send_json(200, {"ok": True})
             return
 
-        if _is_rate_limited(_client_ip(self)):
+        if not is_calculator_lead and _is_rate_limited(_client_ip(self)):
             self._send_json(429, {"ok": False})
             return
 
+        product = _clean_text(payload.get("product"), 20)
         lead = {
             "name": _clean_text(payload.get("name"), 80),
             "phone": _clean_text(payload.get("phone"), 32),
-            "service": _clean_text(payload.get("service"), 40),
+            "service": "Душевая" if product == "shower" else "Зеркало" if product == "mirror" else _clean_text(payload.get("service"), 40),
             "message": _clean_text(payload.get("message"), 1000),
+            "amount": _clean_text(payload.get("amount"), 40),
+            "source": "calculator" if is_calculator_lead else "site",
         }
         phone_digits = re.sub(r"\D", "", lead["phone"])
         if (
@@ -195,7 +253,7 @@ class LeadHandler(BaseHTTPRequestHandler):
 
         request_id = uuid.uuid4().hex[:8].upper()
         try:
-            _send_to_max(_build_message(lead, request_id))
+            _send_notification(_build_message(lead, request_id))
         except RuntimeError as error:
             print(f"lead_delivery_failed request_id={request_id} reason={error}", flush=True)
             self._send_json(502, {"ok": False})
@@ -213,5 +271,5 @@ class LeadServer(ThreadingHTTPServer):
 
 
 if __name__ == "__main__":
-    print(f"notifier_listening port={PORT} configured={bool(MAX_BOT_TOKEN and _recipient_query())}", flush=True)
+    print(f"notifier_listening port={PORT} channel={_notification_channel() or 'none'}", flush=True)
     LeadServer(("0.0.0.0", PORT), LeadHandler).serve_forever()
