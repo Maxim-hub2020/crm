@@ -17,7 +17,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from .models import CalculatorLead, CalculatorSettings, default_workspace
+from .models import CalculatorLead, CalculatorQuote, CalculatorSettings, default_workspace
 from .permissions import IsAdmin
 
 
@@ -166,6 +166,197 @@ def _delivery_price(catalog, delivery):
     return _ceil_hundred(base)
 
 
+def _quote_result(product, delivery=0, glass_area=0):
+    product = max(0, _number(product))
+    delivery = max(0, _number(delivery))
+    total = product + delivery
+    return {
+        "product": product,
+        "installation": 0,
+        "delivery": delivery,
+        "manager": 0,
+        "designer": 0,
+        "subtotal": total,
+        "discount": 0,
+        "total": total,
+        "glassArea": max(0, _number(glass_area)),
+        "hardwarePrice": 0,
+        "hasSurcharge": False,
+        "errors": {},
+        "lines": [
+            {"label": "Стоимость изделия", "value": product},
+            {"label": "Доставка", "value": delivery},
+        ],
+    }
+
+
+def _quote_delivery(delivery):
+    return {
+        "enabled": bool(delivery.get("enabled")),
+        "zone": "outside" if delivery.get("zone") == "outside" else "inside",
+        "km": max(0, _number(delivery.get("km"))),
+    }
+
+
+def _mirror_option_quantity(config, service, selection):
+    width = _number(config.get("width"))
+    height = _number(config.get("height"))
+    if service.get("unit") == "area":
+        return width * height / 1_000_000
+    if service.get("unit") == "perimeter":
+        return 2 * (width + height) / 1000
+    return max(0, _number(selection.get("quantity"), 1))
+
+
+def _build_public_quote_item(calculation_id, calculation, shower, mirror):
+    config = calculation["configuration"]
+    item_amount = calculation["item_amount"]
+    item_id = f"{calculation_id}-item"
+
+    if calculation["product"] == "shower":
+        construction = _find(shower.get("constructions", []), config.get("constructionId"), "тип душевой")
+        glass = _find(shower.get("glass", []), config.get("glassId"), "стекло")
+        hardware = _find(shower.get("hardware", []), config.get("hardwareId"), "фурнитура")
+        hardware_class = _find(shower.get("hardwareClass", []), config.get("hardwareClassId"), "класс фурнитуры")
+        dimensions = config.get("dimensions") if isinstance(config.get("dimensions"), dict) else {}
+        details = [
+            {
+                "id": f"{item_id}:dimension:{field.get('key')}",
+                "label": str(field.get("label") or "Размер"),
+                "value": f"{_number(dimensions.get(field.get('key'))):g} мм",
+            }
+            for field in construction.get("fields", [])
+        ]
+        details.extend([
+            {"id": f"{item_id}:glass", "label": "Стекло", "value": str(glass.get("label") or "")},
+            {"id": f"{item_id}:hardware", "label": "Фурнитура", "value": str(hardware.get("label") or "")},
+            {
+                "id": f"{item_id}:hardware-class",
+                "label": "Класс фурнитуры",
+                "value": str(hardware_class.get("label") or ""),
+            },
+        ])
+        return {
+            "id": item_id,
+            "kind": "shower",
+            "quantity": 1,
+            "form": {
+                "constructionId": config.get("constructionId"),
+                "dimensions": dimensions,
+                "glassId": config.get("glassId"),
+                "hardwareId": config.get("hardwareId"),
+                "hardwareClassId": config.get("hardwareClassId"),
+                "installation": bool(config.get("installation")),
+                "delivery": False,
+                "deliveryZone": "inside",
+                "deliveryKm": 0,
+                "discountEnabled": False,
+                "discountPercent": 0,
+                "designerEnabled": False,
+                "clientName": "",
+                "clientPhone": "",
+                "note": "",
+            },
+            "result": _quote_result(item_amount),
+            "constructionTitle": str(construction.get("title") or construction.get("shortTitle") or "Душевая"),
+            "glassLabel": str(glass.get("label") or ""),
+            "hardwareLabel": str(hardware.get("label") or ""),
+            "hardwareClassLabel": str(hardware_class.get("label") or ""),
+            "details": details,
+        }
+
+    material = _find(mirror.get("materials", []), config.get("materialId"), "материал")
+    selections = config.get("options") if isinstance(config.get("options"), list) else []
+    service_lines = []
+    details = [
+        {
+            "id": f"{item_id}:size",
+            "label": "Размер",
+            "value": f"{_number(config.get('width')):g} × {_number(config.get('height')):g} мм",
+        },
+        {"id": f"{item_id}:material", "label": "Материал", "value": str(material.get("label") or "")},
+    ]
+    unit_labels = {"piece": "шт.", "area": "м²", "perimeter": "м.п."}
+    for index, selection in enumerate(selections):
+        if not isinstance(selection, dict):
+            continue
+        service = _find(mirror.get("services", []), selection.get("serviceId"), "работа")
+        unit = service.get("unit") if service.get("unit") in unit_labels else "piece"
+        visible = bool(service.get("visibleInQuote", True)) and service.get("category") != "delivery"
+        service_lines.append({
+            "label": str(service.get("label") or "Работа"),
+            "quantity": _mirror_option_quantity(config, service, selection),
+            "unit": unit,
+            "unitLabel": unit_labels[unit],
+            "visibleInQuote": visible,
+        })
+        if visible:
+            details.append({
+                "id": f"{item_id}:service:{index}",
+                "label": str(service.get("label") or "Работа"),
+                "value": "Включено",
+            })
+
+    width = _number(config.get("width"))
+    height = _number(config.get("height"))
+    return {
+        "id": item_id,
+        "kind": "mirror",
+        "quantity": 1,
+        "form": {
+            "width": width,
+            "height": height,
+            "materialId": config.get("materialId"),
+            "options": selections,
+            "managerEnabled": False,
+            "discountEnabled": False,
+            "discountPercent": 0,
+            "designerEnabled": False,
+            "clientName": "",
+            "clientPhone": "",
+            "note": "",
+        },
+        "result": _quote_result(item_amount, glass_area=width * height / 1_000_000),
+        "mirrorTitle": f"Зеркало {width:g} × {height:g} мм",
+        "materialLabel": str(material.get("label") or ""),
+        "serviceLines": service_lines,
+        "details": details,
+    }
+
+
+def _next_quote_number(workspace):
+    used_numbers = [
+        int(number)
+        for number in CalculatorQuote.objects.filter(workspace=workspace).values_list("number", flat=True)
+        if re.fullmatch(r"\d{4}", str(number or ""))
+    ]
+    next_number = max(used_numbers, default=1000) + 1
+    if next_number > 9999:
+        raise ValueError("Закончились доступные четырёхзначные номера КП.")
+    return str(next_number)
+
+
+def _build_public_quote_payload(calculation_id, calculation, shower, mirror, lead, number, created_at):
+    item = _build_public_quote_item(calculation_id, calculation, shower, mirror)
+    delivery = _quote_delivery(calculation["delivery"])
+    payload = {
+        **item,
+        "id": f"public-{calculation_id}",
+        "number": number,
+        "createdAt": created_at.isoformat(),
+        "status": "new",
+        "result": _quote_result(calculation["item_amount"], calculation["delivery_amount"]),
+        "items": [item],
+        "orderDelivery": delivery,
+        "customer": {
+            "clientName": lead.client_name,
+            "clientPhone": lead.client_phone,
+            "note": "Расчёт с корпоративного сайта",
+        },
+    }
+    return payload
+
+
 def _client_ip(request):
     forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
     return (forwarded.split(",")[0] if forwarded else request.META.get("REMOTE_ADDR", "unknown")).strip()
@@ -181,7 +372,7 @@ def _rate_limited(request, scope, limit=12, seconds=60):
     return count > limit
 
 
-def _notify_calculator_lead(lead):
+def _notify_calculator_lead(lead, quote=None):
     notifier_url = str(getattr(settings, "CALCULATOR_NOTIFIER_URL", "")).strip()
     if not notifier_url:
         return
@@ -193,7 +384,11 @@ def _notify_calculator_lead(lead):
             "phone": lead.client_phone,
             "product": lead.product,
             "amount": amount,
-            "message": f"Расчёт №{lead.calculation_id[:8].upper()} сохранён в CRM.",
+            "message": (
+                f"КП №{quote.number} сохранено в архиве калькулятора."
+                if quote
+                else f"Расчёт №{lead.calculation_id[:8].upper()} сохранён в CRM."
+            ),
         },
         ensure_ascii=False,
     ).encode("utf-8")
@@ -235,19 +430,31 @@ def public_calculator_calculate_view(request):
             raise ValueError("Выберите тип изделия.")
         _workspace, settings, shower, mirror = _catalog_settings()
         item_amount = _calculate_shower(shower, config) if product == "shower" else _calculate_mirror(mirror, config)
-        amount = _ceil_hundred(item_amount + _delivery_price(shower, delivery))
+        delivery_amount = _delivery_price(shower, delivery)
+        amount = _ceil_hundred(item_amount + delivery_amount)
         calculation_id = uuid.uuid4().hex
         price_version = _price_version(settings)
         cache.set(
             f"public-calc:result:{calculation_id}",
-            {"product": product, "configuration": config, "delivery": delivery, "amount": amount, "price_version": price_version},
+            {
+                "product": product,
+                "configuration": config,
+                "delivery": delivery,
+                "item_amount": item_amount,
+                "delivery_amount": delivery_amount,
+                "amount": amount,
+                "price_version": price_version,
+            },
             1800,
         )
         return Response({
             "calculation_id": calculation_id,
             "amount": amount,
             "price_version": price_version,
-            "message": "Точная стоимость подтверждается менеджером после уточнения деталей.",
+            "message": (
+                "Это расчётная стоимость, максимально близкая к окончательной. "
+                "Если параметры указаны верно, после проверки и замера сумма обычно меняется не более чем на ±10%."
+            ),
         })
     except ValueError as error:
         return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
@@ -282,6 +489,7 @@ def public_calculator_lead_view(request):
         return Response({"ok": True, "lead_id": duplicate.id, "duplicate": True})
     source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
     configuration = {**calculation["configuration"], "delivery": calculation["delivery"], "fingerprint": fingerprint}
+    quote = None
     with transaction.atomic():
         lead, created = CalculatorLead.objects.get_or_create(
             calculation_id=calculation_id,
@@ -299,9 +507,34 @@ def public_calculator_lead_view(request):
                 "utm": source.get("utm") if isinstance(source.get("utm"), dict) else {},
             },
         )
+        if created:
+            settings_record = CalculatorSettings.objects.select_for_update().get(workspace=workspace)
+            shower = settings_record.shower_catalog if isinstance(settings_record.shower_catalog, dict) else {}
+            mirror = settings_record.mirror_catalog if isinstance(settings_record.mirror_catalog, dict) else {}
+            quote_number = _next_quote_number(workspace)
+            quote_created_at = timezone.now()
+            quote_payload = _build_public_quote_payload(
+                calculation_id,
+                calculation,
+                shower,
+                mirror,
+                lead,
+                quote_number,
+                quote_created_at,
+            )
+            quote = CalculatorQuote.objects.create(
+                workspace=workspace,
+                quote_id=quote_payload["id"],
+                number=quote_number,
+                payload=quote_payload,
+                quote_created_at=quote_created_at,
+            )
     if created:
-        _notify_calculator_lead(lead)
-    return Response({"ok": True, "lead_id": lead.id}, status=status.HTTP_201_CREATED)
+        _notify_calculator_lead(lead, quote)
+    response_payload = {"ok": True, "lead_id": lead.id}
+    if quote:
+        response_payload.update({"quote_id": quote.quote_id, "quote_number": quote.number})
+    return Response(response_payload, status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET"])

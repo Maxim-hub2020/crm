@@ -6,7 +6,7 @@ from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import CalculatorLead, CalculatorSettings, User, default_workspace
+from .models import CalculatorLead, CalculatorQuote, CalculatorSettings, User, default_workspace
 
 
 class PublicCalculatorApiTests(APITestCase):
@@ -96,16 +96,69 @@ class PublicCalculatorApiTests(APITestCase):
         )
         self.assertEqual(lead_response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(CalculatorLead.objects.count(), 1)
+        self.assertEqual(CalculatorQuote.objects.count(), 1)
+        quote = CalculatorQuote.objects.get()
+        self.assertEqual(quote.number, "1001")
+        self.assertEqual(lead_response.data["quote_id"], quote.quote_id)
+        self.assertEqual(lead_response.data["quote_number"], "1001")
+        self.assertEqual(quote.payload["customer"]["clientName"], "Иван")
+        self.assertEqual(quote.payload["customer"]["clientPhone"], "+79991234567")
+        self.assertEqual(quote.payload["items"][0]["kind"], "shower")
+        self.assertEqual(quote.payload["items"][0]["form"]["constructionId"], "shower-1")
+        self.assertEqual(quote.payload["result"]["total"], calculation.data["amount"])
+        self.assertEqual(quote.payload["orderDelivery"], {"enabled": True, "zone": "outside", "km": 10})
         mock_urlopen.assert_called_once()
         notification = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
         self.assertEqual(notification["phone"], "+79991234567")
         self.assertEqual(notification["product"], "shower")
+        self.assertIn("КП №1001", notification["message"])
 
         admin = User.objects.create_user(username="admin-public-calc", password="test", role=User.Role.ADMIN, workspace=self.workspace)
         self.client.force_authenticate(admin)
         list_response = self.client.get("/api/calculator-leads/")
         self.assertEqual(list_response.status_code, status.HTTP_200_OK)
         self.assertEqual(list_response.data[0]["client_name"], "Иван")
+        quotes_response = self.client.get("/api/calculator-quotes/")
+        self.assertEqual(quotes_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(quotes_response.data["quotes"][0]["number"], "1001")
+
+    def test_mirror_lead_creates_editable_quote(self):
+        calculation = self.client.post(
+            "/api/public-calculator/calculate/",
+            {
+                "product": "mirror",
+                "configuration": {
+                    "width": 800,
+                    "height": 1200,
+                    "materialId": "mirror",
+                    "options": [{"id": "option-1", "serviceId": "installation", "quantity": 1}],
+                },
+                "delivery": {"enabled": False, "zone": "inside", "km": 0},
+            },
+            format="json",
+        )
+        self.assertEqual(calculation.status_code, status.HTTP_200_OK)
+
+        lead_response = self.client.post(
+            "/api/public-calculator/lead/",
+            {
+                "calculation_id": calculation.data["calculation_id"],
+                "name": "Анна",
+                "phone": "+7 (999) 555-44-33",
+            },
+            format="json",
+        )
+
+        self.assertEqual(lead_response.status_code, status.HTTP_201_CREATED)
+        quote = CalculatorQuote.objects.get()
+        item = quote.payload["items"][0]
+        self.assertEqual(item["kind"], "mirror")
+        self.assertEqual(item["form"]["width"], 800)
+        self.assertEqual(item["form"]["height"], 1200)
+        self.assertEqual(item["form"]["options"][0]["serviceId"], "installation")
+        self.assertEqual(item["serviceLines"][0]["label"], "Монтаж")
+        self.assertEqual(item["details"][-1]["value"], "Включено")
+        self.assertEqual(quote.payload["customer"]["clientName"], "Анна")
 
     def test_honeypot_does_not_create_lead(self):
         response = self.client.post(
