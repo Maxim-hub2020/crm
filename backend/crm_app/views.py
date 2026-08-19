@@ -16,7 +16,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from django.utils.text import get_valid_filename
 from rest_framework import viewsets
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import action, api_view, parser_classes, permission_classes
 from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny
@@ -55,6 +55,11 @@ from .models import (
 )
 from .permissions import IsAdmin, IsAuthenticatedAny
 from .phones import phone_search_digits
+from .production_drawings import (
+    ALLOWED_PRODUCTION_PLAN_MIME_TYPES,
+    MAX_PRODUCTION_PLAN_IMAGE_BYTES,
+    analyze_production_plan,
+)
 from .serializers import (
     AdminUserSerializer,
     AccountSerializer,
@@ -578,6 +583,38 @@ def calculator_settings_view(request):
     serializer.is_valid(raise_exception=True)
     serializer.save(updated_by=request.user)
     return Response(serializer.data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+@parser_classes([MultiPartParser, FormParser])
+def calculator_production_plan_view(request):
+    image = request.FILES.get("image")
+    if not image:
+        return Response({"detail": "Загрузите изображение вида сверху."}, status=drf_status.HTTP_400_BAD_REQUEST)
+    if image.size > MAX_PRODUCTION_PLAN_IMAGE_BYTES:
+        return Response({"detail": "Изображение должно быть не больше 10 МБ."}, status=drf_status.HTTP_400_BAD_REQUEST)
+    mime_type = str(getattr(image, "content_type", "") or "").lower()
+    if mime_type not in ALLOWED_PRODUCTION_PLAN_MIME_TYPES:
+        return Response(
+            {"detail": "Поддерживаются изображения JPEG, PNG и WebP."},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        context = json.loads(str(request.data.get("context") or "{}"))
+    except json.JSONDecodeError:
+        return Response({"detail": "Неверный контекст расчёта."}, status=drf_status.HTTP_400_BAD_REQUEST)
+    if not isinstance(context, dict):
+        return Response({"detail": "Неверный контекст расчёта."}, status=drf_status.HTTP_400_BAD_REQUEST)
+
+    try:
+        result = analyze_production_plan(image.read(), mime_type, context)
+    except GeminiConfigurationError as exc:
+        return Response({"detail": str(exc)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
+    except GeminiRequestError as exc:
+        return Response({"detail": str(exc)}, status=drf_status.HTTP_502_BAD_GATEWAY)
+    return Response(result)
 
 
 def _calculator_quote_payloads(workspace):
