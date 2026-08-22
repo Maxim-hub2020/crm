@@ -36,6 +36,10 @@ def _round_ten(value):
     return math.floor(value / 10 + 0.5) * 10
 
 
+def _round_integer(value):
+    return math.floor(value + 0.5)
+
+
 def _ceil_ten(value):
     return math.ceil(value / 10) * 10
 
@@ -49,6 +53,40 @@ def _find(items, item_id, label):
     if not item:
         raise ValueError(f"Не найдено значение: {label}.")
     return item
+
+
+def _hardware_glass_thickness(component, item):
+    explicit = int(_number(component.get("glassThickness")))
+    if explicit in (6, 8):
+        return explicit
+
+    label = str(item.get("label") or "").lower().replace("ё", "е")
+    paired = bool(re.search(r"(?:^|\D)6\s*(?:/|\\|,|\+|-|и)\s*8\s*мм(?:$|\D)", label))
+    supports_6 = paired or bool(re.search(r"(?:^|\D)6\s*мм(?:$|\D)", label))
+    supports_8 = paired or bool(re.search(r"(?:^|\D)8\s*мм(?:$|\D)", label))
+    if supports_6 == supports_8:
+        return None
+    return 6 if supports_6 else 8
+
+
+def _construction_hardware_price(catalog, construction, glass):
+    selected_thickness = int(_number(glass.get("thickness")))
+    hardware_items = {
+        str(item.get("id")): item
+        for item in catalog.get("hardwareItems", [])
+        if item.get("id")
+    }
+    components = []
+    for component in construction.get("hardwareComponents", []):
+        item = hardware_items.get(str(component.get("hardwareItemId")))
+        if not item:
+            continue
+        compatible_thickness = _hardware_glass_thickness(component, item)
+        if selected_thickness in (6, 8) and compatible_thickness and compatible_thickness != selected_thickness:
+            continue
+        quantity = max(0, _number(component.get("quantity")))
+        components.append(_number(item.get("price")) * quantity)
+    return sum(components), bool(components)
 
 
 def _catalog_settings():
@@ -120,19 +158,32 @@ def _calculate_shower(catalog, config):
     height_field = next((field for field in fields if str(field.get("key", "")).startswith("HEIGHT")), None)
     height = values.get(height_field.get("key"), 0) if height_field else 0
     widths = [values.get(field.get("key"), 0) for field in fields if str(field.get("key", "")).startswith("WIDTH")]
-    glass_price = sum(round(width / 1000 * height / 1000 * _number(glass.get("price"))) for width in widths)
-    hardware_price = _number(hardware_class.get("price")) * _number(hardware.get("price")) / 100
+    glass_price = sum(_round_integer(width / 1000 * height / 1000 * _number(glass.get("price"))) for width in widths)
+    hardware_base_price, has_hardware_composition = _construction_hardware_price(catalog, construction, glass)
+    fallback_construction_base = 0 if has_hardware_composition else max(0, _number(construction.get("basePrice")))
+    hardware_class_factor = 1 + max(0, _number(hardware_class.get("price"))) / 100
+    hardware_color_factor = 1 + max(0, _number(hardware.get("price"))) / 100
+    hardware_price = hardware_base_price * hardware_class_factor * hardware_color_factor
     services = catalog.get("services", {})
     product_markup = 1 + max(0, _number(services.get("productMarkupPercent"))) / 100
     hardware_markup = 1 + max(0, _number(services.get("hardwareMarkupPercent"))) / 100
     base_product = _ceil_ten(
-        (glass_price + _number(construction.get("basePrice"))) * product_markup
+        (glass_price + fallback_construction_base) * product_markup
         + hardware_price * hardware_markup
     )
     if height > _number(services.get("heightSurchargeAfter")):
         base_product = _round_ten(base_product * (1 + _number(services.get("heightSurchargePercent")) / 100))
-    installation = _number(construction.get("installationPrice")) if config.get("installation") else 0
-    return _ceil_hundred(base_product + installation)
+    base_installation = _number(construction.get("installationPrice")) if config.get("installation") else 0
+    designer_factor = 1
+    if config.get("designerEnabled"):
+        designer_factor += max(0, _number(services.get("designerPercent"))) / 100
+    product = _round_ten(base_product * designer_factor)
+    installation = _round_ten(base_installation * designer_factor)
+    subtotal = _ceil_hundred(product + installation)
+    if not config.get("discountEnabled"):
+        return subtotal
+    discount_percent = min(100, max(0, _number(config.get("discountPercent"))))
+    return _ceil_hundred(subtotal * (1 - discount_percent / 100))
 
 
 def _calculate_mirror(catalog, config):

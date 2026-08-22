@@ -20,14 +20,24 @@ class PublicCalculatorApiTests(APITestCase):
                 "shortTitle": "Перегородка",
                 "basePrice": 4000,
                 "installationPrice": 5000,
+                "hardwareComponents": [
+                    {"id": "hinge-6", "hardwareItemId": "hinge-6", "quantity": 2, "glassThickness": 6},
+                    {"id": "hinge-8", "hardwareItemId": "hinge-8", "quantity": 2, "glassThickness": 8},
+                    {"id": "handle", "hardwareItemId": "handle", "quantity": 1},
+                ],
                 "fields": [
                     {"key": "HEIGHT_0", "label": "Высота", "defaultValue": 2000},
                     {"key": "WIDTH_0", "label": "Ширина", "defaultValue": 1000},
                 ],
             }],
-            "glass": [{"id": "clear", "label": "Бесцветное", "price": 6200}],
-            "hardware": [{"id": "chrome", "label": "Хром", "price": 100}],
-            "hardwareClass": [{"id": "standard", "label": "Стандарт", "price": 3700}],
+            "glass": [{"id": "clear", "label": "Бесцветное", "price": 6200, "thickness": 8}],
+            "hardware": [{"id": "chrome", "label": "Хром", "price": 0}],
+            "hardwareClass": [{"id": "standard", "label": "Стандарт", "price": 0}],
+            "hardwareItems": [
+                {"id": "hinge-6", "label": "Петля для стекла 6 мм", "price": 900},
+                {"id": "hinge-8", "label": "Петля для стекла 8 мм", "price": 1200},
+                {"id": "handle", "label": "Ручка универсальная", "price": 600},
+            ],
             "services": {
                 "deliveryBase": 1500,
                 "deliveryKmRate": 50,
@@ -62,6 +72,40 @@ class PublicCalculatorApiTests(APITestCase):
         self.assertNotIn("basePrice", response.data["shower"]["constructions"][0])
         self.assertEqual(response.data["delivery"]["insideLabel"], "По г. Ростов-на-Дону")
 
+    def test_shower_calculation_matches_admin_coefficients_and_rounding(self):
+        catalog = self.shower_catalog
+        catalog["hardware"][0]["price"] = 20
+        catalog["hardwareClass"][0]["price"] = 30
+        catalog["services"].update({
+            "productMarkupPercent": 10,
+            "hardwareMarkupPercent": 15,
+            "designerPercent": 10,
+        })
+        CalculatorSettings.objects.filter(workspace=self.workspace).update(shower_catalog=catalog)
+
+        response = self.client.post(
+            "/api/public-calculator/calculate/",
+            {
+                "product": "shower",
+                "configuration": {
+                    "constructionId": "shower-1",
+                    "dimensions": {"HEIGHT_0": 2000, "WIDTH_0": 1000},
+                    "glassId": "clear",
+                    "hardwareId": "chrome",
+                    "hardwareClassId": "standard",
+                    "installation": True,
+                    "designerEnabled": True,
+                    "discountEnabled": True,
+                    "discountPercent": 10,
+                },
+                "delivery": {"enabled": False, "zone": "inside", "km": 0},
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["amount"], 23900)
+
     @override_settings(CALCULATOR_NOTIFIER_URL="http://notifier/api/calculator-leads")
     @patch("crm_app.public_calculator.urlopen")
     def test_calculation_can_be_sent_as_lead_and_read_by_admin(self, mock_urlopen):
@@ -83,7 +127,7 @@ class PublicCalculatorApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(calculation.status_code, status.HTTP_200_OK)
-        self.assertGreater(calculation.data["amount"], 0)
+        self.assertEqual(calculation.data["amount"], 22400)
 
         lead_response = self.client.post(
             "/api/public-calculator/lead/",
