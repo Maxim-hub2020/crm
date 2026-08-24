@@ -255,6 +255,47 @@ class TestWorkspaceIsolation(AuthenticatedApiMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
+    def test_stale_calculator_quote_cannot_overwrite_newer_revision(self):
+        api_client = self.auth_client_for(self.admin_a)
+        latest_quote = {
+            "id": "quote-versioned",
+            "number": "1003",
+            "createdAt": "2026-08-01T10:00:00Z",
+            "updatedAt": "2026-08-24T12:00:00Z",
+            "customer": {"name": "Новая редакция"},
+            "items": [],
+        }
+        stale_quote = {
+            **latest_quote,
+            "updatedAt": "2026-08-24T11:00:00Z",
+            "customer": {"name": "Старая редакция"},
+        }
+
+        api_client.post("/api/calculator-quotes/", {"quotes": [latest_quote]}, format="json")
+        response = api_client.post("/api/calculator-quotes/", {"quotes": [stale_quote]}, format="json")
+
+        saved_quote = next(item for item in response.data["quotes"] if item["id"] == "quote-versioned")
+        self.assertEqual(saved_quote["customer"]["name"], "Новая редакция")
+        self.assertEqual(saved_quote["updatedAt"], "2026-08-24T12:00:00Z")
+
+    def test_calculator_quote_get_adds_server_revision_to_legacy_payload(self):
+        CalculatorQuote.objects.create(
+            workspace=self.workspace_a,
+            quote_id="legacy-quote",
+            number="1004",
+            payload={
+                "id": "legacy-quote",
+                "number": "1004",
+                "createdAt": "2026-08-01T10:00:00Z",
+                "items": [],
+            },
+        )
+
+        response = self.auth_client_for(self.admin_a).get("/api/calculator-quotes/")
+
+        saved_quote = next(item for item in response.data["quotes"] if item["id"] == "legacy-quote")
+        self.assertTrue(saved_quote["updatedAt"])
+
 
 class TestDadataAddressApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):

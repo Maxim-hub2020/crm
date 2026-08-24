@@ -618,11 +618,20 @@ def calculator_production_plan_view(request):
 
 
 def _calculator_quote_payloads(workspace):
-    return list(
-        CalculatorQuote.objects.filter(workspace=workspace)
-        .order_by("-quote_created_at", "-id")
-        .values_list("payload", flat=True)
-    )
+    payloads = []
+    records = CalculatorQuote.objects.filter(workspace=workspace).order_by("-quote_created_at", "-id")
+    for record in records:
+        payload = dict(record.payload)
+        payload.setdefault("updatedAt", record.updated_at.isoformat())
+        payloads.append(payload)
+    return payloads
+
+
+def _calculator_quote_updated_at(payload):
+    value = parse_datetime(str(payload.get("updatedAt") or ""))
+    if value and timezone.is_naive(value):
+        return timezone.make_aware(value)
+    return value
 
 
 @api_view(["GET", "POST"])
@@ -655,6 +664,10 @@ def calculator_quotes_view(request):
                     "quote_created_at": quote_created_at or timezone.now(),
                 },
             )
+            incoming_updated_at = _calculator_quote_updated_at(payload)
+            current_updated_at = _calculator_quote_updated_at(record.payload) or record.updated_at
+            if not created and (not incoming_updated_at or incoming_updated_at < current_updated_at):
+                continue
             record.number = str(payload.get("number") or "")[:32]
             record.payload = payload
             record.updated_by = request.user
