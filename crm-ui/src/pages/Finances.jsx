@@ -147,8 +147,10 @@ function FinanceAnalyticsBlock({
   const summary = analytics?.summary || {};
   const atRiskProjects = analytics?.at_risk_projects || [];
   const categoryTotals = analytics?.category_totals || [];
+  const projectRows = analytics?.projects || [];
   const recommendations = analytics?.recommendations || [];
   const expensePrediction = analytics?.expense_prediction || null;
+  const learnedExpenseForecast = expensePrediction?.learned_expense_forecast || [];
   const marginValue = Number(summary.margin_percent || 0);
 
   return (
@@ -247,8 +249,122 @@ function FinanceAnalyticsBlock({
               </div>
             </div>
           ) : null}
+
+          {expensePrediction.estimated_expense_total ? (
+            <div className="mt-4 rounded-[20px] bg-white/80 p-3 ring-1 ring-blue-100">
+              <div className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-500">
+                Каких расходов может не хватать
+              </div>
+              {learnedExpenseForecast.length ? (
+                <div className="mt-3 space-y-2">
+                  {learnedExpenseForecast.map((item) => {
+                    const isMissing = item.status === "missing";
+                    const isPartial = item.status === "partial";
+                    return (
+                      <div
+                        key={item.category || item.label}
+                        className={`grid gap-2 rounded-2xl px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${
+                          isMissing
+                            ? "bg-red-50 ring-1 ring-red-100"
+                            : isPartial
+                              ? "bg-amber-50 ring-1 ring-amber-100"
+                              : "bg-emerald-50 ring-1 ring-emerald-100"
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-black text-slate-900">{item.label}</span>
+                            <span
+                              className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wide ${
+                                isMissing
+                                  ? "bg-red-100 text-red-700"
+                                  : isPartial
+                                    ? "bg-amber-100 text-amber-700"
+                                    : "bg-emerald-100 text-emerald-700"
+                              }`}
+                            >
+                              {isMissing ? "Не внесено" : isPartial ? "Меньше обычного" : "Учтено"}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs font-semibold text-slate-500">
+                            Встречается в {item.project_count} из {expensePrediction.basis_project_count} похожих проектов
+                          </div>
+                        </div>
+                        <div className="text-left sm:text-right">
+                          <div className="text-sm font-black text-slate-900">
+                            Обычно {formatMoney(item.estimated_total)} ₽
+                          </div>
+                          <div className={`mt-1 text-xs font-bold ${Number(item.remaining || 0) > 0 ? "text-amber-700" : "text-emerald-700"}`}>
+                            {Number(item.remaining || 0) > 0
+                              ? `Возможно, не хватает ${formatMoney(item.remaining)} ₽`
+                              : `Внесено ${formatMoney(item.current_total)} ₽`}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-3 text-sm font-semibold text-slate-500">
+                  Пока недостаточно завершенных похожих проектов, чтобы назвать конкретные категории расходов.
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
+
+      <div className="mt-4 rounded-[24px] bg-slate-50 p-4">
+        <div className="mb-3">
+          <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Маржинальность по проектам</div>
+          <div className="mt-1 text-xs font-semibold text-slate-400">
+            Сумма проекта минус фактические расходы. Оплаты клиента показаны отдельно и не меняют проектную маржу.
+          </div>
+        </div>
+        {projectRows.length ? (
+          <div className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
+            {projectRows.map((project) => {
+              const projectMargin = Number(project.project_margin_percent || 0);
+              const hasProjectAmount = project.project_margin_percent !== null && project.project_margin_percent !== undefined;
+              return (
+                <button
+                  key={project.id}
+                  type="button"
+                  className="grid w-full gap-3 rounded-2xl bg-white px-3 py-3 text-left ring-1 ring-slate-100 transition hover:bg-blue-50 sm:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(100px,0.65fr))] sm:items-center"
+                  onClick={() => onProjectOpen?.(project.id)}
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-black text-slate-900">{project.title}</div>
+                    <div className="mt-1 text-xs font-semibold text-slate-400">{project.client_name || "Клиент не указан"}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">Сумма</div>
+                    <div className="mt-1 text-sm font-black text-slate-700">{formatMoney(project.expected_income)} ₽</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">Расходы</div>
+                    <div className="mt-1 text-sm font-black text-red-600">{formatMoney(project.expense_total)} ₽</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">Маржа</div>
+                    <div
+                      className={`mt-1 text-sm font-black ${
+                        !hasProjectAmount ? "text-slate-400" : projectMargin < 30 ? "text-amber-600" : "text-emerald-600"
+                      }`}
+                    >
+                      {formatPercent(project.project_margin_percent)} · {formatMoney(project.project_margin_amount)} ₽
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-2xl bg-white px-3 py-3 text-sm font-semibold text-slate-500 ring-1 ring-slate-100">
+            Проектов в выбранной выборке нет.
+          </div>
+        )}
+      </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
         <div className="rounded-[24px] bg-slate-50 p-4">

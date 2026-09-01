@@ -1,6 +1,7 @@
 import re
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
+from math import ceil
 
 from django.utils import timezone
 
@@ -54,6 +55,18 @@ FALLBACK_REQUIRED_EXPENSE_MINIMUMS = {
 }
 FALLBACK_TOTAL_EXPENSE_RATIO = sum(FALLBACK_REQUIRED_EXPENSE_RATIOS.values(), Decimal("0"))
 ALWAYS_FORECAST_REQUIRED_GROUPS = {"delivery", "montage"}
+LEARNED_CATEGORY_MIN_FREQUENCY = Decimal("0.60")
+PROJECT_TOKEN_STOP_WORDS = {
+    "проект",
+    "заказ",
+    "работа",
+    "новый",
+    "новая",
+    "ростов",
+    "ростове",
+    "ростова",
+    "область",
+}
 
 
 def _money(value):
@@ -112,6 +125,33 @@ def _expense_group_totals(payments):
     return totals
 
 
+def _expense_category_totals(payments):
+    totals = {}
+    for payment in payments:
+        category = getattr(payment, "category", None)
+        if not category or category.type != FinanceCategory.Type.EXPENSE:
+            continue
+        category_key = str(category.pk)
+        if category_key not in totals:
+            totals[category_key] = {
+                "category": category.pk,
+                "label": category.name,
+                "total": Decimal("0"),
+            }
+        totals[category_key]["total"] += _money(payment.amount)
+    return totals
+
+
+def _median_decimal(values):
+    ordered = sorted(values)
+    if not ordered:
+        return Decimal("0")
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / Decimal("2")
+
+
 def _is_terminal_status(project):
     statuses = ProjectStatus.objects.filter(workspace=project.workspace)
     latest_status = statuses.order_by("sort_order", "id").last()
@@ -165,6 +205,13 @@ def build_project_finance_analytics(project):
     margin_percent = None
     if income_paid > 0:
         margin_percent = (margin_amount / income_paid * Decimal("100")).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+
+    project_margin_amount = _money(expected_income - expense_total)
+    project_margin_percent = None
+    if expected_income > 0:
+        project_margin_percent = (
+            project_margin_amount / expected_income * Decimal("100")
+        ).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
     required_expenses = []
     for group in REQUIRED_EXPENSE_GROUPS:
@@ -223,6 +270,9 @@ def build_project_finance_analytics(project):
         "expense_total": _decimal_string(expense_total),
         "margin_amount": _decimal_string(margin_amount),
         "margin_percent": _percent_string(margin_percent),
+        "project_margin_amount": _decimal_string(project_margin_amount),
+        "project_margin_percent": _percent_string(project_margin_percent),
+        "project_low_margin": project_margin_percent is not None and project_margin_percent < MARGIN_WARNING_PERCENT,
         "margin_warning_percent": _decimal_string(MARGIN_WARNING_PERCENT),
         "paid_in_full": paid_in_full,
         "low_margin": low_margin,
@@ -280,6 +330,9 @@ def _serialize_project_analytics(project, analytics):
         "expense_total": analytics["expense_total"],
         "margin_amount": analytics["margin_amount"],
         "margin_percent": analytics["margin_percent"],
+        "project_margin_amount": analytics["project_margin_amount"],
+        "project_margin_percent": analytics["project_margin_percent"],
+        "project_low_margin": analytics["project_low_margin"],
         "paid_in_full": analytics["paid_in_full"],
         "low_margin": analytics["low_margin"],
         "expense_review_active": analytics["expense_review_active"],
@@ -293,12 +346,14 @@ def _tokenize_project(project):
     value = " ".join(
         [
             project.title or "",
-            project.client_name or "",
-            project.object_address or "",
-            project.status or "",
+            project.categories or "",
         ]
     )
-    return set(re.findall(r"[0-9a-zA-Zа-яА-ЯёЁ]+", value.casefold()))
+    return {
+        token
+        for token in re.findall(r"[0-9a-zA-Zа-яА-ЯёЁ]+", value.casefold())
+        if len(token) >= 3 and token not in PROJECT_TOKEN_STOP_WORDS and not token.isdigit()
+    }
 
 
 def _project_similarity_score(target_project, source_project):
@@ -363,6 +418,74 @@ def _build_required_expense_forecast(expected_income, current_group_totals, basi
     return rows, _money(estimated_required_total)
 
 
+def _build_learned_category_forecast(expected_income, current_payments, basis):
+    if not basis:
+        return [], Decimal("0")
+
+    current_totals = _expense_category_totals(current_payments)
+    category_history = {}
+    for item in basis:
+        reference_income = Decimal(item["analytics"]["expected_income"])
+        if reference_income <= 0:
+            continue
+        for category_key, category_total in item["expense_category_totals"].items():
+            history = category_history.setdefault(
+                category_key,
+                {
+                    "category": category_total["category"],
+                    "label": category_total["label"],
+                    "ratios": [],
+                    "project_count": 0,
+                },
+            )
+            history["ratios"].append(category_total["total"] / reference_income)
+            history["project_count"] += 1
+
+    minimum_project_count = max(1, ceil(Decimal(len(basis)) * LEARNED_CATEGORY_MIN_FREQUENCY))
+    rows = []
+    estimated_total = Decimal("0")
+    for category_key, history in category_history.items():
+        if history["project_count"] < minimum_project_count:
+            continue
+
+        ratio = _median_decimal(history["ratios"])
+        category_estimate = _money(expected_income * ratio)
+        current_total = _money(current_totals.get(category_key, {}).get("total", Decimal("0")))
+        remaining = _money(max(category_estimate - current_total, Decimal("0")))
+        if current_total <= 0:
+            status = "missing"
+        elif remaining > 0:
+            status = "partial"
+        else:
+            status = "covered"
+
+        frequency = Decimal(history["project_count"]) / Decimal(len(basis)) * Decimal("100")
+        rows.append(
+            {
+                "category": history["category"],
+                "label": history["label"],
+                "status": status,
+                "source": "similar_projects",
+                "project_count": history["project_count"],
+                "frequency_percent": _percent_string(frequency),
+                "average_percent": _percent_string(ratio * Decimal("100")),
+                "estimated_total": _decimal_string(category_estimate),
+                "current_total": _decimal_string(current_total),
+                "remaining": _decimal_string(remaining),
+            }
+        )
+        estimated_total += category_estimate
+
+    rows.sort(
+        key=lambda row: (
+            {"missing": 0, "partial": 1, "covered": 2}[row["status"]],
+            -Decimal(row["remaining"]),
+            row["label"].casefold(),
+        )
+    )
+    return rows, _money(estimated_total)
+
+
 def _build_project_expense_prediction(project, reference_projects):
     if not project:
         return None
@@ -370,7 +493,8 @@ def _build_project_expense_prediction(project, reference_projects):
     project_analytics = build_project_finance_analytics(project)
     expected_income = Decimal(project_analytics["expected_income"])
     current_expense = Decimal(project_analytics["expense_total"])
-    current_group_totals = _expense_group_totals(_current_expense_payments(project))
+    current_expense_payments = _current_expense_payments(project)
+    current_group_totals = _expense_group_totals(current_expense_payments)
 
     empty_prediction = {
         "project": project.id,
@@ -384,6 +508,8 @@ def _build_project_expense_prediction(project, reference_projects):
         "current_expense_total": _decimal_string(current_expense),
         "estimated_remaining_expense": None,
         "required_expense_forecast": [],
+        "learned_expense_forecast": [],
+        "missing_learned_expenses": [],
         "message": "У проекта пока нет суммы, поэтому прогноз расходов построить нельзя.",
     }
     if expected_income <= 0:
@@ -399,13 +525,15 @@ def _build_project_expense_prediction(project, reference_projects):
             continue
         reference_income = Decimal(reference_analytics["expected_income"])
         reference_expense = Decimal(reference_analytics["expense_total"])
+        reference_expense_payments = _current_expense_payments(reference_project)
 
         candidates.append(
             {
                 "project": reference_project,
                 "analytics": reference_analytics,
                 "expense_ratio": reference_expense / reference_income,
-                "expense_group_totals": _expense_group_totals(_current_expense_payments(reference_project)),
+                "expense_group_totals": _expense_group_totals(reference_expense_payments),
+                "expense_category_totals": _expense_category_totals(reference_expense_payments),
                 "score": _project_similarity_score(project, reference_project),
             }
         )
@@ -429,7 +557,16 @@ def _build_project_expense_prediction(project, reference_projects):
         current_group_totals,
         basis,
     )
-    estimated_expense = max(_money(expected_income * average_ratio), estimated_required_total)
+    learned_forecast, estimated_learned_total = _build_learned_category_forecast(
+        expected_income,
+        current_expense_payments,
+        basis if matching_candidates else [],
+    )
+    estimated_expense = max(
+        _money(expected_income * average_ratio),
+        estimated_required_total,
+        estimated_learned_total,
+    )
     remaining_expense = _money(max(estimated_expense - current_expense, Decimal("0")))
     average_percent = (average_ratio * Decimal("100")).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
     confidence = "fallback" if not basis else "medium" if len(basis) >= 3 else "low"
@@ -463,6 +600,10 @@ def _build_project_expense_prediction(project, reference_projects):
         "current_expense_total": _decimal_string(current_expense),
         "estimated_remaining_expense": _decimal_string(remaining_expense),
         "required_expense_forecast": required_forecast,
+        "learned_expense_forecast": learned_forecast,
+        "missing_learned_expenses": [
+            item["label"] for item in learned_forecast if item["status"] in {"missing", "partial"}
+        ],
         "message": message,
     }
 

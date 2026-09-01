@@ -1946,8 +1946,87 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(prediction["basis_project_count"], 1)
         self.assertEqual(prediction["learning_scope"], "similar_completed_projects")
         self.assertIn("Монтаж", [item["label"] for item in prediction["required_expense_forecast"]])
+        self.assertEqual(response.data["projects"][0]["project_margin_amount"], "45000.00")
+        self.assertEqual(response.data["projects"][0]["project_margin_percent"], "90.00")
         self.assertEqual(response.data["summary"]["at_risk_project_count"], 0)
         self.assertEqual(response.data["at_risk_projects"], [])
+
+    def test_finance_analytics_names_missing_categories_from_similar_projects(self):
+        self.configure_finance_review_statuses()
+        glass_category = FinanceCategory.objects.create(
+            workspace=self.manager.workspace,
+            name="Стекло",
+            type=FinanceCategory.Type.EXPENSE,
+        )
+        hardware_category = FinanceCategory.objects.create(
+            workspace=self.manager.workspace,
+            name="Фурнитура для душевой",
+            type=FinanceCategory.Type.EXPENSE,
+        )
+        delivery_category = FinanceCategory.objects.create(
+            workspace=self.manager.workspace,
+            name="Доставка",
+            type=FinanceCategory.Type.EXPENSE,
+        )
+
+        for index, total_amount in enumerate((Decimal("100000.00"), Decimal("120000.00")), start=1):
+            reference_project = Project.objects.create(
+                manager=self.manager,
+                title=f"Душевая перегородка {index}",
+                client_name=f"Reference Client {index}",
+                client_phone=f"+7900000220{index}",
+                total_amount=total_amount,
+                status="closed",
+            )
+            for category, ratio in (
+                (glass_category, Decimal("0.30")),
+                (hardware_category, Decimal("0.10")),
+                (delivery_category, Decimal("0.05")),
+            ):
+                Payment.objects.create(
+                    project=reference_project,
+                    created_by=self.manager,
+                    category=category,
+                    account=self.account,
+                    amount=total_amount * ratio,
+                    type=Payment.Type.CORRECTION,
+                )
+
+        target_project = Project.objects.create(
+            manager=self.manager,
+            title="Душевая перегородка новая",
+            client_name="Target Client",
+            client_phone="+79000002210",
+            total_amount=Decimal("80000.00"),
+            status="design",
+        )
+        Payment.objects.create(
+            project=target_project,
+            created_by=self.manager,
+            category=glass_category,
+            account=self.account,
+            amount=Decimal("10000.00"),
+            type=Payment.Type.CORRECTION,
+        )
+
+        client = self.auth_client_for(self.manager)
+        response = client.get("/api/finance-analytics/", {"project": target_project.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        prediction = response.data["expense_prediction"]
+        rows = {item["label"]: item for item in prediction["learned_expense_forecast"]}
+        self.assertEqual(prediction["basis_project_count"], 2)
+        self.assertEqual(rows["Стекло"]["status"], "partial")
+        self.assertEqual(rows["Стекло"]["estimated_total"], "24000.00")
+        self.assertEqual(rows["Стекло"]["remaining"], "14000.00")
+        self.assertEqual(rows["Фурнитура для душевой"]["status"], "missing")
+        self.assertEqual(rows["Фурнитура для душевой"]["remaining"], "8000.00")
+        self.assertEqual(rows["Доставка"]["status"], "missing")
+        self.assertEqual(rows["Доставка"]["remaining"], "4000.00")
+        self.assertCountEqual(
+            prediction["missing_learned_expenses"],
+            ["Стекло", "Фурнитура для душевой", "Доставка"],
+        )
 
     @patch("crm_app.views.GeminiClient")
     def test_finance_analytics_ai_uses_gemini(self, mocked_client_class):
