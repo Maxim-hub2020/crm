@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Calendar,
@@ -19,6 +19,7 @@ import {
   Pencil,
   Phone,
   Plus,
+  Search,
   Ticket,
   Trash2,
   Users,
@@ -703,6 +704,44 @@ function paymentCategoryBadgeClass(payment) {
   return "bg-slate-100 text-slate-600";
 }
 
+function paymentMatchesSearch(payment, rawQuery) {
+  const query = normalizeSearchText(rawQuery);
+  if (!query) return true;
+
+  const kind = paymentOperationKind(payment) === "expense" ? "расход списание" : "доход поступление";
+  const paymentType =
+    {
+      advance: "аванс предоплата",
+      additional: "доплата дополнительный платеж",
+      refund: "возврат",
+      correction: "корректировка",
+    }[payment?.type] || "";
+  const searchableText = normalizeSearchText(
+    [
+      paymentCategoryLabel(payment),
+      payment?.comment,
+      payment?.account_name,
+      kind,
+      paymentType,
+      isFuturePayment(payment) ? "запланировано будущая операция" : "проведено",
+      formatDateTime(payment?.paid_at),
+      formatMoney(payment?.amount),
+      payment?.amount,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+  if (searchableText.includes(query)) return true;
+
+  const queryDigits = query.replace(/\D/g, "");
+  if (!queryDigits) return false;
+  const numericValues = [
+    cleanAmountValue(payment?.amount),
+    formatDateTime(payment?.paid_at).replace(/\D/g, ""),
+  ];
+  return numericValues.some((value) => value.includes(queryDigits));
+}
+
 function ageBadgeClass(days) {
   if (days >= 8) return "bg-red-50 text-red-600";
   if (days >= 4) return "bg-amber-50 text-amber-600";
@@ -1162,6 +1201,8 @@ export default function Projects() {
   const [editingPaymentId, setEditingPaymentId] = useState(null);
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [paymentError, setPaymentError] = useState("");
+  const [paymentSearch, setPaymentSearch] = useState("");
+  const deferredPaymentSearch = useDeferredValue(paymentSearch);
 
   const [taskForm, setTaskForm] = useState(createEmptyTaskForm());
   const [taskSaving, setTaskSaving] = useState(false);
@@ -1475,6 +1516,11 @@ export default function Projects() {
     if (!activeProjectId) return [];
     return paymentsByProject.get(activeProjectId) || [];
   }, [activeProjectId, paymentsByProject]);
+
+  const filteredActiveProjectPayments = useMemo(
+    () => activeProjectPayments.filter((payment) => paymentMatchesSearch(payment, deferredPaymentSearch)),
+    [activeProjectPayments, deferredPaymentSearch]
+  );
 
   const editingPayment = useMemo(
     () => activeProjectPayments.find((payment) => payment.id === editingPaymentId) || null,
@@ -1823,6 +1869,7 @@ export default function Projects() {
   function openProject(project, tab = "comments") {
     setActiveProjectId(project.id);
     setDetailTab(tab);
+    setPaymentSearch("");
   }
 
   function closeProject() {
@@ -1831,6 +1878,7 @@ export default function Projects() {
     setDetailError("");
     setCommentError("");
     setPaymentError("");
+    setPaymentSearch("");
     setTaskError("");
     setTaskForm(createEmptyTaskForm());
     setDetailAutosaveState("idle");
@@ -4191,12 +4239,43 @@ export default function Projects() {
 
                 <Card className="border border-slate-100 shadow-none ring-0">
                   <CardHeader>
-                    <div className="text-lg font-black tracking-tight text-slate-900">Журнал операций</div>
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <div className="text-lg font-black tracking-tight text-slate-900">Журнал операций</div>
+                        <div className="mt-1 text-xs font-semibold text-slate-400">
+                          {paymentSearch.trim()
+                            ? `Найдено ${filteredActiveProjectPayments.length} из ${activeProjectPayments.length}`
+                            : `${activeProjectPayments.length} операций`}
+                        </div>
+                      </div>
+                      <div className="relative w-full md:max-w-sm">
+                        <Search
+                          size={17}
+                          aria-hidden="true"
+                          className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+                        />
+                        <Input
+                          type="search"
+                          value={paymentSearch}
+                          onChange={(event) => setPaymentSearch(event.target.value)}
+                          className="pl-11"
+                          placeholder="Категория, сумма, дата, комментарий..."
+                          aria-label="Поиск финансовых операций по проекту"
+                        />
+                      </div>
+                    </div>
                   </CardHeader>
                   <CardBody>
                     {activeProjectPayments.length === 0 ? (
                       <div className="rounded-[24px] bg-slate-50 px-4 py-6 text-sm text-slate-500">
                         По этому проекту ещё нет операций.
+                      </div>
+                    ) : filteredActiveProjectPayments.length === 0 ? (
+                      <div className="rounded-[24px] bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                        <div>По запросу «{paymentSearch.trim()}» операций не найдено.</div>
+                        <Button type="button" variant="secondary" className="mt-4" onClick={() => setPaymentSearch("")}>
+                          Очистить поиск
+                        </Button>
                       </div>
                     ) : (
                       <div className="overflow-x-auto">
@@ -4212,7 +4291,7 @@ export default function Projects() {
                             </tr>
                           </thead>
                           <tbody>
-                            {activeProjectPayments.map((payment) => {
+                            {filteredActiveProjectPayments.map((payment) => {
                               const signedAmount = paymentDisplaySignedAmount(payment);
                               const futurePayment = isFuturePayment(payment);
                               return (
