@@ -1,12 +1,14 @@
-"""Link accepted calculator archive revisions to tenant-scoped CRM requests."""
+"""Route calculator quotes to the correct tenant CRM destination."""
 
 import hashlib
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
-from .models import CalculatorLead, CalculatorQuote
+from .models import CalculatorLead, CalculatorQuote, Client, Project, ProjectStatus, User
 from .phones import normalize_russian_phone
+from .workflow import apply_task_templates_for_project, create_audit_log, snapshot_model
+from .yandex_disk import ensure_project_disk_folder
 
 
 def _dict(value):
@@ -63,8 +65,89 @@ def quote_summary(payload):
     return _money(total), {"items": lines, "amount_is_from": bool(totals), "product": product}
 
 
+def _project_manager(quote):
+    for candidate in (quote.updated_by, quote.created_by):
+        if candidate and candidate.is_active and candidate.workspace_id == quote.workspace_id:
+            return candidate
+    users = User.objects.filter(workspace_id=quote.workspace_id, is_active=True).order_by("id")
+    return next((user for user in users if user.is_admin()), users.first())
+
+
+def _application_status(workspace_id):
+    statuses = ProjectStatus.objects.filter(workspace_id=workspace_id)
+    return (
+        statuses.filter(name__iexact="Заявки").first()
+        or statuses.filter(code__iexact="заявки").first()
+        or statuses.filter(is_default=True).first()
+        or statuses.order_by("sort_order", "id").first()
+    )
+
+
+def _quote_client(quote, name, phone):
+    normalized_phone = normalize_russian_phone(phone, strict=False)
+    client = Client.objects.filter(workspace_id=quote.workspace_id, phone=normalized_phone).first() if normalized_phone else None
+    if client is None and name:
+        client = Client.objects.filter(workspace_id=quote.workspace_id, name__iexact=name, phone="").first()
+    if client is None:
+        try:
+            client = Client.objects.create(
+                workspace_id=quote.workspace_id,
+                name=name or "Клиент без имени",
+                phone=normalized_phone,
+            )
+        except IntegrityError:
+            client = Client.objects.get(workspace_id=quote.workspace_id, phone=normalized_phone)
+    return client, normalized_phone
+
+
+def _sync_internal_quote_project(quote, payload, customer, name, phone, amount, configuration):
+    manager = _project_manager(quote)
+    status = _application_status(quote.workspace_id)
+    if manager is None or status is None:
+        return None
+    client, normalized_phone = _quote_client(quote, name, phone)
+    item_titles = [line["title"] for line in configuration["items"] if line.get("title")]
+    title = item_titles[0] if len(set(item_titles)) == 1 else f"КП №{quote.number or quote.quote_id[:8]}"
+    description = f"Создано из КП калькулятора №{quote.number or quote.quote_id}."
+    customer_note = str(customer.get("note") or "").strip()
+    if customer_note:
+        description += f"\n{customer_note}"
+    project = quote.project
+    created = project is None
+    if created:
+        project = Project(
+            workspace_id=quote.workspace_id,
+            manager=manager,
+            status=status.code,
+            description=description,
+        )
+    project.client = client
+    project.client_name = name or client.name
+    project.client_phone = normalized_phone or phone
+    project.title = title[:200]
+    project.total_amount = amount
+    project.categories = configuration["product"] if configuration["product"] in {"shower", "mirror"} else ""
+    project.save()
+    quote.project = project
+    quote.save(update_fields=["project", "updated_at"])
+    # Remove the temporary request created by the previous integration version.
+    CalculatorLead.objects.filter(quote=quote).delete()
+    if created:
+        apply_task_templates_for_project(project, actor=manager)
+        ensure_project_disk_folder(project, actor=manager)
+        create_audit_log(
+            manager,
+            "project",
+            project.id,
+            "create",
+            after=snapshot_model(project, ["id", "title", "client_name", "client_phone", "total_amount", "status"]),
+            workspace=project.workspace,
+        )
+    return project
+
+
 def sync_quote_lead(quote):
-    """Caller holds the quote row lock; never overwrite the manager's workflow fields."""
+    """Caller holds the quote row lock. Internal quotes become kanban projects."""
     if quote.lead_deleted:
         return None
     payload = _dict(quote.payload)
@@ -77,6 +160,8 @@ def sync_quote_lead(quote):
     if amount is None:
         return None
     configuration["customer_note"] = str(customer.get("note") or "")[:5000]
+    if not quote.quote_id.startswith("public-"):
+        return _sync_internal_quote_project(quote, payload, customer, name, phone, amount, configuration)
     # Public-site requests predate this link. Attach them instead of duplicating them.
     lead = CalculatorLead.objects.filter(quote=quote).first()
     if lead is None and quote.quote_id.startswith("public-"):

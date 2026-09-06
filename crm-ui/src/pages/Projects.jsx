@@ -1343,6 +1343,25 @@ export default function Projects() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    const refreshProjects = () => {
+      if (document.visibilityState !== "visible") return;
+      void fetchProjects().then((rows) => {
+        if (active) setProjects(rows);
+      }).catch(() => {});
+    };
+    const interval = window.setInterval(refreshProjects, 15000);
+    window.addEventListener("focus", refreshProjects);
+    document.addEventListener("visibilitychange", refreshProjects);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshProjects);
+      document.removeEventListener("visibilitychange", refreshProjects);
+    };
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem(VIEW_MODE_KEY, viewMode);
   }, [viewMode]);
 

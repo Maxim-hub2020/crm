@@ -1008,6 +1008,12 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         before = snapshot_model(instance, ["id", "title", "client_name", "client_phone", "object_address", "total_amount", "status"])
+        calculator_quote = CalculatorQuote.objects.filter(project=instance).first()
+        if calculator_quote:
+            calculator_quote.lead_deleted = True
+            calculator_quote.payload = {}
+            calculator_quote.number = ""
+            calculator_quote.save(update_fields=["lead_deleted", "payload", "number", "updated_at"])
         reverse_project_bonus_effects(instance, actor=self.request.user)
         create_audit_log(
             self.request.user,

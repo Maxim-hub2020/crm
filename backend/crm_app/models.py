@@ -502,6 +502,13 @@ class CalculatorQuote(models.Model):
     )
     quote_id = models.CharField(max_length=64)
     lead_deleted = models.BooleanField(default=False)
+    project = models.OneToOneField(
+        Project,
+        on_delete=models.SET_NULL,
+        related_name="calculator_quote",
+        blank=True,
+        null=True,
+    )
     number = models.CharField(max_length=32, blank=True, default="")
     payload = models.JSONField(default=dict)
     quote_created_at = models.DateTimeField(default=timezone.now)

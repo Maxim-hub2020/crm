@@ -8,6 +8,9 @@ fi
 echo "==> Migrate..."
 python manage.py migrate --noinput
 
+echo "==> Link calculator quotes to kanban projects..."
+python manage.py backfill_calculator_projects
+
 echo "==> Collect static..."
 python manage.py collectstatic --noinput
 
