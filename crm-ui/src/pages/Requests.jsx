@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, LoaderCircle, Phone, RefreshCw, ShieldQuestion, Trash2 } from "lucide-react";
 
-import { deleteCalculatorLead, extractApiErrorMessage, fetchCalculatorLeads, updateCalculatorLead } from "../api";
+import { deleteCalculatorLead, extractApiErrorMessage, fetchCalculatorLeads, fetchMe, updateCalculatorLead } from "../api";
 import { Badge, Button, Card, CardBody, CardHeader, Modal } from "../components/ui.jsx";
 
 const STATUS_LABELS = {
@@ -71,27 +71,50 @@ export default function Requests() {
   const [savingId, setSavingId] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [deletingLead, setDeletingLead] = useState(null);
+  const [company, setCompany] = useState(null);
+  const loadSequence = useRef(0);
+  const mutationRunning = useRef(false);
   const selectedLead = leads.find((lead) => lead.id === selectedId);
 
-  const load = async () => {
-    setLoading(true);
-    setError("");
+  const load = async (silent = false) => {
+    if (mutationRunning.current) return;
+    const sequence = ++loadSequence.current;
+    if (!silent) {
+      setLoading(true);
+      setError("");
+    }
     try {
-      setLeads(await fetchCalculatorLeads());
+      const nextLeads = await fetchCalculatorLeads();
+      if (sequence === loadSequence.current) setLeads(nextLeads);
     } catch (requestError) {
-      setError(extractApiErrorMessage(requestError, "Не удалось загрузить заявки калькулятора."));
+      if (sequence === loadSequence.current) setError(extractApiErrorMessage(requestError, "Не удалось загрузить заявки калькулятора."));
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
   };
 
   useEffect(() => {
     void load();
+    let active = true;
+    void fetchMe().then((me) => { if (active) setCompany(me.workspace); }).catch(() => {});
+    const refresh = () => { if (document.visibilityState === "visible") void load(true); };
+    const interval = window.setInterval(refresh, 15000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      active = false;
+      ++loadSequence.current;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, []);
 
   const activeCount = useMemo(() => leads.filter((lead) => lead.status !== "done").length, [leads]);
 
   const changeLead = async (leadId, payload) => {
+    mutationRunning.current = true;
+    ++loadSequence.current;
     setSavingId(leadId);
     setError("");
     try {
@@ -101,11 +124,15 @@ export default function Requests() {
     } catch (requestError) {
       setError(extractApiErrorMessage(requestError, "Не удалось обновить заявку."));
     } finally {
+      mutationRunning.current = false;
+      setLoading(false);
       setSavingId(null);
     }
   };
 
   const removeLead = async () => {
+    mutationRunning.current = true;
+    ++loadSequence.current;
     setSavingId(deletingLead.id);
     setError("");
     try {
@@ -115,6 +142,8 @@ export default function Requests() {
     } catch (requestError) {
       setError(extractApiErrorMessage(requestError, "Не удалось удалить заявку."));
     } finally {
+      mutationRunning.current = false;
+      setLoading(false);
       setSavingId(null);
     }
   };
@@ -128,6 +157,8 @@ export default function Requests() {
             Заявки калькулятора
           </h2>
           <p className="mt-1 text-sm text-gray-500">КП с контактами из calc.cehcrm.ru и заявки с сайта</p>
+          {company ? <p className="mt-1 text-sm font-semibold text-blue-700">Компания: {company.name} · ID {company.id}</p> : null}
+          <p className="mt-1 text-xs text-gray-500">Новые заявки появляются автоматически, проверка каждые 15 секунд.</p>
         </div>
         <div className="flex items-center gap-2">
           <Badge>{activeCount} активных</Badge>
