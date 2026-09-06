@@ -12,7 +12,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -530,6 +530,8 @@ def public_calculator_lead_view(request):
         return Response({"detail": "Укажите имя и корректный номер телефона."}, status=status.HTTP_400_BAD_REQUEST)
     fingerprint = hashlib.sha256(json.dumps(calculation, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     workspace = default_workspace()
+    if CalculatorQuote.objects.filter(workspace=workspace, quote_id=f"public-{calculation_id}", lead_deleted=True).exists():
+        return Response({"detail": "Этот расчёт удалён. Создайте новый расчёт."}, status=status.HTTP_410_GONE)
     duplicate = CalculatorLead.objects.filter(
         workspace=workspace,
         client_phone=phone,
@@ -580,6 +582,8 @@ def public_calculator_lead_view(request):
                 payload=quote_payload,
                 quote_created_at=quote_created_at,
             )
+            lead.quote = quote
+            lead.save(update_fields=["quote", "updated_at"])
     if created:
         _notify_calculator_lead(lead, quote)
     response_payload = {"ok": True, "lead_id": lead.id}
@@ -591,7 +595,7 @@ def public_calculator_lead_view(request):
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def calculator_leads_view(request):
-    leads = CalculatorLead.objects.filter(workspace=request.user.workspace).order_by("-created_at")[:500]
+    leads = CalculatorLead.objects.filter(workspace=request.user.workspace).select_related("quote").order_by("-created_at")[:500]
     return Response([
         {
             "id": lead.id,
@@ -607,20 +611,34 @@ def calculator_leads_view(request):
             "utm": lead.utm,
             "status": lead.status,
             "created_at": lead.created_at,
+            "quote_number": lead.quote.number if lead.quote else "",
+            "manager_note": lead.manager_note,
+            "follow_up_at": lead.follow_up_at,
         }
         for lead in leads
     ])
 
 
-@api_view(["PATCH"])
+class CalculatorLeadUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=CalculatorLead.Status.choices, required=False)
+    manager_note = serializers.CharField(max_length=5000, allow_blank=True, required=False)
+    follow_up_at = serializers.DateTimeField(allow_null=True, required=False)
+
+
+@api_view(["PATCH", "DELETE"])
 @permission_classes([IsAdmin])
 def calculator_lead_detail_view(request, lead_id):
     lead = CalculatorLead.objects.filter(workspace=request.user.workspace, id=lead_id).first()
     if not lead:
         return Response({"detail": "Заявка не найдена."}, status=status.HTTP_404_NOT_FOUND)
-    next_status = request.data.get("status")
-    if next_status not in CalculatorLead.Status.values:
-        return Response({"detail": "Некорректный статус."}, status=status.HTTP_400_BAD_REQUEST)
-    lead.status = next_status
-    lead.save(update_fields=["status", "updated_at"])
-    return Response({"id": lead.id, "status": lead.status})
+    if request.method == "DELETE":
+        from .calculator_leads import delete_lead
+        delete_lead(lead)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    serializer = CalculatorLeadUpdateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    for field, value in serializer.validated_data.items():
+        setattr(lead, field, value)
+    lead.save(update_fields=[*serializer.validated_data, "updated_at"])
+    return Response({"id": lead.id, "status": lead.status, "manager_note": lead.manager_note,
+                     "follow_up_at": lead.follow_up_at})

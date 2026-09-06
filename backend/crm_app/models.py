@@ -501,6 +501,7 @@ class CalculatorQuote(models.Model):
         related_name="calculator_quotes",
     )
     quote_id = models.CharField(max_length=64)
+    lead_deleted = models.BooleanField(default=False)
     number = models.CharField(max_length=32, blank=True, default="")
     payload = models.JSONField(default=dict)
     quote_created_at = models.DateTimeField(default=timezone.now)
@@ -547,6 +548,12 @@ class CalculatorLead(models.Model):
         db_index=True,
     )
     calculation_id = models.CharField(max_length=64, unique=True)
+    quote = models.OneToOneField(
+        CalculatorQuote, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="lead",
+    )
+    manager_note = models.TextField(blank=True, default="")
+    follow_up_at = models.DateTimeField(null=True, blank=True)
     client_name = models.CharField(max_length=200)
     client_phone = models.CharField(max_length=50, db_index=True)
     client_email = models.EmailField(blank=True, default="")

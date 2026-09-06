@@ -224,6 +224,11 @@ export async function updateCalculatorLead(leadId, payload) {
   return data;
 }
 
+export async function deleteCalculatorLead(leadId) {
+  initApiAuth();
+  await api.delete(`/api/calculator-leads/${leadId}/`);
+}
+
 export async function fetchGlobalSearch(query) {
   initApiAuth();
   const { data } = await api.get("/api/global-search/", { params: { q: query } });

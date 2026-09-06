@@ -619,7 +619,7 @@ def calculator_production_plan_view(request):
 
 def _calculator_quote_payloads(workspace):
     payloads = []
-    records = CalculatorQuote.objects.filter(workspace=workspace).order_by("-quote_created_at", "-id")
+    records = CalculatorQuote.objects.filter(workspace=workspace, lead_deleted=False).order_by("-quote_created_at", "-id")
     for record in records:
         payload = dict(record.payload)
         payload.setdefault("updatedAt", record.updated_at.isoformat())
@@ -637,6 +637,7 @@ def _calculator_quote_updated_at(payload):
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticatedAny])
 def calculator_quotes_view(request):
+    from .calculator_leads import sync_quote_lead
     workspace = current_workspace(request.user)
 
     if request.method == "GET":
@@ -665,8 +666,11 @@ def calculator_quotes_view(request):
                 },
             )
             incoming_updated_at = _calculator_quote_updated_at(payload)
+            if record.lead_deleted:
+                continue
             current_updated_at = _calculator_quote_updated_at(record.payload) or record.updated_at
             if not created and (not incoming_updated_at or incoming_updated_at < current_updated_at):
+                sync_quote_lead(record)
                 continue
             record.number = str(payload.get("number") or "")[:32]
             record.payload = payload
@@ -676,6 +680,7 @@ def calculator_quotes_view(request):
             if created and not record.created_by_id:
                 record.created_by = request.user
             record.save()
+            sync_quote_lead(record)
 
     return Response({"quotes": _calculator_quote_payloads(workspace)})
 
@@ -689,7 +694,8 @@ def calculator_quote_detail_view(request, quote_id):
             status=drf_status.HTTP_403_FORBIDDEN,
         )
     workspace = current_workspace(request.user)
-    CalculatorQuote.objects.filter(workspace=workspace, quote_id=quote_id).delete()
+    # Preserve CRM deletion markers to reject stale offline uploads.
+    CalculatorQuote.objects.filter(workspace=workspace, quote_id=quote_id, lead_deleted=False).delete()
     return Response(status=drf_status.HTTP_204_NO_CONTENT)
 
 
