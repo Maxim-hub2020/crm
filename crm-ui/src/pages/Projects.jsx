@@ -914,7 +914,7 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
             };
 
             return (
-              <div key={field.id} className="space-y-2">
+              <div key={field.id} className="space-y-2 md:col-span-2">
                 <Label>{field.name}</Label>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
                   {fileValues.length ? (
@@ -3543,18 +3543,117 @@ export default function Projects() {
         open={Boolean(activeProject)}
         title={
           activeProject
-            ? `${projectOrderLabel(activeProject) ? `№${projectOrderLabel(activeProject)} · ` : ""}${projectDisplayName(activeProject)}`
+            ? (
+                <span className="flex min-w-0 items-center gap-3">
+                  <span className="truncate">
+                    {projectOrderLabel(activeProject) ? `№${projectOrderLabel(activeProject)} · ` : ""}
+                    {projectDisplayName(activeProject)}
+                  </span>
+                  <span className="hidden shrink-0 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-[11px] font-black normal-case tracking-normal text-blue-700 sm:inline-flex">
+                    {statusOptions.find((option) => option.value === detailForm.status)?.label || detailForm.status}
+                  </span>
+                </span>
+              )
             : ""
         }
         onClose={closeProject}
-        widthClassName="max-w-5xl"
-        bodyClassName="min-h-0"
+        widthClassName="max-w-6xl"
+        bodyClassName="min-h-0 bg-white"
         positionClassName="items-start"
-        overlayClassName="bg-slate-950/30 backdrop-blur-md backdrop-saturate-75"
+        overlayClassName="bg-slate-950/25 backdrop-blur-sm backdrop-saturate-75"
       >
         {activeProject && (
-          <div className="space-y-4">
-            <div className="space-y-4">
+          <div className="space-y-5">
+            <div className="space-y-5">
+              <div className="grid overflow-hidden rounded-[22px] border border-slate-200 bg-slate-50/70 md:grid-cols-[1.2fr_0.55fr_1.35fr]">
+                <div className="min-w-0 border-b border-slate-200 p-4 md:border-b-0 md:border-r">
+                  <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Клиент</div>
+                  <div className="mt-2 flex items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      className="min-w-0 text-left"
+                      onClick={activeProjectClient?.id ? openProjectClientCard : undefined}
+                      disabled={!activeProjectClient?.id}
+                    >
+                      <div className="truncate text-sm font-black text-slate-900 transition hover:text-blue-600 sm:text-base">
+                        {detailForm.client_name || "Клиент не привязан"}
+                      </div>
+                      <div className="mt-1 truncate text-xs font-semibold text-slate-400">
+                        {activeProjectClient?.id ? "Открыть карточку клиента" : "Выберите или создайте клиента ниже"}
+                      </div>
+                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {phoneHref(detailForm.client_phone) ? (
+                        <a
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
+                          href={phoneHref(detailForm.client_phone)}
+                          title="Позвонить клиенту"
+                          aria-label="Позвонить клиенту"
+                        >
+                          <Phone size={17} />
+                        </a>
+                      ) : null}
+                      {maxMessageUrl ? (
+                        <a
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
+                          href={maxMessageUrl}
+                          title="Написать клиенту в MAX"
+                          aria-label="Написать клиенту в MAX"
+                        >
+                          <MessageSquare size={17} />
+                        </a>
+                      ) : null}
+                    </div>
+                  </div>
+                  {activeProjectClient?.id ? (
+                    <button
+                      type="button"
+                      className="mt-2 text-xs font-bold text-red-500 transition hover:text-red-700 disabled:cursor-wait disabled:opacity-60"
+                      onClick={detachProjectClient}
+                      disabled={projectClientDetaching}
+                    >
+                      {projectClientDetaching ? "Открепляем..." : "Открепить клиента"}
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="min-w-0 border-b border-slate-200 p-4 md:border-b-0 md:border-r">
+                  <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Стоимость</div>
+                  <div className="mt-2 text-xl font-black tracking-tight text-slate-900">
+                    {formatMoney(cleanAmountValue(detailForm.total_amount) || 0)} ₽
+                  </div>
+                  {projectReferralBonus(activeProject) > 0 ? (
+                    <div className="mt-1 text-xs font-bold text-emerald-600">
+                      После бонусов: {formatMoney(projectDiscountedAmount(activeProject))} ₽
+                    </div>
+                  ) : null}
+                </div>
+
+                <button
+                  type="button"
+                  className="group min-w-0 p-4 text-left transition hover:bg-white"
+                  onClick={() => setAddressDetailsOpen(true)}
+                >
+                  <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Адрес</div>
+                  <div className="mt-2 flex items-center gap-3">
+                    <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-700">
+                      {detailForm.object_address || "Укажите адрес объекта"}
+                    </div>
+                    <span
+                      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition group-hover:bg-blue-50"
+                      onClick={(event) => {
+                        if (!routeLinks.webUrl) return;
+                        event.stopPropagation();
+                        openYandexRouteLinks(routeLinks);
+                      }}
+                      title="Построить маршрут"
+                    >
+                      <MapPin size={17} />
+                    </span>
+                  </div>
+                </button>
+              </div>
+
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2 md:col-span-2">
                   <Label>Наименование проекта</Label>
@@ -3563,75 +3662,9 @@ export default function Projects() {
                     onChange={(event) => setDetailForm((prev) => ({ ...prev, title: event.target.value }))}
                   />
                 </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Клиент</Label>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        {activeProjectClient?.id ? (
-                          <button type="button" className="min-w-0 text-left" onClick={openProjectClientCard}>
-                            <div className="truncate text-base font-black text-slate-900 transition hover:text-blue-600">
-                              {detailForm.client_name || "Клиент не указан"}
-                            </div>
-                            <div className="mt-1 text-xs font-semibold text-slate-400">Открыть карточку клиента</div>
-                          </button>
-                        ) : (
-                          <div className="min-w-0">
-                            <div className="truncate text-base font-black text-slate-900">{detailForm.client_name || "Клиент не привязан"}</div>
-                            <div className="mt-1 text-xs font-semibold text-slate-400">Выберите клиента из базы или создайте нового</div>
-                          </div>
-                        )}
-                        {activeProjectClient?.id ? (
-                          <button
-                            type="button"
-                            className="mt-2 inline-flex rounded-full bg-white px-3 py-1 text-xs font-black text-red-600 ring-1 ring-red-100 transition hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
-                            onClick={detachProjectClient}
-                            disabled={projectClientDetaching}
-                          >
-                            {projectClientDetaching ? "Открепляем..." : "Открепить клиента"}
-                          </button>
-                        ) : null}
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        {phoneHref(detailForm.client_phone) ? (
-                          <a
-                            className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
-                            href={phoneHref(detailForm.client_phone)}
-                            title="Позвонить клиенту"
-                            aria-label="Позвонить клиенту"
-                          >
-                            <Phone size={18} />
-                          </a>
-                        ) : (
-                          <span
-                            className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-300 ring-1 ring-slate-200"
-                            title="Телефон клиента не указан"
-                            aria-label="Телефон клиента не указан"
-                          >
-                            <Phone size={18} />
-                          </span>
-                        )}
-                        {maxMessageUrl ? (
-                          <a
-                            className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-950 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-950 hover:text-white"
-                            href={maxMessageUrl}
-                            title="Написать клиенту в MAX"
-                            aria-label="Написать клиенту в MAX"
-                          >
-                            <MessageSquare size={18} />
-                          </a>
-                        ) : (
-                          <span
-                            className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-300 ring-1 ring-slate-200"
-                            title="Телефон клиента не указан"
-                            aria-label="Телефон клиента не указан"
-                          >
-                            <MessageSquare size={18} />
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    {!activeProjectClient?.id ? (
+                {!activeProjectClient?.id ? (
+                  <div className="space-y-2 rounded-[22px] border border-slate-200 bg-slate-50/70 p-4 md:col-span-2">
+                    <Label>Выбрать клиента</Label>
                       <div className="mt-4 space-y-3">
                         <Input
                           type="text"
@@ -3704,11 +3737,21 @@ export default function Projects() {
                           </div>
                         ) : null}
                       </div>
-                    ) : null}
                   </div>
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Адрес объекта</Label>
+                ) : null}
+
+                {addressDetailsOpen ? (
+                <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/70 p-4 md:col-span-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label>Адрес объекта</Label>
+                    <button
+                      type="button"
+                      className="text-xs font-bold text-slate-400 transition hover:text-slate-700"
+                      onClick={() => setAddressDetailsOpen(false)}
+                    >
+                      Скрыть
+                    </button>
+                  </div>
                   <div className="relative">
                     <Input
                       className="pr-14"
@@ -3737,8 +3780,7 @@ export default function Projects() {
                       <MapPin size={18} />
                     </button>
                   </div>
-                  {addressDetailsOpen && (
-                    <div className="mt-3 space-y-3 rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
+                    <div className="mt-3 space-y-3 rounded-[18px] border border-slate-200 bg-white p-4 shadow-sm">
                       {hasDadataAddressSuggestions() && (addressSuggestLoading || addressSuggestions.length > 0 || addressSuggestError) ? (
                         <div className="space-y-2">
                           {addressSuggestLoading ? (
@@ -3796,8 +3838,8 @@ export default function Projects() {
                       </div>
 
                     </div>
-                  )}
                 </div>
+                ) : null}
                 <div className="space-y-2">
                   <Label>Статус</Label>
                   <Select
@@ -3819,16 +3861,9 @@ export default function Projects() {
                     inputMode="numeric"
                     placeholder="Например, 120 000"
                   />
-                  {projectReferralBonus(activeProject) > 0 ? (
-                    <div className="rounded-2xl bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
-                      <span className="mr-2 text-slate-400 line-through">{formatMoney(activeProject.total_amount)} ₽</span>
-                      <span className="text-lg font-black">{formatMoney(projectDiscountedAmount(activeProject))} ₽</span>
-                      <span className="ml-2">с учётом бонусов −{formatMoney(projectReferralBonus(activeProject))} ₽</span>
-                    </div>
-                  ) : null}
                 </div>
                 <div className="space-y-3 md:col-span-2">
-                  <label className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-black text-slate-700 ring-1 ring-slate-200/70">
+                  <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm font-black text-slate-700">
                     <input
                       type="checkbox"
                       className="h-4 w-4 rounded border-slate-300 text-blue-600 disabled:opacity-50"
@@ -3856,84 +3891,100 @@ export default function Projects() {
                 </div>
               </div>
 
-              <ProjectCustomFieldsGrid
-                fields={customFields}
-                values={detailForm.custom_fields}
-                projectId={activeProject.id}
-                onFileUpload={handleCustomFieldFileUpload}
-                onFilePreview={setCustomFieldPreview}
-                uploadingFiles={customFieldUploads}
-                onChange={(fieldId, value) =>
-                  setDetailForm((prev) => ({
-                    ...prev,
-                    custom_fields: {
-                      ...(prev.custom_fields || {}),
-                      [fieldId]: value,
-                    },
-                  }))
-                }
-              />
+              <div className={`grid gap-4 ${customFields.length ? "xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.9fr)]" : ""}`}>
+                <ProjectCustomFieldsGrid
+                  fields={customFields}
+                  values={detailForm.custom_fields}
+                  projectId={activeProject.id}
+                  onFileUpload={handleCustomFieldFileUpload}
+                  onFilePreview={setCustomFieldPreview}
+                  uploadingFiles={customFieldUploads}
+                  onChange={(fieldId, value) =>
+                    setDetailForm((prev) => ({
+                      ...prev,
+                      custom_fields: {
+                        ...(prev.custom_fields || {}),
+                        [fieldId]: value,
+                      },
+                    }))
+                  }
+                />
 
-              <div className="rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-sm font-black text-slate-900">
-                      <FolderOpen size={16} className="text-blue-600" />
-                      Папка проекта на Яндекс.Диске
+                <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4">
+                  <div className="flex items-center gap-2 text-sm font-black text-slate-900">
+                    <FolderOpen size={17} className="text-blue-600" />
+                    Яндекс.Диск и документы
+                  </div>
+                  <div className="mt-1 flex items-center gap-3">
+                    <div className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-400">
+                      {activeProject.yandex_disk_path || "Папка проекта пока не создана"}
                     </div>
-                    <div className="mt-1 truncate text-xs font-semibold text-slate-500">
-                      {activeProject.yandex_disk_path || "Папка пока не создана"}
-                    </div>
-                    {activeProject.yandex_disk_error ? (
-                      <div className="mt-2 rounded-2xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
-                        {activeProject.yandex_disk_error}
-                      </div>
+                    {activeProject.yandex_disk_web_url ? (
+                      <button
+                        type="button"
+                        className="shrink-0 text-xs font-bold text-slate-400 transition hover:text-blue-600"
+                        onClick={handleYandexDiskFolderCreate}
+                        disabled={yandexDiskCreating}
+                      >
+                        {yandexDiskCreating ? "Создаём..." : "Пересоздать"}
+                      </button>
                     ) : null}
                   </div>
-                  <div className="flex flex-col gap-2 sm:flex-row">
+                  {activeProject.yandex_disk_error ? (
+                    <div className="mt-3 rounded-2xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                      {activeProject.yandex_disk_error}
+                    </div>
+                  ) : null}
+                  <div className="mt-4 grid gap-2 sm:grid-cols-3">
                     {activeProject.yandex_disk_web_url ? (
                       <Button
                         type="button"
                         variant="secondary"
-                        className="justify-center"
+                        className="justify-center px-3"
                         onClick={() => window.open(activeProject.yandex_disk_web_url, "_blank", "noopener,noreferrer")}
                       >
                         <FolderOpen size={16} />
                         Открыть папку
                       </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="justify-center px-3"
+                        onClick={handleYandexDiskFolderCreate}
+                        disabled={yandexDiskCreating}
+                      >
+                        <FolderOpen size={16} />
+                        {yandexDiskCreating ? "Создаём..." : "Создать папку"}
+                      </Button>
+                    )}
+                    {detailForm.works_with_contract ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="justify-center px-3"
+                          onClick={() => handleDocumentDownload("contract")}
+                          disabled={documentLoading}
+                        >
+                          <FileText size={16} />
+                          {documentLoading ? "Формируем..." : "Договор"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="justify-center px-3"
+                          onClick={() => handleDocumentDownload("act")}
+                          disabled={documentLoading}
+                        >
+                          <FileText size={16} />
+                          {documentLoading ? "Формируем..." : "Акт"}
+                        </Button>
+                      </>
                     ) : null}
-                    <Button type="button" className="justify-center" onClick={handleYandexDiskFolderCreate} disabled={yandexDiskCreating}>
-                      <FolderOpen size={16} />
-                      {yandexDiskCreating ? "Создаём..." : activeProject.yandex_disk_web_url ? "Пересоздать" : "Создать папку"}
-                    </Button>
                   </div>
                 </div>
               </div>
-
-              {detailForm.works_with_contract ? (
-                <div className="flex flex-wrap justify-end gap-2 rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="justify-center"
-                    onClick={() => handleDocumentDownload("contract")}
-                    disabled={documentLoading}
-                  >
-                    <FileText size={16} />
-                    {documentLoading ? "Формируем..." : "Сформировать договор"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="justify-center"
-                    onClick={() => handleDocumentDownload("act")}
-                    disabled={documentLoading}
-                  >
-                    <FileText size={16} />
-                    {documentLoading ? "Формируем..." : "Сформировать акт"}
-                  </Button>
-                </div>
-              ) : null}
             </div>
 
             {detailError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{detailError}</div>}
@@ -3965,76 +4016,70 @@ export default function Projects() {
               </div>
             ) : null}
 
-            <div className="flex flex-wrap gap-2 rounded-[28px] bg-slate-100 p-1">
-              <Button
+            <div className="no-scrollbar flex gap-2 overflow-x-auto border-b border-slate-200">
+              <button
                 type="button"
-                variant={detailTab === "comments" ? "primary" : "ghost"}
-                className="px-4"
+                className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-bold transition ${
+                  detailTab === "comments"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-400 hover:text-slate-700"
+                }`}
                 onClick={() => setDetailTab("comments")}
               >
                 <MessageSquare size={16} />
                 Комментарии
-              </Button>
-              <Button
+              </button>
+              <button
                 type="button"
-                variant={detailTab === "tasks" ? "primary" : "ghost"}
-                className="px-4"
+                className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-bold transition ${
+                  detailTab === "tasks"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-400 hover:text-slate-700"
+                }`}
                 onClick={() => setDetailTab("tasks")}
               >
                 <ListTodo size={16} />
                 Задачи
-              </Button>
-              <Button
+              </button>
+              <button
                 type="button"
-                variant={detailTab === "finances" ? "primary" : "ghost"}
-                className="px-4"
+                className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-bold transition ${
+                  detailTab === "finances"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-400 hover:text-slate-700"
+                }`}
                 onClick={() => setDetailTab("finances")}
               >
                 <Wallet size={16} />
                 Финансы
-              </Button>
-              <Button
+              </button>
+              <button
                 type="button"
-                variant={detailTab === "activity" ? "primary" : "ghost"}
-                className="px-4"
+                className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-bold transition ${
+                  detailTab === "activity"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-400 hover:text-slate-700"
+                }`}
                 onClick={() => setDetailTab("activity")}
               >
                 <History size={16} />
                 Лента
-              </Button>
+              </button>
             </div>
 
             {detailTab === "comments" ? (
-              <Card className="border border-slate-100 shadow-none ring-0">
-                <CardHeader>
-                  <div className="text-lg font-black tracking-tight text-slate-900">Комментарии</div>
-                </CardHeader>
-                <CardBody className="space-y-5">
-                  <form className="space-y-3" onSubmit={submitComment}>
-                    <textarea
-                      className="min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
-                      value={commentText}
-                      onChange={(event) => setCommentText(event.target.value)}
-                      placeholder="Например: согласовали замер на пятницу, ждём предоплату..."
-                    />
-
-                    {commentError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{commentError}</div>}
-
-                    <Button type="submit" disabled={commentSaving}>
-                      {commentSaving ? "Сохраняем..." : "Добавить комментарий"}
-                    </Button>
-                  </form>
-
-                  <div className="space-y-4 border-t border-slate-100 pt-5">
+              <Card className="overflow-hidden border border-slate-200 shadow-none ring-0">
+                <CardBody className="space-y-4 p-4 sm:p-5">
+                  <div className="space-y-3">
                     {commentsLoading ? (
-                      <div className="rounded-[24px] bg-slate-50 px-4 py-6 text-sm text-slate-500">Загружаем комментарии...</div>
+                      <div className="rounded-[20px] bg-slate-50 px-4 py-5 text-sm text-slate-500">Загружаем комментарии...</div>
                     ) : comments.length === 0 ? (
-                      <div className="rounded-[24px] bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                      <div className="rounded-[20px] bg-slate-50 px-4 py-5 text-sm text-slate-500">
                         Пока нет комментариев.
                       </div>
                     ) : (
                       comments.map((comment) => (
-                        <div key={comment.id} className="rounded-[24px] border border-slate-100 bg-slate-50 px-4 py-4">
+                        <div key={comment.id} className="rounded-[20px] border border-slate-200 bg-slate-50/70 px-4 py-3">
                           <div className="flex items-start justify-between gap-4">
                             <div>
                               <div className="text-sm font-black text-slate-900">{comment.author_name || `Пользователь #${comment.author}`}</div>
@@ -4082,6 +4127,21 @@ export default function Projects() {
                       ))
                     )}
                   </div>
+
+                  <form className="border-t border-slate-100 pt-4" onSubmit={submitComment}>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                      <textarea
+                        className="min-h-12 flex-1 resize-y rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+                        value={commentText}
+                        onChange={(event) => setCommentText(event.target.value)}
+                        placeholder="Написать комментарий..."
+                      />
+                      <Button type="submit" className="h-12 justify-center sm:shrink-0" disabled={commentSaving}>
+                        {commentSaving ? "Сохраняем..." : "Отправить"}
+                      </Button>
+                    </div>
+                    {commentError ? <div className="mt-3 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{commentError}</div> : null}
+                  </form>
                 </CardBody>
               </Card>
             ) : detailTab === "tasks" ? (
