@@ -1,9 +1,14 @@
 from decimal import Decimal
+from io import BytesIO
+from pathlib import Path
+from types import SimpleNamespace
 
+from django.core.files import File
+from pypdf import PdfReader
 from rest_framework.test import APITestCase
 
 from .models import CalculatorQuote, Client, Project, ProjectStatus, User, Workspace
-from .views import build_project_document_values
+from .views import build_project_document_values, render_pdf_template
 
 
 class ProjectDocumentTests(APITestCase):
@@ -72,3 +77,18 @@ class ProjectDocumentTests(APITestCase):
 
         self.assertEqual(values["QUOTE_NUMBER"], "")
         self.assertIn("Душевая – 1 шт. – 81 000 руб.", values["QUOTE_ITEMS"])
+
+    def test_contract_template_renders_with_cyrillic_fields(self):
+        self.client_card.contract_full_name = "Иванов Иван Иванович"
+        self.client_card.save(update_fields=["contract_full_name", "updated_at"])
+        template_path = Path(__file__).resolve().parents[2] / "output" / "pdf" / "Шаблон договора CRM.pdf"
+
+        with template_path.open("rb") as template_stream:
+            template = SimpleNamespace(file=File(template_stream, name=template_path.name))
+            rendered = render_pdf_template(template, self.project)
+
+        reader = PdfReader(BytesIO(rendered))
+        fields = reader.get_fields() or {}
+        self.assertEqual(len(reader.pages), 4)
+        self.assertEqual(fields["CLIENT_FULL_NAME"].get("/V"), "Иванов Иван Иванович")
+        self.assertEqual(fields["PROJECT_NUMBER"].get("/V"), "0012")

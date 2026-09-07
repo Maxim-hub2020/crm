@@ -1152,7 +1152,12 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         try:
             content = render_pdf_template(template, project)
-        except ImportError:
+        except ModuleNotFoundError as exc:
+            if exc.name != "pypdf":
+                return Response(
+                    {"detail": f"Не удалось сформировать PDF: отсутствует модуль {exc.name}."},
+                    status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
             return Response(
                 {"detail": "На backend не установлена библиотека pypdf. Выполните pip install -r requirements.txt."},
                 status=drf_status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1168,11 +1173,15 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
 def render_pdf_template(template, project):
     from pypdf import PdfReader, PdfWriter
-    from pypdf._font import Font
+
+    try:
+        from pypdf._font import Font
+    except ImportError:
+        Font = None
 
     # pypdf 6.4 may expose a Type0 CMap metadata entry as an integer key and
     # then try to encode it as text while building a field appearance.
-    if not getattr(Font, "_crm_type0_cmap_workaround", False):
+    if Font is not None and not getattr(Font, "_crm_type0_cmap_workaround", False):
         original_from_font_resource = Font.from_font_resource.__func__
 
         def from_font_resource_without_metadata(cls, font_resource):
