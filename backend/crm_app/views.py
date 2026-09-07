@@ -1168,14 +1168,31 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
 def render_pdf_template(template, project):
     from pypdf import PdfReader, PdfWriter
+    from pypdf._font import Font
+
+    # pypdf 6.4 may expose a Type0 CMap metadata entry as an integer key and
+    # then try to encode it as text while building a field appearance.
+    if not getattr(Font, "_crm_type0_cmap_workaround", False):
+        original_from_font_resource = Font.from_font_resource.__func__
+
+        def from_font_resource_without_metadata(cls, font_resource):
+            font = original_from_font_resource(cls, font_resource)
+            font.character_map = {
+                key: value
+                for key, value in font.character_map.items()
+                if isinstance(key, str)
+            }
+            return font
+
+        Font.from_font_resource = classmethod(from_font_resource_without_metadata)
+        Font._crm_type0_cmap_workaround = True
 
     values = build_project_document_values(project)
 
     with template.file.open("rb") as file_obj:
         reader = PdfReader(file_obj)
         writer = PdfWriter()
-        for page in reader.pages:
-            writer.add_page(page)
+        writer.clone_document_from_reader(reader)
 
         if "/AcroForm" in reader.trailer["/Root"]:
             writer.set_need_appearances_writer()
@@ -1219,17 +1236,17 @@ def build_project_document_values(project):
             line_total = Decimal(str(amount)) * Decimal(str(quantity)) if amount not in (None, "") else None
         except (InvalidOperation, TypeError, ValueError):
             line_total = amount
-        amount_label = f" — {_document_money(line_total)}" if line_total not in (None, "") else ""
-        item_lines.append(f"{index}. {title} — {quantity} шт.{amount_label}")
+        amount_label = f" – {_document_money(line_total)}" if line_total not in (None, "") else ""
+        item_lines.append(f"{index}. {title} – {quantity} шт.{amount_label}")
 
     if not item_lines:
-        item_lines.append(f"1. {project.title or 'Изделие'} — 1 шт. — {_document_money(project.total_amount)}")
+        item_lines.append(f"1. {project.title or 'Изделие'} – 1 шт. – {_document_money(project.total_amount)}")
 
     full_name = (client.contract_full_name if client else "").strip()
     client_name = (client.name if client else project.client_name) or ""
     quote_number = str(getattr(quote, "number", "") or "")
     quote_items = "\n".join(item_lines)
-    return {
+    values = {
         "CLIENT_NAME": full_name or client_name,
         "CLIENT_FULL_NAME": full_name,
         "CLIENT_SHORT_NAME": client_name,
@@ -1243,8 +1260,13 @@ def build_project_document_values(project):
         "QUOTE_ITEMS": quote_items,
         "CONTRACT_SUBJECT": quote_items,
         "DOCUMENT_DATE": timezone.localdate().strftime("%d.%m.%Y"),
+        "DOC_DATE": timezone.localdate().strftime("%d.%m.%Y"),
         "REMARKS": "Замечания отсутствуют",
     }
+    for field_name in ("CLIENT_FULL_NAME", "CLIENT_ADDRESS", "CLIENT_PHONE"):
+        for duplicate_index in range(2, 6):
+            values[f"{field_name}_{duplicate_index}"] = values[field_name]
+    return values
 
 
 class ClientViewSet(viewsets.ModelViewSet):

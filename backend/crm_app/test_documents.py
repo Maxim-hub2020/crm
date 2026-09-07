@@ -58,9 +58,10 @@ class ProjectDocumentTests(APITestCase):
         values = build_project_document_values(self.project)
 
         self.assertEqual(values["CLIENT_FULL_NAME"], "Иванов Иван Иванович")
+        self.assertEqual(values["CLIENT_FULL_NAME_2"], "Иванов Иван Иванович")
         self.assertEqual(values["PROJECT_NUMBER"], "0012")
         self.assertEqual(values["QUOTE_NUMBER"], "1027")
-        self.assertIn("Стеклянная душевая — 2 шт. — 80 000 руб.", values["QUOTE_ITEMS"])
+        self.assertIn("Стеклянная душевая – 2 шт. – 80 000 руб.", values["QUOTE_ITEMS"])
         self.assertEqual(values["DEAL_VALUE"], "81 000 руб.")
 
     def test_document_values_fall_back_to_project_without_quote(self):
@@ -70,4 +71,4 @@ class ProjectDocumentTests(APITestCase):
         values = build_project_document_values(self.project)
 
         self.assertEqual(values["QUOTE_NUMBER"], "")
-        self.assertIn("Душевая — 1 шт. — 81 000 руб.", values["QUOTE_ITEMS"])
+        self.assertIn("Душевая – 1 шт. – 81 000 руб.", values["QUOTE_ITEMS"])
