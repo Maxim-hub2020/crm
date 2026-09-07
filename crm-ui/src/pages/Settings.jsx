@@ -1072,9 +1072,13 @@ export default function Settings() {
 
         <SettingsCard title="Шаблоны документов" icon={<SettingsIcon size={16} />}>
           <p className="mb-4 text-sm text-gray-500">
-            Загрузите PDF-шаблоны для договоров и актов. Для автозаполнения используйте поля PDF:
-            <code className="ml-1">CLIENT_NAME</code>, <code>CLIENT_ADDRESS</code>, <code>DEAL_VALUE</code>.
+            Загрузите заполняемые PDF-шаблоны для договоров и актов. CRM подставит данные в именованные поля PDF.
           </p>
+          <div className="mb-4 rounded-2xl bg-slate-50 px-4 py-3 text-xs font-semibold leading-6 text-slate-600">
+            <div><code>CLIENT_FULL_NAME</code> — ФИО, <code>CLIENT_PHONE</code> — телефон, <code>CLIENT_ADDRESS</code> — адрес.</div>
+            <div><code>PROJECT_NUMBER</code> — номер проекта, <code>PROJECT_TITLE</code> — название, <code>DEAL_VALUE</code> — сумма.</div>
+            <div><code>QUOTE_NUMBER</code> — номер КП, <code>QUOTE_ITEMS</code> — позиции КП, <code>DOCUMENT_DATE</code> — дата.</div>
+          </div>
           <div className="space-y-4">
             <TemplateUploader
               label="Шаблон договора"

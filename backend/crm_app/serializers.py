@@ -84,6 +84,7 @@ class ClientSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
+            "contract_full_name",
             "phone",
             "email",
             "address",
@@ -100,6 +101,7 @@ class ClientSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["bonus_balance", "promo_code", "project_count", "created_at", "updated_at"]
         extra_kwargs = {
+            "contract_full_name": {"required": False, "allow_blank": True},
             "phone": {"required": False, "allow_blank": True},
             "email": {"required": False, "allow_blank": True, "allow_null": True},
             "address": {"required": False, "allow_blank": True, "allow_null": True},

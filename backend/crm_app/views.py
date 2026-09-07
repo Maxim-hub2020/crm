@@ -1129,9 +1129,20 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         works_with_contract = bool(project.client.works_with_contract) if project.client else bool(project.works_with_contract)
 
-        if document_type == DocumentTemplate.Type.CONTRACT and not works_with_contract:
+        if not works_with_contract:
             return Response(
-                {"detail": "Для этого клиента не включена работа по договору."},
+                {"detail": "Для этого клиента не включена работа по договору и актам."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not project.client:
+            return Response(
+                {"detail": "Сначала прикрепите к проекту карточку клиента."},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+        if not project.client.contract_full_name.strip():
+            return Response(
+                {"detail": "Укажите ФИО клиента для договора.", "missing_fields": ["contract_full_name"]},
                 status=drf_status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1158,17 +1169,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
 def render_pdf_template(template, project):
     from pypdf import PdfReader, PdfWriter
 
-    client = project.client
-    values = {
-        "CLIENT_NAME": (client.name if client else project.client_name) or "",
-        "CLIENT_PHONE": (client.phone if client else project.client_phone) or "",
-        "CLIENT_EMAIL": (client.email if client else project.client_email) or "",
-        "CLIENT_ADDRESS": (client.address if client else project.object_address) or "",
-        "DEAL_VALUE": str(project.total_amount or ""),
-        "PROJECT_TITLE": project.title or project.client_name or "",
-        "DOCUMENT_DATE": timezone.localdate().strftime("%d.%m.%Y"),
-        "REMARKS": "Замечания отсутствуют",
-    }
+    values = build_project_document_values(project)
 
     with template.file.open("rb") as file_obj:
         reader = PdfReader(file_obj)
@@ -1184,6 +1185,66 @@ def render_pdf_template(template, project):
         output = BytesIO()
         writer.write(output)
         return output.getvalue()
+
+
+def _document_money(value):
+    if value in (None, ""):
+        return ""
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return str(value)
+    rendered = f"{amount:,.2f}".replace(",", " ")
+    rendered = rendered[:-3] if rendered.endswith(".00") else rendered.replace(".", ",")
+    return f"{rendered} руб."
+
+
+def build_project_document_values(project):
+    client = project.client
+    quote = CalculatorQuote.objects.filter(project=project).first()
+    payload = quote.payload if quote and isinstance(quote.payload, dict) else {}
+    raw_items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    item_lines = []
+    for index, item in enumerate((item for item in raw_items if isinstance(item, dict)), start=1):
+        title = str(
+            item.get("positionName")
+            or item.get("mirrorTitle")
+            or item.get("constructionTitle")
+            or "Изделие"
+        ).strip()
+        quantity = item.get("quantity") or 1
+        result = item.get("result") if isinstance(item.get("result"), dict) else {}
+        amount = result.get("total")
+        try:
+            line_total = Decimal(str(amount)) * Decimal(str(quantity)) if amount not in (None, "") else None
+        except (InvalidOperation, TypeError, ValueError):
+            line_total = amount
+        amount_label = f" — {_document_money(line_total)}" if line_total not in (None, "") else ""
+        item_lines.append(f"{index}. {title} — {quantity} шт.{amount_label}")
+
+    if not item_lines:
+        item_lines.append(f"1. {project.title or 'Изделие'} — 1 шт. — {_document_money(project.total_amount)}")
+
+    full_name = (client.contract_full_name if client else "").strip()
+    client_name = (client.name if client else project.client_name) or ""
+    quote_number = str(getattr(quote, "number", "") or "")
+    quote_items = "\n".join(item_lines)
+    return {
+        "CLIENT_NAME": full_name or client_name,
+        "CLIENT_FULL_NAME": full_name,
+        "CLIENT_SHORT_NAME": client_name,
+        "CLIENT_PHONE": (client.phone if client else project.client_phone) or "",
+        "CLIENT_EMAIL": (client.email if client else project.client_email) or "",
+        "CLIENT_ADDRESS": (client.address if client else project.object_address) or "",
+        "DEAL_VALUE": _document_money(project.total_amount),
+        "PROJECT_NUMBER": f"{project.order_number:04d}" if project.order_number else "",
+        "PROJECT_TITLE": project.title or project.client_name or "",
+        "QUOTE_NUMBER": quote_number,
+        "QUOTE_ITEMS": quote_items,
+        "CONTRACT_SUBJECT": quote_items,
+        "DOCUMENT_DATE": timezone.localdate().strftime("%d.%m.%Y"),
+        "REMARKS": "Замечания отсутствуют",
+    }
 
 
 class ClientViewSet(viewsets.ModelViewSet):

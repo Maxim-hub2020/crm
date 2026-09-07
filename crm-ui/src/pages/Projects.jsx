@@ -146,6 +146,7 @@ function createEmptyTaskForm() {
 function createClientEditForm(client = {}) {
   return {
     name: client.name || client.client_name || "",
+    contract_full_name: client.contract_full_name || "",
     phone: client.phone || client.client_phone || "",
     email: client.email || client.client_email || "",
     address: client.address || client.object_address || "",
@@ -1171,6 +1172,9 @@ export default function Projects() {
   const selectedAddressValueRef = useRef("");
   const loadedProjectIdRef = useRef(null);
   const [documentLoading, setDocumentLoading] = useState(false);
+  const [documentIdentityPrompt, setDocumentIdentityPrompt] = useState({ open: false, type: "contract", fullName: "" });
+  const [documentIdentitySaving, setDocumentIdentitySaving] = useState(false);
+  const [documentIdentityError, setDocumentIdentityError] = useState("");
   const [yandexDiskCreating, setYandexDiskCreating] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [customFieldUploads, setCustomFieldUploads] = useState({});
@@ -2136,6 +2140,7 @@ export default function Projects() {
 
       const updated = await updateClient(activeProjectClient.id, {
         name: projectClientForm.name.trim(),
+        contract_full_name: projectClientForm.contract_full_name.trim(),
         phone: normalizeOptionalClientPhone(projectClientForm.phone),
         email: projectClientForm.email.trim() || null,
         address: projectClientForm.address.trim() || null,
@@ -2594,14 +2599,8 @@ export default function Projects() {
     }
   }
 
-  async function handleDocumentDownload(documentType = "contract") {
+  async function downloadDocumentFile(documentType) {
     if (!activeProject) return;
-
-    if (documentType === "contract" && !detailForm.works_with_contract) {
-      setDetailError("Включите «Работает по договору» в карточке клиента, затем сформируйте договор.");
-      return;
-    }
-
     setDetailError("");
     setDocumentLoading(true);
 
@@ -2629,6 +2628,58 @@ export default function Projects() {
       setDetailError(message);
     } finally {
       setDocumentLoading(false);
+    }
+  }
+
+  async function handleDocumentDownload(documentType = "contract") {
+    if (!activeProject) return;
+    if (!detailForm.works_with_contract) {
+      setDetailError("Включите «Работает по договору» в карточке клиента, затем сформируйте документ.");
+      return;
+    }
+    if (!activeProjectClient?.id) {
+      setDetailError("Сначала прикрепите к проекту карточку клиента.");
+      return;
+    }
+    if (!String(activeProjectClient.contract_full_name || "").trim()) {
+      const suggestedName = String(activeProjectClient.name || "").trim().split(/\s+/).length >= 2
+        ? activeProjectClient.name
+        : "";
+      setDocumentIdentityError("");
+      setDocumentIdentityPrompt({ open: true, type: documentType, fullName: suggestedName });
+      return;
+    }
+    await downloadDocumentFile(documentType);
+  }
+
+  async function submitDocumentIdentity(event) {
+    event.preventDefault();
+    const fullName = documentIdentityPrompt.fullName.trim();
+    if (!fullName) {
+      setDocumentIdentityError("Укажите полное ФИО клиента.");
+      return;
+    }
+    if (!activeProjectClient?.id) return;
+
+    setDocumentIdentitySaving(true);
+    setDocumentIdentityError("");
+    try {
+      const updated = await updateClient(activeProjectClient.id, { contract_full_name: fullName });
+      setClients((prev) => prev.map((client) => (client.id === updated.id ? updated : client)));
+      setProjects((prev) => prev.map((project) => {
+        const clientId = project.client || project.client_info?.id;
+        return String(clientId || "") === String(updated.id)
+          ? { ...project, client_info: updated }
+          : project;
+      }));
+      setProjectClientForm(createClientEditForm(updated));
+      const documentType = documentIdentityPrompt.type;
+      setDocumentIdentityPrompt({ open: false, type: "contract", fullName: "" });
+      await downloadDocumentFile(documentType);
+    } catch (error) {
+      setDocumentIdentityError(extractApiErrorMessage(error, "Не удалось сохранить ФИО клиента."));
+    } finally {
+      setDocumentIdentitySaving(false);
     }
   }
 
@@ -3860,7 +3911,7 @@ export default function Projects() {
               </div>
 
               {detailForm.works_with_contract ? (
-                <div className="flex justify-end rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
+                <div className="flex flex-wrap justify-end gap-2 rounded-[24px] bg-slate-50 px-4 py-3 ring-1 ring-slate-200/70">
                   <Button
                     type="button"
                     variant="secondary"
@@ -3870,6 +3921,16 @@ export default function Projects() {
                   >
                     <FileText size={16} />
                     {documentLoading ? "Формируем..." : "Сформировать договор"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="justify-center"
+                    onClick={() => handleDocumentDownload("act")}
+                    disabled={documentLoading}
+                  >
+                    <FileText size={16} />
+                    {documentLoading ? "Формируем..." : "Сформировать акт"}
                   </Button>
                 </div>
               ) : null}
@@ -4538,6 +4599,17 @@ export default function Projects() {
                 autoComplete="name"
               />
             </div>
+            {projectClientForm.works_with_contract ? (
+              <div className="space-y-2 sm:col-span-2">
+                <Label>ФИО для договора и акта</Label>
+                <Input
+                  value={projectClientForm.contract_full_name}
+                  onChange={(event) => setProjectClientForm((prev) => ({ ...prev, contract_full_name: event.target.value }))}
+                  placeholder="Иванов Иван Иванович"
+                  autoComplete="name"
+                />
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label>Телефон</Label>
               <Input
@@ -4592,6 +4664,50 @@ export default function Projects() {
             </Button>
             <Button type="submit" disabled={projectClientSaving}>
               {projectClientSaving ? "Сохраняем..." : "Сохранить клиента"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={documentIdentityPrompt.open}
+        title="ФИО для документа"
+        onClose={() => {
+          if (!documentIdentitySaving) {
+            setDocumentIdentityPrompt({ open: false, type: "contract", fullName: "" });
+            setDocumentIdentityError("");
+          }
+        }}
+        widthClassName="max-w-lg"
+      >
+        <form className="space-y-4" onSubmit={submitDocumentIdentity}>
+          <p className="text-sm font-semibold leading-6 text-slate-600">
+            В карточке клиента нет полного ФИО. Оно сохранится у клиента и будет использовано в договоре и акте.
+          </p>
+          <div className="space-y-2">
+            <Label>Фамилия, имя и отчество</Label>
+            <Input
+              value={documentIdentityPrompt.fullName}
+              onChange={(event) => setDocumentIdentityPrompt((prev) => ({ ...prev, fullName: event.target.value }))}
+              placeholder="Иванов Иван Иванович"
+              autoComplete="name"
+              autoFocus
+            />
+          </div>
+          {documentIdentityError ? (
+            <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{documentIdentityError}</div>
+          ) : null}
+          <div className="flex justify-end gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={documentIdentitySaving}
+              onClick={() => setDocumentIdentityPrompt({ open: false, type: "contract", fullName: "" })}
+            >
+              Отмена
+            </Button>
+            <Button type="submit" disabled={documentIdentitySaving}>
+              {documentIdentitySaving ? "Сохраняем..." : "Сохранить и сформировать"}
             </Button>
           </div>
         </form>

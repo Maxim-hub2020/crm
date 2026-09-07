@@ -54,6 +54,7 @@ function paymentSignedAmount(payment) {
 function createClientEditForm(client = {}) {
   return {
     name: client.name || "",
+    contract_full_name: client.contract_full_name || "",
     phone: client.phone || "",
     email: client.email || "",
     address: client.address || "",
@@ -279,6 +280,7 @@ export default function Clients() {
         return {
           id: client.id,
           name: client.name,
+          contract_full_name: client.contract_full_name || "",
           phone: client.phone,
           email: client.email,
           address: client.address,
@@ -350,6 +352,7 @@ export default function Clients() {
 
       const updated = await updateClient(selectedClient.id, {
         name: editForm.name.trim(),
+        contract_full_name: editForm.contract_full_name.trim(),
         phone: normalizeOptionalClientPhone(editForm.phone),
         email: editForm.email.trim() || null,
         address: editForm.address.trim() || null,
@@ -416,6 +419,7 @@ export default function Clients() {
 
       const created = await createClient({
         name: createForm.name.trim(),
+        contract_full_name: createForm.contract_full_name.trim(),
         phone: normalizeOptionalClientPhone(createForm.phone),
         email: createForm.email.trim() || null,
         address: createForm.address.trim() || null,
@@ -521,6 +525,11 @@ export default function Clients() {
                   <div className="grid gap-3 md:grid-cols-2">
                     <InfoRow icon={Phone} label="Телефон" value={selectedClient.phone} href={selectedClient.phone ? `tel:${selectedClient.phone}` : ""} />
                     <InfoRow icon={Mail} label="Email" value={selectedClient.email} href={selectedClient.email ? `mailto:${selectedClient.email}` : ""} />
+                    {selectedClient.worksWithContract ? (
+                      <div className="md:col-span-2">
+                        <InfoRow icon={Edit3} label="ФИО для договора" value={selectedClient.contract_full_name} />
+                      </div>
+                    ) : null}
                     <InfoRow icon={Gift} label="Бонусный счёт" value={`${formatMoney(selectedClient.bonusBalance)} ₽`} />
                     <InfoRow icon={Ticket} label="Промокод" value={selectedClient.promoCode || "Недоступен без телефона"} />
                     <div className="md:col-span-2">
@@ -567,6 +576,17 @@ export default function Clients() {
                     />
                     Работает по договору
                   </label>
+                  {editForm.works_with_contract ? (
+                    <div className="space-y-2">
+                      <Label>ФИО для договора и акта</Label>
+                      <Input
+                        value={editForm.contract_full_name}
+                        onChange={(event) => setEditForm((prev) => ({ ...prev, contract_full_name: event.target.value }))}
+                        placeholder="Иванов Иван Иванович"
+                        autoComplete="name"
+                      />
+                    </div>
+                  ) : null}
                   <div className="flex justify-end gap-3">
                     <Button type="button" variant="secondary" disabled={savingClient} onClick={() => setClientEditMode(false)}>
                       Отмена
@@ -648,6 +668,17 @@ export default function Clients() {
             />
             Работает по договору
           </label>
+          {createForm.works_with_contract ? (
+            <div className="space-y-2">
+              <Label>ФИО для договора и акта</Label>
+              <Input
+                value={createForm.contract_full_name}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, contract_full_name: event.target.value }))}
+                placeholder="Можно заполнить позже"
+                autoComplete="name"
+              />
+            </div>
+          ) : null}
 
           {error && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
