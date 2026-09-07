@@ -13,6 +13,7 @@ class Command(BaseCommand):
         skipped = 0
         quote_ids = CalculatorQuote.objects.filter(
             lead_deleted=False,
+            project_sync_disabled=False,
             project__isnull=True,
         ).exclude(quote_id__startswith="public-").values_list("pk", flat=True)
         for quote_pk in quote_ids.iterator():

@@ -1,6 +1,7 @@
 from copy import deepcopy
 from decimal import Decimal
 from io import StringIO
+from unittest.mock import patch
 
 from django.core.management import call_command
 from rest_framework.test import APITestCase
@@ -109,16 +110,54 @@ class CalculatorQuoteProjectTests(APITestCase):
         self.assertEqual(Project.objects.count(), 2)
         self.assertEqual(Project.objects.filter(workspace=other).get().status, "lead")
 
-    def test_deleting_generated_project_prevents_offline_resurrection(self):
+    def test_deleting_generated_project_keeps_quote_archive_and_prevents_resurrection(self):
         self.sync()
         project = Project.objects.get()
         response = self.client.delete(f"/api/projects/{project.pk}/")
         self.assertEqual(response.status_code, 204)
         quote = CalculatorQuote.objects.get()
-        self.assertTrue(quote.lead_deleted)
-        self.assertEqual(quote.payload, {})
+        self.assertFalse(quote.lead_deleted)
+        self.assertTrue(quote.project_sync_disabled)
+        self.assertEqual(quote.payload, self.quote)
+        archive = self.client.get("/api/calculator-quotes/")
+        self.assertEqual(archive.status_code, 200)
+        self.assertEqual(archive.data["quotes"][0]["id"], self.quote["id"])
         self.quote["updatedAt"] = "2026-09-03T10:00:00Z"
         self.sync()
+        self.assertFalse(Project.objects.exists())
+
+    @patch("crm_app.views.ensure_project_disk_folder")
+    def test_disk_folder_is_created_only_after_project_leaves_applications(self, ensure_folder):
+        next_status = ProjectStatus.objects.create(
+            workspace=self.workspace, code="measurement", name="Замер", sort_order=20,
+        )
+        ProjectStatus.objects.create(
+            workspace=self.workspace, code="completed", name="Завершён", sort_order=30,
+        )
+        self.sync()
+        project = Project.objects.get()
+        ensure_folder.assert_not_called()
+
+        response = self.client.patch(
+            f"/api/projects/{project.pk}/", {"status": next_status.code}, format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        ensure_folder.assert_called_once()
+
+    def test_legacy_deleted_quote_can_be_restored_without_recreating_project(self):
+        CalculatorQuote.objects.create(
+            workspace=self.workspace,
+            quote_id=self.quote["id"],
+            lead_deleted=True,
+            project_sync_disabled=True,
+            payload={},
+            created_by=self.user,
+            updated_by=self.user,
+        )
+        self.sync()
+        quote = CalculatorQuote.objects.get()
+        self.assertFalse(quote.lead_deleted)
+        self.assertEqual(quote.payload, self.quote)
         self.assertFalse(Project.objects.exists())
 
     def test_public_quote_still_uses_requests_module(self):

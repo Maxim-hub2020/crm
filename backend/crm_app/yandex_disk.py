@@ -254,6 +254,15 @@ def is_archive_project_status(project):
     return any(marker in status_text for marker in ("заверш", "закры", "completed", "closed", "done", "finish"))
 
 
+def is_application_project_status(project):
+    status = ProjectStatus.objects.filter(workspace=project.workspace, code=project.status).first()
+    values = {
+        str(project.status or "").strip().casefold(),
+        str(getattr(status, "name", "") or "").strip().casefold(),
+    }
+    return bool(values.intersection({"заявка", "заявки", "application", "applications", "lead", "leads"}))
+
+
 def get_yandex_disk_settings(workspace):
     settings, _created = YandexDiskSettings.objects.get_or_create(workspace=workspace)
     return settings

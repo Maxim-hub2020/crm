@@ -90,6 +90,7 @@ from .yandex_disk import (
     connect_yandex_disk_with_code,
     connect_yandex_disk_with_manual_code,
     ensure_project_disk_folder,
+    is_application_project_status,
     is_archive_project_status,
     list_disk_folders,
     yandex_disk_oauth_configured,
@@ -666,10 +667,16 @@ def calculator_quotes_view(request):
                 },
             )
             incoming_updated_at = _calculator_quote_updated_at(payload)
+            restoring_legacy_archive = False
             if record.lead_deleted:
-                continue
+                # Older versions incorrectly deleted an internal quote together with its CRM project.
+                # A calculator that still has the quote locally may safely restore the archive entry.
+                if record.quote_id.startswith("public-") or not record.project_sync_disabled:
+                    continue
+                record.lead_deleted = False
+                restoring_legacy_archive = True
             current_updated_at = _calculator_quote_updated_at(record.payload) or record.updated_at
-            if not created and (not incoming_updated_at or incoming_updated_at < current_updated_at):
+            if not restoring_legacy_archive and not created and (not incoming_updated_at or incoming_updated_at < current_updated_at):
                 sync_quote_lead(record)
                 continue
             record.number = str(payload.get("number") or "")[:32]
@@ -977,7 +984,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         user = self.request.user
         project = serializer.save(manager=user, workspace=workspace)
         apply_task_templates_for_project(project, actor=user)
-        ensure_project_disk_folder(project, actor=user)
+        if not is_application_project_status(project):
+            ensure_project_disk_folder(project, actor=user)
         create_audit_log(
             user,
             "project",
@@ -991,11 +999,14 @@ class ProjectViewSet(viewsets.ModelViewSet):
         instance = serializer.instance
         before = snapshot_model(instance, ["id", "title", "client_name", "client_phone", "object_address", "total_amount", "status"])
         previous_status = instance.status
+        was_application = is_application_project_status(instance)
         project = serializer.save()
         if previous_status != project.status:
             apply_task_templates_for_project(project, actor=self.request.user)
             if is_archive_project_status(project):
                 archive_project_disk_folder(project, actor=self.request.user)
+            elif was_application and not is_application_project_status(project):
+                ensure_project_disk_folder(project, actor=self.request.user)
         create_audit_log(
             self.request.user,
             "project",
@@ -1010,10 +1021,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         before = snapshot_model(instance, ["id", "title", "client_name", "client_phone", "object_address", "total_amount", "status"])
         calculator_quote = CalculatorQuote.objects.filter(project=instance).first()
         if calculator_quote:
-            calculator_quote.lead_deleted = True
-            calculator_quote.payload = {}
-            calculator_quote.number = ""
-            calculator_quote.save(update_fields=["lead_deleted", "payload", "number", "updated_at"])
+            calculator_quote.project_sync_disabled = True
+            calculator_quote.save(update_fields=["project_sync_disabled", "updated_at"])
         reverse_project_bonus_effects(instance, actor=self.request.user)
         create_audit_log(
             self.request.user,

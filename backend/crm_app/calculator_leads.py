@@ -8,7 +8,6 @@ from django.db import IntegrityError, transaction
 from .models import CalculatorLead, CalculatorQuote, Client, Project, ProjectStatus, User
 from .phones import normalize_russian_phone
 from .workflow import apply_task_templates_for_project, create_audit_log, snapshot_model
-from .yandex_disk import ensure_project_disk_folder
 
 
 def _dict(value):
@@ -134,7 +133,6 @@ def _sync_internal_quote_project(quote, payload, customer, name, phone, amount, 
     CalculatorLead.objects.filter(quote=quote).delete()
     if created:
         apply_task_templates_for_project(project, actor=manager)
-        ensure_project_disk_folder(project, actor=manager)
         create_audit_log(
             manager,
             "project",
@@ -161,6 +159,8 @@ def sync_quote_lead(quote):
         return None
     configuration["customer_note"] = str(customer.get("note") or "")[:5000]
     if not quote.quote_id.startswith("public-"):
+        if quote.project_sync_disabled:
+            return None
         return _sync_internal_quote_project(quote, payload, customer, name, phone, amount, configuration)
     # Public-site requests predate this link. Attach them instead of duplicating them.
     lead = CalculatorLead.objects.filter(quote=quote).first()

@@ -502,6 +502,7 @@ class CalculatorQuote(models.Model):
     )
     quote_id = models.CharField(max_length=64)
     lead_deleted = models.BooleanField(default=False)
+    project_sync_disabled = models.BooleanField(default=False)
     project = models.OneToOneField(
         Project,
         on_delete=models.SET_NULL,
