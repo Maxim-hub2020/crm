@@ -1,0 +1,279 @@
+name: Deploy CRM to TimeWeb
+
+on:
+  push:
+    branches:
+      - main
+      - codex/timeweb-production
+  workflow_dispatch:
+
+concurrency:
+  group: crm-production
+  cancel-in-progress: true
+
+env:
+  DEPLOY_HOST: 93.183.82.177
+  DEPLOY_PORT: ${{ secrets.TIMEWEB_PORT || '22' }}
+  DEPLOY_USER: ${{ secrets.TIMEWEB_USER }}
+  BACKEND_IMAGE: crm-backend:prod
+  NGINX_IMAGE: crm-nginx:latest
+  SITE_IMAGE: amalgama-site:prod
+  NOTIFIER_IMAGE: amalgama-notifier:prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test calculator notification contract
+        run: python -m unittest discover -s site-notifier -p 'test_*.py'
+
+      - name: Build Docker images on GitHub
+        run: |
+          build_with_retry() {
+            local image="$1"
+            shift
+
+            for attempt in 1 2 3; do
+              echo "Docker build attempt ${attempt}/3 for ${image}..."
+              if docker build -t "$image" "$@"; then
+                return 0
+              fi
+
+              if [ "$attempt" = "3" ]; then
+                echo "Docker build failed after 3 attempts for ${image}."
+                return 1
+              fi
+
+              echo "Docker build failed, retrying after network backoff..."
+              sleep $((attempt * 20))
+            done
+          }
+
+          build_with_retry "$BACKEND_IMAGE" \
+            -f backend/Dockerfile.prod \
+            ./backend
+
+          build_with_retry "$NGINX_IMAGE" \
+            -f docker/nginx/Dockerfile \
+            .
+
+          build_with_retry "$SITE_IMAGE" \
+            -f company-site/Dockerfile \
+            company-site
+
+          build_with_retry "$NOTIFIER_IMAGE" \
+            -f site-notifier/Dockerfile \
+            site-notifier
+
+      - name: Validate production routing
+        run: |
+          touch .env
+          touch site-notifier.env
+          APP_DOMAIN=crm.cehcrm.ru \
+          POSTGRES_DB=crm \
+          POSTGRES_USER=crm \
+          POSTGRES_PASSWORD=validation-only \
+          DATABASE_URL=postgresql://crm:validation-only@db:5432/crm \
+          docker compose -f docker-compose.prod.yml config --quiet
+
+          docker run --rm \
+            -e APP_DOMAIN=crm.cehcrm.ru \
+            -v "$PWD/docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.8-alpine \
+            caddy validate --config /etc/caddy/Caddyfile
+
+      - name: Pack Docker images and project files
+        run: |
+          docker save "$BACKEND_IMAGE" "$NGINX_IMAGE" "$SITE_IMAGE" "$NOTIFIER_IMAGE" | gzip > /tmp/crm-images.tar.gz
+          tar \
+            --exclude=".git" \
+            --exclude=".github" \
+            --exclude=".codex-temp" \
+            --exclude=".env" \
+            --exclude="site-notifier.env" \
+            --exclude="backend/.venv" \
+            --exclude="backend/.venv_test" \
+            --exclude="backend/secrets" \
+            --exclude="backend/db.sqlite3" \
+            --exclude="crm-ui/node_modules" \
+            --exclude="crm-ui/dist" \
+            -czf /tmp/crm-files.tar.gz .
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.TIMEWEB_SSH_KEY }}" | tr -d '\r' > ~/.ssh/timeweb_key
+          chmod 600 ~/.ssh/timeweb_key
+          touch ~/.ssh/known_hosts
+          ssh-keyscan -4 -T 45 -p "${{ env.DEPLOY_PORT }}" "${{ env.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Prepare notifier secrets
+        env:
+          SITE_TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SITE_TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$SITE_TELEGRAM_BOT_TOKEN"
+          test -n "$SITE_TELEGRAM_CHAT_ID"
+          umask 077
+          printf 'TELEGRAM_BOT_TOKEN=%s\nTELEGRAM_CHAT_ID=%s\n' \
+            "$SITE_TELEGRAM_BOT_TOKEN" "$SITE_TELEGRAM_CHAT_ID" \
+            > /tmp/site-notifier.env
+
+      - name: Prepare server directory
+        run: |
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          for i in 1 2 3 4; do
+            echo "SSH attempt $i..."
+            if timeout 75 ssh $SSH_OPTS \
+              "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" \
+              "mkdir -p /opt/crm && test -f /opt/crm/.env && rm -f /tmp/crm-files.tar.gz /tmp/crm-images.tar.gz && (docker image prune -af >/dev/null 2>&1 || true) && echo DIR_OK"; then
+              exit 0
+            fi
+            echo "SSH failed, waiting before retry..."
+            sleep 15
+          done
+          echo "Missing /opt/crm/.env or SSH is unavailable."
+          exit 1
+
+      - name: Upload release bundle to TimeWeb
+        run: |
+          SCP_OPTS="-4 -i ~/.ssh/timeweb_key -P ${{ env.DEPLOY_PORT }} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          scp $SCP_OPTS /tmp/crm-files.tar.gz "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:/tmp/crm-files.tar.gz"
+          scp $SCP_OPTS /tmp/crm-images.tar.gz "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:/tmp/crm-images.tar.gz"
+          scp $SCP_OPTS /tmp/site-notifier.env "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:/tmp/site-notifier.env"
+
+      - name: Install release on TimeWeb
+        run: |
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" '
+            set -eu
+            mkdir -p /tmp/crm-preserve
+            cp /opt/crm/.env /tmp/crm-preserve/.env
+            if [ -d /opt/crm/backend/secrets ]; then
+              mkdir -p /tmp/crm-preserve/backend
+              cp -a /opt/crm/backend/secrets /tmp/crm-preserve/backend/secrets
+            fi
+            find /opt/crm -mindepth 1 ! -name ".env" -exec rm -rf {} +
+            tar -xzf /tmp/crm-files.tar.gz -C /opt/crm
+            cp /tmp/crm-preserve/.env /opt/crm/.env
+            cp /tmp/site-notifier.env /opt/crm/site-notifier.env
+            if [ -f /opt/amalgama-notifier/.env ]; then
+              grep -E "^(MAX_API_BASE_URL|MAX_BOT_TOKEN|MAX_USER_ID|MAX_CHAT_ID)=" \
+                /opt/amalgama-notifier/.env >> /opt/crm/site-notifier.env || true
+            fi
+            chmod 600 /opt/crm/site-notifier.env
+            if [ -d /tmp/crm-preserve/backend/secrets ]; then
+              mkdir -p /opt/crm/backend
+              cp -a /tmp/crm-preserve/backend/secrets /opt/crm/backend/secrets
+            fi
+            docker image prune -af >/dev/null 2>&1 || true
+            docker load < /tmp/crm-images.tar.gz
+            rm -rf /tmp/crm-files.tar.gz /tmp/crm-images.tar.gz /tmp/site-notifier.env /tmp/crm-preserve
+          '
+
+      - name: Deploy with Docker Compose
+        run: |
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" '
+            set -eu
+            cd /opt/crm
+            docker rm -f amalgama-site amalgama-notifier >/dev/null 2>&1 || true
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml up -d --no-build --force-recreate --remove-orphans db backend nginx amalgama-site amalgama-notifier caddy
+            checked=0
+            for i in 1 2 3 4 5 6; do
+              if docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T backend python manage.py check; then
+                checked=1
+                break
+              fi
+              echo "Django check failed or backend is still starting, retrying..."
+              sleep 10
+            done
+            if [ "$checked" != "1" ]; then
+              echo "Django check failed after retries."
+              exit 1
+            fi
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T amalgama-notifier \
+              python -c "import json, urllib.request; data=json.load(urllib.request.urlopen(\"http://127.0.0.1:8080/health\", timeout=5)); assert data.get(\"configured\") and data.get(\"channel\") == \"telegram\" and data.get(\"fallback\") == \"max\", data; print(\"Notifier:\", data[\"channel\"], \"fallback:\", data[\"fallback\"])"
+            docker image prune -f
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml ps
+          '
+
+      - name: Collect Docker diagnostics
+        if: failure()
+        continue-on-error: true
+        run: |
+          if [ ! -f ~/.ssh/timeweb_key ]; then
+            echo "SSH key was not created before failure; skipping remote diagnostics."
+            exit 0
+          fi
+
+          SSH_OPTS="-4 -i ~/.ssh/timeweb_key -p ${{ env.DEPLOY_PORT }} -o BatchMode=yes -o PreferredAuthentications=publickey -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ConnectTimeout=45 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o IPQoS=none"
+          ssh $SSH_OPTS "${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}" '
+            set +e
+            cd /opt/crm
+            echo "== docker compose ps =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml ps
+            echo "== backend health inspect =="
+            docker inspect --format="{{json .State.Health}}" crm-backend-1
+            echo
+            echo "== backend direct health request =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T backend python -c "import urllib.request; r=urllib.request.urlopen(\"http://localhost:8000/api/health/\", timeout=5); print(r.status, r.read())"
+            echo "== backend logs =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=160 backend
+            echo "== nginx logs =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=120 nginx
+            echo "== caddy logs =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=120 caddy
+            echo "== company site logs =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=80 amalgama-site
+            echo "== company site notifier logs =="
+            docker compose -p crm --env-file .env -f docker-compose.prod.yml logs --no-color --tail=80 amalgama-notifier
+          '
+
+      - name: Verify corporate website
+        run: |
+          set -Eeuo pipefail
+          curl --fail --silent --show-error \
+            --retry 10 --retry-delay 3 --retry-all-errors \
+            https://amalgama.cehcrm.ru/ \
+            | grep -F "Душевые, зеркала и мебель на заказ"
+
+      - name: Notify Telegram
+        if: always()
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          JOB_STATUS: ${{ job.status }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram secrets are not configured, skipping notification."
+            exit 0
+          fi
+
+          SHORT_SHA="$(printf '%s' "$COMMIT_SHA" | cut -c1-7)"
+
+          if [ "$JOB_STATUS" = "success" ]; then
+            TITLE="CRM: деплой успешно завершен"
+          else
+            TITLE="CRM: деплой завершился со статусом $JOB_STATUS"
+          fi
+
+          TEXT="$(cat <<EOF
+          $TITLE
+          Коммит: $SHORT_SHA
+          Лог: $RUN_URL
+          EOF
+          )"
+
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${TEXT}" \
+            --data-urlencode "disable_web_page_preview=true"
