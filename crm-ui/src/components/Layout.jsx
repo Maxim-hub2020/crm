@@ -40,6 +40,7 @@ export default function Layout({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [user, setUser] = useState(getUser());
+  const [hiddenMenuSections, setHiddenMenuSections] = useState(() => getUser()?.workspace?.hidden_menu_sections || []);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
   const [globalResults, setGlobalResults] = useState([]);
@@ -51,7 +52,10 @@ export default function Layout({ children }) {
     (async () => {
       try {
         const me = await fetchMe();
-        if (active) setUser(me);
+        if (active) {
+          setUser(me);
+          setHiddenMenuSections(me?.workspace?.hidden_menu_sections || []);
+        }
       } catch {
         // token may be invalid
       }
@@ -64,6 +68,16 @@ export default function Layout({ children }) {
 
   const currentMeta = useMemo(() => ROUTE_META[location.pathname] || { title: "CRM", icon: Briefcase }, [location.pathname]);
   const isAdmin = isAdminUser(user);
+  const hiddenMenuSectionSet = useMemo(() => new Set(hiddenMenuSections), [hiddenMenuSections]);
+
+  useEffect(() => {
+    function handleMenuSettingsUpdated(event) {
+      setHiddenMenuSections(event.detail?.hidden_sections || []);
+    }
+
+    window.addEventListener("crm-menu-settings-updated", handleMenuSettingsUpdated);
+    return () => window.removeEventListener("crm-menu-settings-updated", handleMenuSettingsUpdated);
+  }, []);
 
   useEffect(() => {
     const query = globalQuery.trim();
@@ -145,13 +159,13 @@ export default function Layout({ children }) {
         </div>
 
         <nav className="mt-4 flex flex-1 flex-col px-3">
-          <NavItem to="/" icon={Home} label="Дашборд" onClick={closeSidebar} />
+          {!hiddenMenuSectionSet.has("dashboard") && <NavItem to="/" icon={Home} label="Дашборд" onClick={closeSidebar} />}
           <NavItem to="/projects" icon={FolderKanban} label="Проекты" onClick={closeSidebar} />
-          <NavItem to="/chats" icon={MessageCircle} label="Чаты" onClick={closeSidebar} />
-          {isAdmin && <NavItem to="/finances" icon={Wallet} label="Финансы" onClick={closeSidebar} />}
-          <NavItem to="/tasks" icon={ListTodo} label="Задачи" onClick={closeSidebar} />
-          <NavItem to="/clients" icon={Users} label="Клиенты" onClick={closeSidebar} />
-          {isAdmin && <NavItem to="/requests" icon={ShieldQuestion} label="Запросы" onClick={closeSidebar} />}
+          {!hiddenMenuSectionSet.has("chats") && <NavItem to="/chats" icon={MessageCircle} label="Чаты" onClick={closeSidebar} />}
+          {isAdmin && !hiddenMenuSectionSet.has("finances") && <NavItem to="/finances" icon={Wallet} label="Финансы" onClick={closeSidebar} />}
+          {!hiddenMenuSectionSet.has("tasks") && <NavItem to="/tasks" icon={ListTodo} label="Задачи" onClick={closeSidebar} />}
+          {!hiddenMenuSectionSet.has("clients") && <NavItem to="/clients" icon={Users} label="Клиенты" onClick={closeSidebar} />}
+          {isAdmin && !hiddenMenuSectionSet.has("requests") && <NavItem to="/requests" icon={ShieldQuestion} label="Запросы" onClick={closeSidebar} />}
           {isAdmin && <NavItem to="/settings" icon={Settings} label="Система" onClick={closeSidebar} />}
         </nav>
 

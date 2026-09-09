@@ -72,6 +72,7 @@ class MeSerializer(serializers.ModelSerializer):
             "id": workspace.id if workspace else None,
             "name": workspace.name if workspace else "",
             "slug": workspace.slug if workspace else "",
+            "hidden_menu_sections": list(workspace.hidden_menu_sections or []) if workspace else [],
         }
 
 

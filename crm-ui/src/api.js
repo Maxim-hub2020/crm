@@ -188,6 +188,18 @@ export async function fetchMe() {
   return data;
 }
 
+export async function fetchMenuSettings() {
+  initApiAuth();
+  const { data } = await api.get("/api/menu-settings/");
+  return data;
+}
+
+export async function updateMenuSettings(payload) {
+  initApiAuth();
+  const { data } = await api.patch("/api/menu-settings/", payload);
+  return data;
+}
+
 export async function fetchUsers() {
   initApiAuth();
   const { data } = await api.get("/api/users/");

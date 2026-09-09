@@ -170,6 +170,40 @@ class TestWorkspaceIsolation(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(read_a.data["app_url"], "https://a.example.ru/app")
         self.assertEqual(read_b.data["app_url"], "https://b.example.ru/app")
 
+    def test_menu_settings_are_per_workspace_and_visible_in_profile(self):
+        api_a = self.auth_client_for(self.admin_a)
+        api_b = self.auth_client_for(self.admin_b)
+
+        update_response = api_a.patch(
+            "/api/menu-settings/",
+            {"hidden_sections": ["chats", "tasks", "settings", "unknown"]},
+            format="json",
+        )
+        read_a = api_a.get("/api/menu-settings/")
+        read_b = api_b.get("/api/menu-settings/")
+        me_a = api_a.get("/api/me/")
+
+        self.assertEqual(update_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(read_a.data["hidden_sections"], ["chats", "tasks"])
+        self.assertEqual(read_b.data["hidden_sections"], [])
+        self.assertEqual(me_a.data["workspace"]["hidden_menu_sections"], ["chats", "tasks"])
+
+    def test_manager_can_read_but_not_update_menu_settings(self):
+        self.workspace_a.hidden_menu_sections = ["requests"]
+        self.workspace_a.save(update_fields=["hidden_menu_sections"])
+        api_client = self.auth_client_for(self.manager_a)
+
+        read_response = api_client.get("/api/menu-settings/")
+        write_response = api_client.patch(
+            "/api/menu-settings/",
+            {"hidden_sections": ["chats"]},
+            format="json",
+        )
+
+        self.assertEqual(read_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(read_response.data["hidden_sections"], ["requests"])
+        self.assertEqual(write_response.status_code, status.HTTP_403_FORBIDDEN)
+
     def test_calculator_settings_are_per_workspace(self):
         api_a = self.auth_client_for(self.admin_a)
         api_b = self.auth_client_for(self.admin_b)

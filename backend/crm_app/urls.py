@@ -28,6 +28,7 @@ from .views import (
     finance_analytics_view,
     global_search_view,
     health_view,
+    menu_settings_view,
     me_view,
     yandex_disk_folders_view,
     yandex_disk_oauth_callback_view,
@@ -62,6 +63,7 @@ router.register(r"users", UserViewSet, basename="users")
 urlpatterns = [
     path("health/", health_view),
     path("me/", me_view),
+    path("menu-settings/", menu_settings_view),
     path("bonus-promo-preview/", bonus_promo_preview_view),
     path("finance-analytics/", finance_analytics_view),
     path("finance-analytics/ai/", finance_analytics_ai_view),

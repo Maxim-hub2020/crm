@@ -99,6 +99,8 @@ from .yandex_disk import (
 
 logger = logging.getLogger(__name__)
 
+MENU_SECTION_KEYS = {"dashboard", "chats", "finances", "tasks", "clients", "requests"}
+
 
 def phone_digits_expression(field_name):
     expression = F(field_name)
@@ -496,6 +498,34 @@ def _project_activity_payload(project):
 @permission_classes([IsAuthenticatedAny])
 def me_view(request):
     return Response(MeSerializer(request.user).data)
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticatedAny])
+def menu_settings_view(request):
+    workspace = current_workspace(request.user)
+
+    if request.method == "GET":
+        return Response({"hidden_sections": list(workspace.hidden_menu_sections or [])})
+
+    if not request.user.is_admin():
+        return Response(
+            {"detail": "Видимость разделов может менять только администратор."},
+            status=drf_status.HTTP_403_FORBIDDEN,
+        )
+
+    hidden_sections = request.data.get("hidden_sections", [])
+    if not isinstance(hidden_sections, list):
+        return Response(
+            {"hidden_sections": ["Ожидается список разделов."]},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
+
+    workspace.hidden_menu_sections = sorted(
+        {str(section).strip() for section in hidden_sections if str(section).strip() in MENU_SECTION_KEYS}
+    )
+    workspace.save(update_fields=["hidden_menu_sections", "updated_at"])
+    return Response({"hidden_sections": workspace.hidden_menu_sections})
 
 
 @api_view(["GET"])

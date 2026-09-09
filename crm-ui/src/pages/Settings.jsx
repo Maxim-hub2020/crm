@@ -14,6 +14,7 @@ import {
   ListTodo,
   Lock,
   MessageCircle,
+  PanelLeftClose,
   Plus,
   Settings as SettingsIcon,
   Sliders,
@@ -42,6 +43,7 @@ import {
   fetchChatSettings,
   fetchDocumentTemplates,
   fetchFinanceCategories,
+  fetchMenuSettings,
   fetchProjectCustomFields,
   fetchProjectStatuses,
   fetchTaskTemplates,
@@ -51,6 +53,7 @@ import {
   startYandexDiskOAuth,
   updateTaskTemplate,
   updateFinanceCategory,
+  updateMenuSettings,
   updateProjectStatus,
   updateChatSettings,
   updateYandexDiskSettings,
@@ -67,6 +70,15 @@ const FIELD_TYPE_LABELS = {
   date: "Дата",
   file: "Файл",
 };
+
+const MENU_SECTION_OPTIONS = [
+  { key: "dashboard", label: "Дашборд" },
+  { key: "chats", label: "Чаты" },
+  { key: "finances", label: "Финансы" },
+  { key: "tasks", label: "Задачи" },
+  { key: "clients", label: "Клиенты" },
+  { key: "requests", label: "Запросы" },
+];
 
 function SettingsCard({ title, icon, children, className = "", defaultOpen = false }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -183,6 +195,7 @@ export default function Settings() {
   const [templates, setTemplates] = useState([]);
   const [chatSettings, setChatSettings] = useState(null);
   const [yandexDiskSettings, setYandexDiskSettings] = useState(null);
+  const [hiddenMenuSections, setHiddenMenuSections] = useState([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [draggedRow, setDraggedRow] = useState(null);
@@ -203,6 +216,7 @@ export default function Settings() {
   const [yandexDiskConnecting, setYandexDiskConnecting] = useState(false);
   const [yandexDiskCodeSaving, setYandexDiskCodeSaving] = useState(false);
   const [yandexDiskCode, setYandexDiskCode] = useState("");
+  const [menuSettingsSaving, setMenuSettingsSaving] = useState("");
   const [diskPicker, setDiskPicker] = useState({
     open: false,
     target: "base_path",
@@ -228,7 +242,7 @@ export default function Settings() {
   });
 
   async function reload() {
-    const [userRows, statusRows, categoryRows, accountRows, fieldRows, taskTemplateRows, templateRows, chatRows, yandexDiskRows] = await Promise.all([
+    const [userRows, statusRows, categoryRows, accountRows, fieldRows, taskTemplateRows, templateRows, chatRows, yandexDiskRows, menuRows] = await Promise.all([
       fetchUsers(),
       fetchProjectStatuses(),
       fetchFinanceCategories(),
@@ -238,6 +252,7 @@ export default function Settings() {
       fetchDocumentTemplates(),
       fetchChatSettings(),
       fetchYandexDiskSettings(),
+      fetchMenuSettings(),
     ]);
 
     setUsers(userRows);
@@ -249,6 +264,7 @@ export default function Settings() {
     setTemplates(templateRows);
     setChatSettings(chatRows);
     setYandexDiskSettings(yandexDiskRows);
+    setHiddenMenuSections(menuRows.hidden_sections || []);
     setChatForm({
       enabled: Boolean(chatRows.enabled),
       base_url: chatRows.base_url || "",
@@ -291,6 +307,28 @@ export default function Settings() {
     [categories]
   );
   const terminalStatusId = statuses[statuses.length - 1]?.id || null;
+
+  async function toggleMenuSection(sectionKey) {
+    const previous = hiddenMenuSections;
+    const next = previous.includes(sectionKey)
+      ? previous.filter((key) => key !== sectionKey)
+      : [...previous, sectionKey];
+
+    setHiddenMenuSections(next);
+    setMenuSettingsSaving(sectionKey);
+    try {
+      const updated = await updateMenuSettings({ hidden_sections: next });
+      const savedSections = updated.hidden_sections || [];
+      setHiddenMenuSections(savedSections);
+      window.dispatchEvent(new CustomEvent("crm-menu-settings-updated", { detail: { hidden_sections: savedSections } }));
+      setError("");
+    } catch (requestError) {
+      setHiddenMenuSections(previous);
+      setError(extractApiErrorMessage(requestError, "Не удалось изменить видимость раздела."));
+    } finally {
+      setMenuSettingsSaving("");
+    }
+  }
 
   async function handleAddManager(event) {
     event.preventDefault();
@@ -655,6 +693,35 @@ export default function Settings() {
           <button className="w-full rounded-full bg-gray-900 px-5 py-3 text-xs font-bold text-white shadow-lg hover:bg-black" type="button">
             Сменить пароль
           </button>
+        </SettingsCard>
+
+        <SettingsCard title="Разделы меню" icon={<PanelLeftClose size={16} />} defaultOpen>
+          <div className="space-y-2">
+            <p className="pb-2 text-xs font-semibold leading-5 text-slate-500">
+              Скрытые разделы исчезнут из меню у всей команды. Проекты и Система всегда остаются доступными.
+            </p>
+            {MENU_SECTION_OPTIONS.map((section) => {
+              const hidden = hiddenMenuSections.includes(section.key);
+              return (
+                <label
+                  key={section.key}
+                  className="flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 transition hover:bg-slate-100"
+                >
+                  <span className="text-sm font-black text-slate-800">{section.label}</span>
+                  <span className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                      checked={hidden}
+                      disabled={Boolean(menuSettingsSaving)}
+                      onChange={() => toggleMenuSection(section.key)}
+                    />
+                    {menuSettingsSaving === section.key ? "Сохраняем..." : "Скрыть"}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
         </SettingsCard>
 
         <SettingsCard title="Чаты" icon={<MessageCircle size={16} />}>
