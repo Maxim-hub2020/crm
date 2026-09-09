@@ -3548,7 +3548,7 @@ export default function Projects() {
         }
         onClose={closeProject}
         widthClassName="max-w-6xl"
-        bodyClassName="min-h-0 bg-white"
+        bodyClassName="min-h-0 overflow-x-hidden bg-white"
         positionClassName="items-start"
         overlayClassName="bg-slate-950/25 backdrop-blur-sm backdrop-saturate-75"
       >
