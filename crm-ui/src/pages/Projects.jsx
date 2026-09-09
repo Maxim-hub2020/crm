@@ -3543,17 +3543,7 @@ export default function Projects() {
         open={Boolean(activeProject)}
         title={
           activeProject
-            ? (
-                <span className="flex min-w-0 items-center gap-3">
-                  <span className="truncate">
-                    {projectOrderLabel(activeProject) ? `№${projectOrderLabel(activeProject)} · ` : ""}
-                    {projectDisplayName(activeProject)}
-                  </span>
-                  <span className="hidden shrink-0 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-[11px] font-black normal-case tracking-normal text-blue-700 sm:inline-flex">
-                    {statusOptions.find((option) => option.value === detailForm.status)?.label || detailForm.status}
-                  </span>
-                </span>
-              )
+            ? (projectOrderLabel(activeProject) ? `Проект №${projectOrderLabel(activeProject)}` : "Проект")
             : ""
         }
         onClose={closeProject}
@@ -3565,7 +3555,39 @@ export default function Projects() {
         {activeProject && (
           <div className="space-y-5">
             <div className="space-y-5">
-              <div className="grid overflow-hidden rounded-[22px] border border-slate-200 bg-slate-50/70 md:grid-cols-[1.2fr_0.55fr_1.35fr]">
+              <div className="grid gap-3 rounded-[22px] border border-slate-200 bg-slate-50/70 p-4 md:grid-cols-[minmax(0,1.5fr)_minmax(180px,0.6fr)_minmax(180px,0.6fr)]">
+                <div className="space-y-2">
+                  <Label>Проект</Label>
+                  <Input
+                    value={detailForm.title}
+                    onChange={(event) => setDetailForm((prev) => ({ ...prev, title: event.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Статус</Label>
+                  <Select
+                    value={detailForm.status}
+                    onChange={(event) => setDetailForm((prev) => ({ ...prev, status: event.target.value }))}
+                  >
+                    {statusOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Стоимость</Label>
+                  <Input
+                    value={detailForm.total_amount}
+                    onChange={(event) => setDetailForm((prev) => ({ ...prev, total_amount: formatAmountInput(event.target.value) }))}
+                    inputMode="numeric"
+                    placeholder="120 000"
+                  />
+                </div>
+              </div>
+
+              <div className="grid overflow-hidden rounded-[22px] border border-slate-200 bg-slate-50/70 md:grid-cols-[1.1fr_1.35fr]">
                 <div className="min-w-0 border-b border-slate-200 p-4 md:border-b-0 md:border-r">
                   <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Клиент</div>
                   <div className="mt-2 flex items-center justify-between gap-3">
@@ -3606,25 +3628,41 @@ export default function Projects() {
                     </div>
                   </div>
                   {activeProjectClient?.id ? (
-                    <button
-                      type="button"
-                      className="mt-2 text-xs font-bold text-red-500 transition hover:text-red-700 disabled:cursor-wait disabled:opacity-60"
-                      onClick={detachProjectClient}
-                      disabled={projectClientDetaching}
-                    >
-                      {projectClientDetaching ? "Открепляем..." : "Открепить клиента"}
-                    </button>
-                  ) : null}
-                </div>
-
-                <div className="min-w-0 border-b border-slate-200 p-4 md:border-b-0 md:border-r">
-                  <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Стоимость</div>
-                  <div className="mt-2 text-xl font-black tracking-tight text-slate-900">
-                    {formatMoney(cleanAmountValue(detailForm.total_amount) || 0)} ₽
-                  </div>
-                  {projectReferralBonus(activeProject) > 0 ? (
-                    <div className="mt-1 text-xs font-bold text-emerald-600">
-                      После бонусов: {formatMoney(projectDiscountedAmount(activeProject))} ₽
+                    <div className="mt-3 space-y-3 border-t border-slate-200 pt-3">
+                      <label className="flex cursor-pointer items-center gap-2 text-xs font-black text-slate-700">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-slate-300 text-blue-600 disabled:opacity-50"
+                          checked={detailBonusEnabled || Boolean(Number(activeProject.referral_bonus_used || 0))}
+                          disabled={Boolean(Number(activeProject.referral_bonus_used || 0))}
+                          onChange={(event) => {
+                            setDetailBonusEnabled(event.target.checked);
+                            if (!event.target.checked) {
+                              setDetailForm((prev) => ({ ...prev, bonus_promo_code: "" }));
+                            }
+                          }}
+                        />
+                        <span>Использовать бонусы / промокод</span>
+                      </label>
+                      {detailBonusEnabled || Boolean(Number(activeProject.referral_bonus_used || 0)) ? (
+                        <Input
+                          className="h-10 bg-white"
+                          value={detailForm.bonus_promo_code}
+                          onChange={(event) => setDetailForm((prev) => ({ ...prev, bonus_promo_code: normalizePromoCodeInput(event.target.value) }))}
+                          inputMode="numeric"
+                          maxLength={5}
+                          disabled={Boolean(Number(activeProject.referral_bonus_used || 0))}
+                          placeholder="Последние 5 цифр телефона"
+                        />
+                      ) : null}
+                      <button
+                        type="button"
+                        className="text-xs font-bold text-red-500 transition hover:text-red-700 disabled:cursor-wait disabled:opacity-60"
+                        onClick={detachProjectClient}
+                        disabled={projectClientDetaching}
+                      >
+                        {projectClientDetaching ? "Открепляем..." : "Открепить клиента"}
+                      </button>
                     </div>
                   ) : null}
                 </div>
@@ -3655,13 +3693,6 @@ export default function Projects() {
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Наименование проекта</Label>
-                  <Input
-                    value={detailForm.title}
-                    onChange={(event) => setDetailForm((prev) => ({ ...prev, title: event.target.value }))}
-                  />
-                </div>
                 {!activeProjectClient?.id ? (
                   <div className="space-y-2 rounded-[22px] border border-slate-200 bg-slate-50/70 p-4 md:col-span-2">
                     <Label>Выбрать клиента</Label>
@@ -3840,55 +3871,6 @@ export default function Projects() {
                     </div>
                 </div>
                 ) : null}
-                <div className="space-y-2">
-                  <Label>Статус</Label>
-                  <Select
-                    value={detailForm.status}
-                    onChange={(event) => setDetailForm((prev) => ({ ...prev, status: event.target.value }))}
-                  >
-                    {statusOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Сумма проекта</Label>
-                  <Input
-                    value={detailForm.total_amount}
-                    onChange={(event) => setDetailForm((prev) => ({ ...prev, total_amount: formatAmountInput(event.target.value) }))}
-                    inputMode="numeric"
-                    placeholder="Например, 120 000"
-                  />
-                </div>
-                <div className="space-y-3 md:col-span-2">
-                  <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm font-black text-slate-700">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 rounded border-slate-300 text-blue-600 disabled:opacity-50"
-                      checked={detailBonusEnabled || Boolean(Number(activeProject.referral_bonus_used || 0))}
-                      disabled={Boolean(Number(activeProject.referral_bonus_used || 0))}
-                      onChange={(event) => {
-                        setDetailBonusEnabled(event.target.checked);
-                        if (!event.target.checked) {
-                          setDetailForm((prev) => ({ ...prev, bonus_promo_code: "" }));
-                        }
-                      }}
-                    />
-                    <span>Использовать бонусы / промокод</span>
-                  </label>
-                  {detailBonusEnabled || Boolean(Number(activeProject.referral_bonus_used || 0)) ? (
-                    <Input
-                      value={detailForm.bonus_promo_code}
-                      onChange={(event) => setDetailForm((prev) => ({ ...prev, bonus_promo_code: normalizePromoCodeInput(event.target.value) }))}
-                      inputMode="numeric"
-                      maxLength={5}
-                      disabled={Boolean(Number(activeProject.referral_bonus_used || 0))}
-                      placeholder="Последние 5 цифр телефона"
-                    />
-                  ) : null}
-                </div>
               </div>
 
               <div className={`grid gap-4 ${customFields.length ? "xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.9fr)]" : ""}`}>
@@ -4009,10 +3991,6 @@ export default function Projects() {
                     </div>
                   ))}
                 </div>
-              </div>
-            ) : projectStatusChecks ? (
-              <div className="rounded-[24px] bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">
-                По проекту критичных замечаний нет.
               </div>
             ) : null}
 
