@@ -1934,6 +1934,39 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["summary"]["at_risk_project_count"], 1)
         self.assertEqual(response.data["at_risk_projects"][0]["id"], project.id)
 
+    def test_finance_analytics_and_cash_forecast_exclude_application_projects(self):
+        ProjectStatus.objects.update_or_create(
+            workspace=self.manager.workspace,
+            code="incoming",
+            defaults={"name": "Заявки", "sort_order": 0, "is_default": True},
+        )
+        application_project = Project.objects.create(
+            manager=self.manager,
+            client_name="Application Client",
+            client_phone="+79000002199",
+            total_amount=Decimal("90000.00"),
+            status="incoming",
+        )
+        Payment.objects.create(
+            project=application_project,
+            created_by=self.manager,
+            category=self.income_category,
+            account=self.account,
+            amount=Decimal("90000.00"),
+            type=Payment.Type.ADVANCE,
+        )
+        client = self.auth_client_for(self.manager)
+
+        analytics_response = client.get("/api/finance-analytics/")
+        forecast_response = client.get("/api/cash-forecast/")
+
+        self.assertEqual(analytics_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(analytics_response.data["summary"]["income_total"], "15000.00")
+        self.assertNotIn(application_project.id, [item["id"] for item in analytics_response.data["projects"]])
+        self.assertEqual(forecast_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(forecast_response.data["current_balance"], "15000.00")
+        self.assertNotIn(application_project.id, [item["id"] for item in forecast_response.data["projects"]])
+
     def test_finance_analytics_predicts_remaining_expenses_for_selected_project(self):
         self.configure_finance_review_statuses()
         previous_project = Project.objects.create(
@@ -2061,45 +2094,6 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
             prediction["missing_learned_expenses"],
             ["Стекло", "Фурнитура для душевой", "Доставка"],
         )
-
-    @patch("crm_app.views.GeminiClient")
-    def test_finance_analytics_ai_uses_gemini(self, mocked_client_class):
-        project = Project.objects.create(
-            manager=self.manager,
-            client_name="AI Finance Client",
-            client_phone="+79000002103",
-            total_amount=Decimal("50000.00"),
-        )
-        Payment.objects.create(
-            project=project,
-            created_by=self.manager,
-            category=self.income_category,
-            account=self.account,
-            amount=Decimal("50000.00"),
-            type=Payment.Type.ADVANCE,
-        )
-        mocked_client = mocked_client_class.return_value
-        mocked_client.fast_model = "gemini-fast"
-        mocked_client.generate_content.return_value = {
-            "candidates": [
-                {
-                    "content": {
-                        "parts": [
-                            {"text": "Маржа в норме, но проверьте расходники."},
-                        ]
-                    }
-                }
-            ]
-        }
-        mocked_client.extract_candidate_content.side_effect = GeminiClient.extract_candidate_content
-        mocked_client.extract_text.side_effect = GeminiClient.extract_text
-        client = self.auth_client_for(self.admin)
-
-        response = client.post("/api/finance-analytics/ai/", {"project": project.id}, format="json")
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn("Маржа", response.data["analysis"])
-        mocked_client.generate_content.assert_called_once()
 
     @patch("crm_app.views.GeminiClient")
     def test_cash_forecast_ai_falls_back_when_gemini_truncates_text(self, mocked_client_class):

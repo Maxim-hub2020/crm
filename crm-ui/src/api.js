@@ -492,12 +492,6 @@ export async function fetchFinanceAnalytics(params = {}) {
   return data;
 }
 
-export async function requestFinanceAiAnalysis(payload = {}) {
-  initApiAuth();
-  const { data } = await api.post("/api/finance-analytics/ai/", payload);
-  return data;
-}
-
 export async function fetchCashForecast(params = {}) {
   initApiAuth();
   const { data } = await api.get("/api/cash-forecast/", { params });

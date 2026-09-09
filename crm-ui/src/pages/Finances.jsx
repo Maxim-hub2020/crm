@@ -12,8 +12,8 @@ import {
   fetchFinanceCategories,
   fetchPayments,
   fetchProjects,
+  fetchProjectStatuses,
   requestCashForecastAi,
-  requestFinanceAiAnalysis,
   updatePayment,
 } from "../api";
 import { Badge, Button, Input, Label, Modal, Select } from "../components/ui.jsx";
@@ -114,7 +114,7 @@ function formatPercent(value) {
   })}%`;
 }
 
-function AnalyticsMetric({ label, value, tone = "slate", note = "" }) {
+function AnalyticsMetric({ label, value, tone = "slate", note = "", onClick }) {
   const toneClass =
     tone === "green"
       ? "text-emerald-600"
@@ -124,12 +124,20 @@ function AnalyticsMetric({ label, value, tone = "slate", note = "" }) {
           ? "text-amber-600"
           : "text-slate-900";
 
+  const Component = onClick ? "button" : "div";
+
   return (
-    <div className="rounded-[24px] bg-slate-50 p-4 ring-1 ring-slate-200/60">
+    <Component
+      type={onClick ? "button" : undefined}
+      className={`rounded-[24px] bg-slate-50 p-4 text-left ring-1 ring-slate-200/60 ${
+        onClick ? "transition hover:bg-amber-50 hover:ring-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-400" : ""
+      }`}
+      onClick={onClick}
+    >
       <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{label}</div>
       <div className={`mt-2 text-2xl font-black tracking-tight ${toneClass}`}>{value}</div>
       {note ? <div className="mt-1 text-xs font-semibold text-slate-500">{note}</div> : null}
-    </div>
+    </Component>
   );
 }
 
@@ -137,11 +145,7 @@ function FinanceAnalyticsBlock({
   analytics,
   loading,
   error,
-  aiAnalysis,
-  aiError,
-  aiLoading,
   onRefresh,
-  onAnalyze,
   onProjectOpen,
 }) {
   const summary = analytics?.summary || {};
@@ -170,15 +174,10 @@ function FinanceAnalyticsBlock({
             <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
             Обновить
           </Button>
-          <Button type="button" className="justify-center" onClick={onAnalyze} disabled={aiLoading || loading}>
-            <Brain size={16} />
-            {aiLoading ? "Gemini анализирует..." : "AI-анализ"}
-          </Button>
         </div>
       </div>
 
       {error ? <div className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
-      {aiError ? <div className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{aiError}</div> : null}
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <AnalyticsMetric label="Доходы" value={`${formatMoney(summary.income_total)} ₽`} tone="green" note={`${summary.income_operation_count || 0} операций`} />
@@ -193,7 +192,8 @@ function FinanceAnalyticsBlock({
           label="Проекты с риском"
           value={summary.at_risk_project_count || 0}
           tone={summary.at_risk_project_count ? "amber" : "green"}
-          note={`Всего проектов: ${summary.project_count || 0}`}
+          note={summary.at_risk_project_count ? "Нажмите, чтобы увидеть список" : `Всего проектов: ${summary.project_count || 0}`}
+          onClick={summary.at_risk_project_count ? () => document.getElementById("finance-risk-projects")?.scrollIntoView({ behavior: "smooth", block: "start" }) : undefined}
         />
       </div>
 
@@ -412,10 +412,10 @@ function FinanceAnalyticsBlock({
       </div>
 
       {atRiskProjects.length > 0 ? (
-        <div className="mt-4 rounded-[24px] bg-amber-50 p-4">
+        <div id="finance-risk-projects" className="mt-4 scroll-mt-6 rounded-[24px] bg-amber-50 p-4">
           <div className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-amber-600">Проекты, требующие проверки</div>
-          <div className="grid gap-2 lg:grid-cols-2">
-            {atRiskProjects.slice(0, 6).map((project) => (
+          <div className="grid max-h-[520px] gap-2 overflow-y-auto pr-1 lg:grid-cols-2">
+            {atRiskProjects.map((project) => (
               <button
                 key={project.id}
                 type="button"
@@ -433,11 +433,6 @@ function FinanceAnalyticsBlock({
         </div>
       ) : null}
 
-      {aiAnalysis ? (
-        <div className="mt-4 whitespace-pre-wrap rounded-[24px] bg-slate-950 px-4 py-4 text-sm font-semibold leading-6 text-white">
-          {aiAnalysis}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -576,6 +571,7 @@ function CashForecastBlock({
 export default function Finances() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
+  const [projectStatuses, setProjectStatuses] = useState([]);
   const [payments, setPayments] = useState([]);
   const [categories, setCategories] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -602,9 +598,6 @@ export default function Finances() {
   const [analyticsKindFilter, setAnalyticsKindFilter] = useState("all");
   const [analyticsDateFrom, setAnalyticsDateFrom] = useState("");
   const [analyticsDateTo, setAnalyticsDateTo] = useState("");
-  const [aiAnalysis, setAiAnalysis] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState("");
   const [cashForecast, setCashForecast] = useState(null);
   const [cashForecastLoading, setCashForecastLoading] = useState(false);
   const [cashForecastError, setCashForecastError] = useState("");
@@ -616,18 +609,21 @@ export default function Finances() {
   useEffect(() => {
     (async () => {
       try {
-        const [projectRows, paymentRows, categoryRows, accountRows] = await Promise.all([
+        const [projectRows, statusRows, paymentRows, categoryRows, accountRows] = await Promise.all([
           fetchProjects(),
+          fetchProjectStatuses(),
           fetchPayments(),
           fetchFinanceCategories(),
           fetchAccounts(),
         ]);
         setProjects(projectRows);
+        setProjectStatuses(statusRows);
         setPayments(paymentRows);
         setCategories(categoryRows);
         setAccounts(accountRows);
       } catch {
         setProjects([]);
+        setProjectStatuses([]);
         setPayments([]);
         setCategories([]);
         setAccounts([]);
@@ -636,6 +632,22 @@ export default function Finances() {
   }, []);
 
   const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+  const applicationStatusCodes = useMemo(() => {
+    const names = new Set(["заявка", "заявки", "application", "applications", "lead", "leads"]);
+    return new Set(
+      projectStatuses
+        .filter((status) => {
+          const code = String(status.code || "").trim().toLocaleLowerCase("ru-RU");
+          const name = String(status.name || "").trim().toLocaleLowerCase("ru-RU");
+          return names.has(code) || names.has(name);
+        })
+        .map((status) => status.code)
+    );
+  }, [projectStatuses]);
+  const analyticsProjects = useMemo(
+    () => projects.filter((project) => !applicationStatusCodes.has(project.status)),
+    [applicationStatusCodes, projects]
+  );
   const hasMultipleAccounts = accounts.length > 1;
   const singleAccountId = accounts.length === 1 ? String(accounts[0].id) : "";
 
@@ -678,9 +690,6 @@ export default function Finances() {
         if (active) setAnalyticsLoading(false);
       }
     }, 250);
-
-    setAiAnalysis("");
-    setAiError("");
 
     return () => {
       active = false;
@@ -767,24 +776,6 @@ export default function Finances() {
         tab,
       },
     });
-  }
-
-  async function runAiAnalysis() {
-    setAiError("");
-    setAiAnalysis("");
-    setAiLoading(true);
-
-    try {
-      const data = await requestFinanceAiAnalysis(analyticsParams);
-      setAiAnalysis(data.analysis || "");
-      if (data.overview) {
-        setAnalytics(data.overview);
-      }
-    } catch (requestError) {
-      setAiError(extractApiErrorMessage(requestError, "Gemini не смог выполнить финансовый анализ."));
-    } finally {
-      setAiLoading(false);
-    }
   }
 
   async function runCashAiForecast() {
@@ -965,7 +956,7 @@ export default function Finances() {
                 <Label>Проект для анализа</Label>
                 <Select value={analyticsProjectFilter} onChange={(event) => setAnalyticsProjectFilter(event.target.value)}>
                   <option value="all">Все проекты</option>
-                  {projects.map((project) => (
+                  {analyticsProjects.map((project) => (
                     <option key={project.id} value={project.id}>
                       {projectDisplayName(project)}
                     </option>
@@ -1001,11 +992,7 @@ export default function Finances() {
               analytics={analytics}
               loading={analyticsLoading}
               error={analyticsError}
-              aiAnalysis={aiAnalysis}
-              aiError={aiError}
-              aiLoading={aiLoading}
               onRefresh={refreshAnalytics}
-              onAnalyze={runAiAnalysis}
               onProjectOpen={openProjectFromAnalytics}
             />
           ) : (

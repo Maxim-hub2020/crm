@@ -719,22 +719,10 @@ def build_finance_overview(projects_queryset, payments_queryset, filters=None, r
         },
         "category_totals": category_rows,
         "projects": project_rows,
-        "at_risk_projects": at_risk_projects[:20],
+        "at_risk_projects": at_risk_projects,
         "recent_operations": [_serialize_payment_for_analytics(payment) for payment in payments[:12]],
         "expense_prediction": expense_prediction,
         "recommendations": recommendations,
-    }
-
-
-def compact_finance_overview_for_ai(overview):
-    summary = overview.get("summary") or {}
-    return {
-        "summary": summary,
-        "recommendations": overview.get("recommendations") or [],
-        "category_totals": (overview.get("category_totals") or [])[:12],
-        "at_risk_projects": (overview.get("at_risk_projects") or [])[:12],
-        "recent_operations": (overview.get("recent_operations") or [])[:8],
-        "expense_prediction": overview.get("expense_prediction"),
     }
 
 

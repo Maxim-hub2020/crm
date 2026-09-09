@@ -30,7 +30,6 @@ from .finance_analytics import (
     build_finance_overview,
     build_project_finance_analytics,
     compact_cash_forecast_for_ai,
-    compact_finance_overview_for_ai,
 )
 from .gemini_client import GeminiClient, GeminiConfigurationError, GeminiRequestError
 from .models import (
@@ -115,7 +114,13 @@ def _request_params(request):
 
 def _visible_finance_projects(user):
     workspace = current_workspace(user)
-    queryset = Project.objects.filter(workspace=workspace)
+    application_names = {"заявка", "заявки", "application", "applications", "lead", "leads"}
+    application_codes = set(application_names)
+    for status in ProjectStatus.objects.filter(workspace=workspace).only("code", "name"):
+        if str(status.code or "").strip().casefold() in application_names or str(status.name or "").strip().casefold() in application_names:
+            application_codes.add(status.code)
+
+    queryset = Project.objects.filter(workspace=workspace).exclude(status__in=application_codes)
     if user.is_admin():
         return queryset
     return queryset.filter(manager=user)
@@ -197,39 +202,6 @@ def _finance_scope(request):
         "search": search,
     }
     return project_queryset, payment_queryset, filters
-
-
-def _build_finance_ai_text(overview):
-    compact_payload = compact_finance_overview_for_ai(overview)
-    client = GeminiClient()
-    response = client.generate_content(
-        model=client.fast_model,
-        system_instruction=(
-            "Отвечай максимум 5 короткими пунктами, без вступления и длинных объяснений. "
-            "Ты финансовый аналитик CRM производства мебели/стекла. "
-            "Пиши по-русски, кратко и по делу. Анализируй только переданные цифры. "
-            "Если данных мало, прямо скажи, какие операции или расходники нужно внести."
-        ),
-        contents=[
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "text": (
-                            "Коротко оцени маржу, риски, прогноз расходов и что проверить.\n\n"
-                            "Проанализируй финансовую выборку CRM. Дай: 1) короткий вывод, "
-                            "2) риски, 3) что проверить по проектам, 4) конкретные рекомендации.\n\n"
-                            f"{json.dumps(compact_payload, ensure_ascii=False)}"
-                        )
-                    }
-                ],
-            }
-        ],
-        temperature=0.2,
-        max_output_tokens=500,
-    )
-    content = client.extract_candidate_content(response)
-    return client.extract_text(content)
 
 
 def _money_decimal(value):
@@ -865,28 +837,6 @@ def finance_analytics_view(request):
             reference_projects_queryset=reference_queryset,
         )
     )
-
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticatedAny])
-def finance_analytics_ai_view(request):
-    project_queryset, payment_queryset, filters = _finance_scope(request)
-    reference_queryset = _visible_finance_projects(request.user)
-    overview = build_finance_overview(
-        project_queryset,
-        payment_queryset,
-        filters=filters,
-        reference_projects_queryset=reference_queryset,
-    )
-
-    try:
-        analysis = _build_finance_ai_text(overview)
-    except GeminiConfigurationError as exc:
-        return Response({"detail": str(exc)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
-    except GeminiRequestError as exc:
-        return Response({"detail": str(exc)}, status=drf_status.HTTP_502_BAD_GATEWAY)
-
-    return Response({"analysis": analysis, "overview": overview})
 
 
 @api_view(["GET"])
