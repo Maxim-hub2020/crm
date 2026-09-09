@@ -3546,6 +3546,43 @@ export default function Projects() {
             ? (projectOrderLabel(activeProject) ? `Проект №${projectOrderLabel(activeProject)}` : "Проект")
             : ""
         }
+        headerContent={activeProject ? (
+          <div className="grid min-w-0 flex-1 grid-cols-2 items-center gap-2 pr-2 sm:grid-cols-[auto_minmax(220px,1fr)_minmax(150px,0.55fr)_minmax(130px,0.45fr)] sm:gap-3 sm:pr-4">
+            <div className="col-span-2 whitespace-nowrap text-base font-black uppercase tracking-tight text-slate-900 sm:col-span-1 sm:text-xl">
+              №{projectOrderLabel(activeProject) || activeProject.id}
+            </div>
+            <Input
+              className="col-span-2 h-10 min-w-0 py-2 font-bold sm:col-span-1"
+              value={detailForm.title}
+              onChange={(event) => setDetailForm((prev) => ({ ...prev, title: event.target.value }))}
+              aria-label="Наименование проекта"
+              placeholder="Наименование проекта"
+            />
+            <Select
+              className="h-10 min-w-0 py-2 font-semibold"
+              value={detailForm.status}
+              onChange={(event) => setDetailForm((prev) => ({ ...prev, status: event.target.value }))}
+              aria-label="Статус проекта"
+            >
+              {statusOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+            <div className="relative min-w-0">
+              <Input
+                className="h-10 min-w-0 py-2 pr-7 font-black"
+                value={detailForm.total_amount}
+                onChange={(event) => setDetailForm((prev) => ({ ...prev, total_amount: formatAmountInput(event.target.value) }))}
+                inputMode="numeric"
+                aria-label="Стоимость проекта"
+                placeholder="120 000"
+              />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-slate-400">₽</span>
+            </div>
+          </div>
+        ) : null}
         onClose={closeProject}
         widthClassName="max-w-6xl"
         bodyClassName="min-h-0 overflow-x-hidden bg-white"
@@ -3555,38 +3592,6 @@ export default function Projects() {
         {activeProject && (
           <div className="space-y-5">
             <div className="space-y-5">
-              <div className="grid gap-3 rounded-[22px] border border-slate-200 bg-slate-50/70 p-4 md:grid-cols-[minmax(0,1.5fr)_minmax(180px,0.6fr)_minmax(180px,0.6fr)]">
-                <div className="space-y-2">
-                  <Label>Проект</Label>
-                  <Input
-                    value={detailForm.title}
-                    onChange={(event) => setDetailForm((prev) => ({ ...prev, title: event.target.value }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Статус</Label>
-                  <Select
-                    value={detailForm.status}
-                    onChange={(event) => setDetailForm((prev) => ({ ...prev, status: event.target.value }))}
-                  >
-                    {statusOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Стоимость</Label>
-                  <Input
-                    value={detailForm.total_amount}
-                    onChange={(event) => setDetailForm((prev) => ({ ...prev, total_amount: formatAmountInput(event.target.value) }))}
-                    inputMode="numeric"
-                    placeholder="120 000"
-                  />
-                </div>
-              </div>
-
               <div className="grid overflow-hidden rounded-[22px] border border-slate-200 bg-slate-50/70 md:grid-cols-[1.1fr_1.35fr]">
                 <div className="min-w-0 border-b border-slate-200 p-4 md:border-b-0 md:border-r">
                   <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Клиент</div>

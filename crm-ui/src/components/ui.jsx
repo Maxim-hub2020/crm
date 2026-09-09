@@ -67,6 +67,7 @@ export function Badge({ children, className = "" }) {
 export function Modal({
   open,
   title,
+  headerContent,
   onClose,
   children,
   widthClassName = "max-w-3xl",
@@ -83,9 +84,11 @@ export function Modal({
         className={`crm-modal-panel relative z-10 flex w-full flex-col overflow-hidden rounded-3xl bg-white shadow-2xl sm:rounded-[32px] ${widthClassName}`}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-2.5 sm:px-7 sm:py-3.5">
-          <h2 className="truncate pr-3 text-base font-bold uppercase tracking-tight text-gray-900 sm:pr-4 sm:text-xl">{title}</h2>
+          {headerContent || (
+            <h2 className="truncate pr-3 text-base font-bold uppercase tracking-tight text-gray-900 sm:pr-4 sm:text-xl">{title}</h2>
+          )}
           <button
-            className="rounded-full bg-gray-100 p-2 text-gray-500 transition hover:bg-gray-200"
+            className="shrink-0 rounded-full bg-gray-100 p-2 text-gray-500 transition hover:bg-gray-200"
             onClick={onClose}
             type="button"
           >
