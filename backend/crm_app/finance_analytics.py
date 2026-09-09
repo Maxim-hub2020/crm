@@ -28,11 +28,6 @@ REQUIRED_EXPENSE_GROUPS = [
         "keywords": ("контрагент", "подрядчик", "поставщик"),
     },
     {
-        "key": "calculations",
-        "label": "Расчеты",
-        "keywords": ("расчет", "расчёт"),
-    },
-    {
         "key": "components",
         "label": "Комплектующие",
         "keywords": ("комплект", "материал", "фурнитур", "расходник"),
@@ -43,14 +38,12 @@ FALLBACK_REQUIRED_EXPENSE_RATIOS = {
     "delivery": Decimal("0.05"),
     "montage": Decimal("0.12"),
     "contractors": Decimal("0.08"),
-    "calculations": Decimal("0.03"),
     "components": Decimal("0.25"),
 }
 FALLBACK_REQUIRED_EXPENSE_MINIMUMS = {
     "delivery": Decimal("2500"),
     "montage": Decimal("7000"),
     "contractors": Decimal("0"),
-    "calculations": Decimal("0"),
     "components": Decimal("0"),
 }
 FALLBACK_TOTAL_EXPENSE_RATIO = sum(FALLBACK_REQUIRED_EXPENSE_RATIOS.values(), Decimal("0"))
@@ -230,7 +223,11 @@ def build_project_finance_analytics(project):
             }
         )
 
-    missing_required_expenses = [item["label"] for item in required_expenses if not item["present"]]
+    missing_required_expenses = [
+        item["label"]
+        for item in required_expenses
+        if item["key"] in ALWAYS_FORECAST_REQUIRED_GROUPS and not item["present"]
+    ]
     paid_in_full = expected_income > 0 and income_paid >= expected_income
     low_margin = margin_percent is not None and margin_percent < MARGIN_WARNING_PERCENT
     is_terminal_status = _is_terminal_status(project)
@@ -486,11 +483,37 @@ def _build_learned_category_forecast(expected_income, current_payments, basis):
     return rows, _money(estimated_total)
 
 
-def _build_project_expense_prediction(project, reference_projects):
+def _build_reference_candidates(reference_projects):
+    candidates = []
+    for reference_project in reference_projects:
+        reference_analytics = build_project_finance_analytics(reference_project)
+        if not _reference_project_learning_ready(reference_project, reference_analytics):
+            continue
+        reference_income = Decimal(reference_analytics["expected_income"])
+        reference_expense = Decimal(reference_analytics["expense_total"])
+        reference_expense_payments = _current_expense_payments(reference_project)
+        candidates.append(
+            {
+                "project": reference_project,
+                "analytics": reference_analytics,
+                "expense_ratio": reference_expense / reference_income,
+                "expense_group_totals": _expense_group_totals(reference_expense_payments),
+                "expense_category_totals": _expense_category_totals(reference_expense_payments),
+            }
+        )
+    return candidates
+
+
+def _build_project_expense_prediction(
+    project,
+    reference_projects=None,
+    reference_candidates=None,
+    project_analytics=None,
+):
     if not project:
         return None
 
-    project_analytics = build_project_finance_analytics(project)
+    project_analytics = project_analytics or build_project_finance_analytics(project)
     expected_income = Decimal(project_analytics["expected_income"])
     current_expense = Decimal(project_analytics["expense_total"])
     current_expense_payments = _current_expense_payments(project)
@@ -515,35 +538,24 @@ def _build_project_expense_prediction(project, reference_projects):
     if expected_income <= 0:
         return empty_prediction
 
-    candidates = []
-    for reference_project in reference_projects:
-        if reference_project.pk == project.pk:
-            continue
-
-        reference_analytics = build_project_finance_analytics(reference_project)
-        if not _reference_project_learning_ready(reference_project, reference_analytics):
-            continue
-        reference_income = Decimal(reference_analytics["expected_income"])
-        reference_expense = Decimal(reference_analytics["expense_total"])
-        reference_expense_payments = _current_expense_payments(reference_project)
-
-        candidates.append(
-            {
-                "project": reference_project,
-                "analytics": reference_analytics,
-                "expense_ratio": reference_expense / reference_income,
-                "expense_group_totals": _expense_group_totals(reference_expense_payments),
-                "expense_category_totals": _expense_category_totals(reference_expense_payments),
-                "score": _project_similarity_score(project, reference_project),
-            }
-        )
+    prepared_candidates = reference_candidates
+    if prepared_candidates is None:
+        prepared_candidates = _build_reference_candidates(reference_projects or [])
+    candidates = [
+        {
+            **item,
+            "score": _project_similarity_score(project, item["project"]),
+        }
+        for item in prepared_candidates
+        if item["project"].pk != project.pk
+    ]
 
     matching_candidates = [item for item in candidates if item["score"] > 0]
     basis = sorted(
         matching_candidates or candidates,
         key=lambda item: (item["score"], item["project"].created_at or timezone.now()),
         reverse=True,
-    )[:5]
+    )
 
     if basis:
         average_ratio = sum((item["expense_ratio"] for item in basis), Decimal("0")) / Decimal(len(basis))
@@ -608,6 +620,20 @@ def _build_project_expense_prediction(project, reference_projects):
     }
 
 
+def _history_aware_missing_expenses(analytics, expense_prediction):
+    labels = list(analytics.get("missing_required_expenses") or [])
+    seen = {label.casefold() for label in labels}
+    for item in (expense_prediction or {}).get("learned_expense_forecast", []):
+        if item.get("status") not in {"missing", "partial"}:
+            continue
+        label = str(item.get("label") or "").strip()
+        normalized_label = label.casefold()
+        if label and normalized_label not in seen:
+            labels.append(label)
+            seen.add(normalized_label)
+    return labels
+
+
 def build_finance_overview(projects_queryset, payments_queryset, filters=None, reference_projects_queryset=None):
     now = timezone.now()
     projects = list(projects_queryset.select_related("client").order_by("-created_at", "-id"))
@@ -657,10 +683,25 @@ def build_finance_overview(projects_queryset, payments_queryset, filters=None, r
         key=lambda item: (item["type"], -Decimal(item["total"]), item["name"]),
     )
 
+    reference_candidates = _build_reference_candidates(reference_projects)
     project_rows = []
     for project in projects:
         analytics = build_project_finance_analytics(project)
-        project_rows.append(_serialize_project_analytics(project, analytics))
+        project_row = _serialize_project_analytics(project, analytics)
+        if analytics["expense_review_active"]:
+            expense_prediction = _build_project_expense_prediction(
+                project,
+                reference_candidates=reference_candidates,
+                project_analytics=analytics,
+            )
+            missing_expenses = _history_aware_missing_expenses(analytics, expense_prediction)
+            project_row["missing_required_expenses"] = missing_expenses
+            project_row["needs_attention"] = bool(
+                analytics["low_margin"] or missing_expenses or not analytics["paid_in_full"]
+            )
+            project_row["expense_prediction_basis_count"] = expense_prediction.get("basis_project_count", 0)
+            project_row["expense_prediction_confidence"] = expense_prediction.get("confidence", "none")
+        project_rows.append(project_row)
 
     at_risk_projects = sorted(
         [project for project in project_rows if project["needs_attention"]],
@@ -684,7 +725,12 @@ def build_finance_overview(projects_queryset, payments_queryset, filters=None, r
     if filter_project_id and filter_project_id != "all" and len(projects) == 1:
         selected_project = projects[0]
 
-    expense_prediction = _build_project_expense_prediction(selected_project, reference_projects)
+    selected_project_analytics = build_project_finance_analytics(selected_project) if selected_project else None
+    expense_prediction = _build_project_expense_prediction(
+        selected_project,
+        reference_candidates=reference_candidates,
+        project_analytics=selected_project_analytics,
+    )
     if (
         selected_project
         and _is_expense_review_status(selected_project)
@@ -800,6 +846,7 @@ def build_cash_forecast(projects_queryset, payments_queryset, reference_projects
     projects = list(projects_queryset.select_related("client").prefetch_related("payments").order_by("-created_at", "-id"))
     reference_source = reference_projects_queryset if reference_projects_queryset is not None else projects_queryset
     reference_projects = list(reference_source.select_related("client").prefetch_related("payments"))
+    reference_candidates = _build_reference_candidates(reference_projects)
     payments = list(payments_queryset.select_related("project", "category", "account").order_by("paid_at", "id"))
 
     buckets = {
@@ -849,7 +896,11 @@ def build_cash_forecast(projects_queryset, payments_queryset, reference_projects
         due_date = _bucket_date_for_project(project, statuses, today)
         bucket = buckets[_bucket_key_for_date(due_date, today)]
         receivable = _money(max(expected_income - income_paid, Decimal("0")))
-        expense_prediction = _build_project_expense_prediction(project, reference_projects)
+        expense_prediction = _build_project_expense_prediction(
+            project,
+            reference_candidates=reference_candidates,
+            project_analytics=analytics,
+        )
         estimated_expense_total = _money(
             Decimal(expense_prediction["estimated_expense_total"])
             if expense_prediction and expense_prediction.get("estimated_expense_total")
@@ -881,7 +932,9 @@ def build_cash_forecast(projects_queryset, payments_queryset, reference_projects
                 item["label"]
                 for item in (expense_prediction or {}).get("required_expense_forecast", [])
                 if Decimal(item.get("remaining") or "0") > 0
-            ][:4]
+            ]
+            missing_required.extend((expense_prediction or {}).get("missing_learned_expenses", []))
+            missing_required = list(dict.fromkeys(missing_required))[:4]
             _add_cash_item(
                 bucket,
                 {

@@ -1889,8 +1889,8 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertTrue(response.data["needs_attention"])
         self.assertEqual(response.data["margin_percent"], "20.00")
         self.assertIn("Доставка", response.data["missing_required_expenses"])
-        self.assertIn("Контрагенты", response.data["missing_required_expenses"])
-        self.assertIn("Расчеты", response.data["missing_required_expenses"])
+        self.assertIn("Монтаж", response.data["missing_required_expenses"])
+        self.assertNotIn("Расчеты", response.data["missing_required_expenses"])
         self.assertNotIn("Комплектующие", response.data["missing_required_expenses"])
 
     def test_finance_analytics_summary_counts_operations_and_risky_projects(self):
@@ -2065,7 +2065,7 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
             client_name="Target Client",
             client_phone="+79000002210",
             total_amount=Decimal("80000.00"),
-            status="design",
+            status="montage",
         )
         Payment.objects.create(
             project=target_project,
@@ -2094,6 +2094,12 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
             prediction["missing_learned_expenses"],
             ["Стекло", "Фурнитура для душевой", "Доставка"],
         )
+        risk_row = response.data["at_risk_projects"][0]
+        self.assertEqual(risk_row["id"], target_project.id)
+        self.assertEqual(risk_row["expense_prediction_basis_count"], 2)
+        self.assertIn("Стекло", risk_row["missing_required_expenses"])
+        self.assertIn("Фурнитура для душевой", risk_row["missing_required_expenses"])
+        self.assertNotIn("Расчеты", risk_row["missing_required_expenses"])
 
     @patch("crm_app.views.GeminiClient")
     def test_cash_forecast_ai_falls_back_when_gemini_truncates_text(self, mocked_client_class):

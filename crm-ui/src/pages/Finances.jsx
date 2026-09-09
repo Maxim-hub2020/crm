@@ -423,9 +423,19 @@ function FinanceAnalyticsBlock({
                 onClick={() => onProjectOpen?.(project.id)}
               >
                 <div className="font-black text-slate-900">{project.title}</div>
-                <div className="mt-1 text-xs font-semibold text-slate-500">
-                  Маржа: {formatPercent(project.margin_percent)} · не хватает: {project.missing_required_expenses.join(", ") || "нет"}
-                </div>
+                <div className="mt-1 text-xs font-semibold text-slate-500">Маржа по оплаченным операциям: {formatPercent(project.margin_percent)}</div>
+                {project.missing_required_expenses.length ? (
+                  <div className="mt-1 text-xs font-semibold text-amber-700">
+                    Проверить статьи расходов: {project.missing_required_expenses.join(", ")}
+                  </div>
+                ) : !project.paid_in_full ? (
+                  <div className="mt-1 text-xs font-semibold text-amber-700">Оплата клиента ещё не закрывает сумму проекта.</div>
+                ) : null}
+                {project.expense_prediction_basis_count ? (
+                  <div className="mt-1 text-[10px] font-bold text-slate-400">
+                    Сравнение с завершёнными проектами: {project.expense_prediction_basis_count}
+                  </div>
+                ) : null}
                 <div className="mt-2 text-xs font-black text-blue-600">Открыть карточку проекта</div>
               </button>
             ))}

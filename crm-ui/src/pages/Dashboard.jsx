@@ -320,7 +320,13 @@ export default function Dashboard() {
               <ProjectRow
                 key={project.id}
                 project={{ ...project, order_number_label: "" }}
-                meta={project.low_margin ? `Маржа ${Number(project.margin_percent || 0).toLocaleString("ru-RU")}%` : "Проверить расходы"}
+                meta={
+                  project.low_margin
+                    ? `Маржа ${Number(project.margin_percent || 0).toLocaleString("ru-RU")}%`
+                    : project.missing_required_expenses?.length
+                      ? `Проверить: ${project.missing_required_expenses.slice(0, 2).join(", ")}`
+                      : "Не закрыта оплата"
+                }
                 tone="amber"
                 onClick={() => openProject(project.id, "finances")}
               />
