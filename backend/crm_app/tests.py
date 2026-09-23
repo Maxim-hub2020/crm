@@ -14,7 +14,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from .dadata import dadata_query
 from .gemini_client import GeminiClient
-from .models import Account, CalculatorQuote, CalculatorSettings, ChatIntegrationSettings, Client, ClientBonusTransaction, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, ProjectStatus, Task, User, Workspace, YandexDiskSettings
+from .models import Account, CalculatorQuote, CalculatorSettings, ChatIntegrationSettings, Client, ClientBonusTransaction, FinanceCategory, MeasurementSheet, Payment, Project, ProjectComment, ProjectCustomField, ProjectStatus, Task, User, Workspace, YandexDiskSettings
 
 
 class AuthenticatedApiMixin:
@@ -1097,6 +1097,43 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
         result_keys = {(row["type"], row["id"]) for row in response.data["results"]}
         self.assertIn(("client", self.client_card.id), result_keys)
         self.assertIn(("project", project.id), result_keys)
+
+    def test_global_search_matches_project_number_in_common_formats(self):
+        project = Project.objects.create(
+            manager=self.manager,
+            title="Numbered Project",
+            client_name=self.client_card.name,
+            client_phone=self.client_card.phone,
+            order_number=41,
+        )
+        api_client = self.auth_client_for(self.manager)
+
+        for query in ("41", "0041", "№0041"):
+            response = api_client.get("/api/global-search/", {"q": query})
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertIn(project.id, [row["project_id"] for row in response.data["results"] if row.get("project_id")])
+
+    def test_global_search_matches_project_custom_fields_and_measurement(self):
+        project = Project.objects.create(
+            manager=self.manager,
+            title="Mirror",
+            client_name=self.client_card.name,
+            client_phone=self.client_card.phone,
+            custom_fields={"material": "бронзовое зеркало"},
+        )
+        MeasurementSheet.objects.create(
+            workspace=self.manager.workspace,
+            project=project,
+            created_by=self.manager,
+            data={"frame_profile": "профиль шампань"},
+        )
+        api_client = self.auth_client_for(self.manager)
+
+        for query in ("бронзовое", "шампань"):
+            with self.subTest(query=query):
+                response = api_client.get("/api/global-search/", {"q": query})
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertIn(project.id, [row["project_id"] for row in response.data["results"] if row.get("project_id")])
 
     def test_client_rejects_invalid_phone(self):
         api_client = self.auth_client_for(self.manager)

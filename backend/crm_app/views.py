@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import uuid
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
@@ -8,8 +9,8 @@ from urllib.parse import urlencode
 
 from django.core.files.storage import default_storage
 from django.db import transaction
-from django.db.models import F, Q, Value
-from django.db.models.functions import Replace
+from django.db.models import CharField, F, Q, Value
+from django.db.models.functions import Cast, Replace
 from django.http import FileResponse
 from django.shortcuts import redirect
 from django.utils import timezone
@@ -111,6 +112,10 @@ def phone_digits_expression(field_name):
     for char in ("+", "-", " ", "(", ")"):
         expression = Replace(expression, Value(char), Value(""))
     return expression
+
+
+def json_contains_text(value, query):
+    return str(query or "").casefold() in json.dumps(value or {}, ensure_ascii=False, default=str).casefold()
 
 
 def _request_params(request):
@@ -888,7 +893,15 @@ def global_search_view(request):
 
     workspace = current_workspace(request.user)
     phone_query = phone_search_digits(query)
-    project_queryset = Project.objects.filter(workspace=workspace).select_related("client")
+    query_digits = re.sub(r"\D", "", query)
+    project_number = int(query_digits) if query_digits and len(query_digits) <= 6 else None
+    project_queryset = (
+        Project.objects.filter(workspace=workspace)
+        .select_related("client")
+        .annotate(
+            order_number_text=Cast("order_number", output_field=CharField()),
+        )
+    )
     if not request.user.is_admin():
         project_queryset = project_queryset.filter(manager=request.user)
 
@@ -897,15 +910,59 @@ def global_search_view(request):
         | Q(client_name__icontains=query)
         | Q(client_phone__icontains=query)
         | Q(object_address__icontains=query)
+        | Q(apartment__icontains=query)
+        | Q(entrance__icontains=query)
+        | Q(floor__icontains=query)
         | Q(description__icontains=query)
+        | Q(categories__icontains=query)
+        | Q(status__icontains=query)
+        | Q(calculator_quote__number__icontains=query)
     )
+    if project_number is not None:
+        project_filter |= Q(order_number=project_number) | Q(order_number_text__icontains=query_digits.lstrip("0") or "0")
     if phone_query:
         project_queryset = project_queryset.annotate(client_phone_digits=phone_digits_expression("client_phone"))
         project_filter |= Q(client_phone__icontains=phone_query) | Q(client_phone_digits__icontains=phone_query)
+
+    related_project_ids = {
+        project_id
+        for project_id, custom_fields in project_queryset.values_list("id", "custom_fields")
+        if json_contains_text(custom_fields, query)
+    }
+    related_project_ids.update(
+        project_id
+        for project_id, data in MeasurementSheet.objects.filter(project__in=project_queryset).values_list("project_id", "data")
+        if json_contains_text(data, query)
+    )
+    related_project_ids.update(
+        project_id
+        for project_id, summary, product_type, specification in ProductionPlan.objects.filter(project__in=project_queryset).values_list(
+            "project_id", "summary", "product_type", "specification"
+        )
+        if query.casefold() in f"{summary} {product_type}".casefold() or json_contains_text(specification, query)
+    )
+    related_project_ids.update(
+        project_id
+        for project_id, payload in CalculatorQuote.objects.filter(project__in=project_queryset).values_list("project_id", "payload")
+        if project_id and json_contains_text(payload, query)
+    )
+    if related_project_ids:
+        project_filter |= Q(id__in=related_project_ids)
     projects = list(project_queryset.filter(project_filter).order_by("-updated_at")[:8])
 
-    client_queryset = Client.objects.filter(workspace=workspace)
-    client_filter = Q(name__icontains=query) | Q(phone__icontains=query) | Q(email__icontains=query) | Q(address__icontains=query)
+    client_queryset = Client.objects.filter(workspace=workspace).annotate(
+        bonus_balance_text=Cast("bonus_balance", output_field=CharField()),
+    )
+    client_filter = (
+        Q(name__icontains=query)
+        | Q(contract_full_name__icontains=query)
+        | Q(phone__icontains=query)
+        | Q(email__icontains=query)
+        | Q(address__icontains=query)
+        | Q(apartment__icontains=query)
+        | Q(floor__icontains=query)
+        | Q(bonus_balance_text__icontains=query)
+    )
     if phone_query:
         client_queryset = client_queryset.annotate(phone_digits=phone_digits_expression("phone"))
         client_filter |= Q(phone__icontains=phone_query) | Q(phone_digits__icontains=phone_query)
@@ -915,15 +972,30 @@ def global_search_view(request):
     task_queryset = task_queryset.filter(Q(project__isnull=True) | Q(project__workspace=workspace))
     if not request.user.is_admin():
         task_queryset = task_queryset.filter(assignee=request.user)
-    tasks = list(task_queryset.filter(Q(title__icontains=query) | Q(notes__icontains=query) | Q(project__title__icontains=query)).order_by("status", "due_date")[:6])
+    tasks = list(task_queryset.filter(
+        Q(title__icontains=query)
+        | Q(notes__icontains=query)
+        | Q(status__icontains=query)
+        | Q(priority__icontains=query)
+        | Q(project__title__icontains=query)
+        | Q(project__client_name__icontains=query)
+    ).order_by("status", "due_date")[:6])
 
     payment_queryset = Payment.objects.select_related("project", "category").filter(project__in=project_queryset)
     payments = list(
-        payment_queryset.filter(
+        payment_queryset.annotate(
+            amount_text=Cast("amount", output_field=CharField()),
+            paid_at_text=Cast("paid_at", output_field=CharField()),
+        ).filter(
             Q(comment__icontains=query)
             | Q(project__title__icontains=query)
             | Q(project__client_name__icontains=query)
             | Q(category__name__icontains=query)
+            | Q(account__name__icontains=query)
+            | Q(type__icontains=query)
+            | Q(method__icontains=query)
+            | Q(amount_text__icontains=query)
+            | Q(paid_at_text__icontains=query)
         ).order_by("-paid_at")[:6]
     )
 
