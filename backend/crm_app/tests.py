@@ -2651,6 +2651,54 @@ class TestYandexDiskArchiveApi(AuthenticatedApiMixin, APITestCase):
         self.assertIsNotNone(project.yandex_disk_archived_at)
         self.assertEqual(project.yandex_disk_error, "")
 
+    def test_completed_project_retries_archive_move_on_later_save(self):
+        project = Project.objects.create(
+            manager=self.admin,
+            title="Душевая",
+            client_name="Антон",
+            client_phone="+7-900-000-00-01",
+            status=self.closed_status.code,
+            yandex_disk_path="disk:/CRM/Проекты/№0001 · Душевая",
+            yandex_disk_web_url="https://disk.yandex.ru/client/disk/CRM/Проекты/old",
+            yandex_disk_error="Temporary Yandex error",
+        )
+        client = self.auth_client_for(self.admin)
+
+        with patch("crm_app.yandex_disk.ensure_folder_tree") as ensure_folder_tree, patch("crm_app.yandex_disk.move_resource") as move_resource:
+            response = client.patch(
+                f"/api/projects/{project.id}/",
+                {"description": "Повторная синхронизация архива"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        project.refresh_from_db()
+        expected_path = "disk:/CRM/Архив/№0001 · Душевая"
+        ensure_folder_tree.assert_called_once_with("test-token", "disk:/CRM/Архив")
+        move_resource.assert_called_once_with("test-token", "disk:/CRM/Проекты/№0001 · Душевая", expected_path)
+        self.assertEqual(project.yandex_disk_path, expected_path)
+        self.assertIsNotNone(project.yandex_disk_archived_at)
+        self.assertEqual(project.yandex_disk_error, "")
+
+    @patch("crm_app.views.archive_project_disk_folder")
+    def test_project_created_as_completed_is_sent_directly_to_archive(self, archive_folder):
+        client = self.auth_client_for(self.admin)
+
+        response = client.post(
+            "/api/projects/",
+            {
+                "title": "Готовый проект",
+                "client_name": "Антон",
+                "client_phone": "+7-900-000-00-02",
+                "status": self.closed_status.code,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        archive_folder.assert_called_once()
+        self.assertEqual(archive_folder.call_args.args[0].id, response.data["id"])
+
 
 class TestYandexDiskOAuthApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):

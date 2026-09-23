@@ -964,7 +964,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
         user = self.request.user
         project = serializer.save(manager=user, workspace=workspace)
         apply_task_templates_for_project(project, actor=user)
-        if not is_application_project_status(project):
+        if is_archive_project_status(project):
+            archive_project_disk_folder(project, actor=user)
+        elif not is_application_project_status(project):
             ensure_project_disk_folder(project, actor=user)
         create_audit_log(
             user,
@@ -983,10 +985,12 @@ class ProjectViewSet(viewsets.ModelViewSet):
         project = serializer.save()
         if previous_status != project.status:
             apply_task_templates_for_project(project, actor=self.request.user)
-            if is_archive_project_status(project):
-                archive_project_disk_folder(project, actor=self.request.user)
-            elif was_application and not is_application_project_status(project):
+            if was_application and not is_application_project_status(project) and not is_archive_project_status(project):
                 ensure_project_disk_folder(project, actor=self.request.user)
+        # Retry the archive sync on every save of a completed project. This makes
+        # the move recover automatically after a temporary Yandex Disk failure.
+        if is_archive_project_status(project):
+            archive_project_disk_folder(project, actor=self.request.user)
         create_audit_log(
             self.request.user,
             "project",
