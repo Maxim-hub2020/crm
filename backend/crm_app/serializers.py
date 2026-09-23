@@ -24,6 +24,7 @@ from .models import (
     Project,
     ProjectComment,
     ProjectCustomField,
+    ProductionPlan,
     ProjectStatus,
     Task,
     TaskTemplate,
@@ -848,6 +849,76 @@ class ProjectCommentSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             "text": {"required": True},
         }
+
+
+class ProductionPlanSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.SerializerMethodField()
+    approved_by_name = serializers.SerializerMethodField()
+
+    def _visible_projects(self):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        workspace = current_workspace(user)
+        projects = Project.objects.filter(workspace=workspace)
+        if user and not user.is_admin():
+            projects = projects.filter(manager=user)
+        return projects
+
+    def validate_project(self, project):
+        if not self._visible_projects().filter(pk=project.pk).exists():
+            raise serializers.ValidationError("Проект не найден или недоступен.")
+        if self.instance and self.instance.project_id != project.id:
+            raise serializers.ValidationError("Нельзя перенести ревизию в другой проект.")
+        return project
+
+    def validate(self, attrs):
+        questions = attrs.get("blocking_questions", getattr(self.instance, "blocking_questions", [])) or []
+        status = attrs.get("status", getattr(self.instance, "status", ProductionPlan.Status.DRAFT))
+        if status == ProductionPlan.Status.READY_FOR_REVIEW and questions:
+            raise serializers.ValidationError({"status": "Сначала закройте все обязательные вопросы."})
+        if self.instance and self.instance.status == ProductionPlan.Status.APPROVED and attrs:
+            raise serializers.ValidationError("Утвержденную ревизию менять нельзя. Создайте новую ревизию.")
+        if status == ProductionPlan.Status.APPROVED:
+            raise serializers.ValidationError({"status": "Используйте отдельное действие утверждения."})
+        return attrs
+
+    def create(self, validated_data):
+        project = validated_data["project"]
+        with transaction.atomic():
+            # Lock the project so two simultaneous chat requests cannot receive
+            # the same revision number.
+            Project.objects.select_for_update().get(pk=project.pk)
+            last_revision = ProductionPlan.objects.filter(project=project).order_by("-revision").values_list("revision", flat=True).first()
+            validated_data["revision"] = (last_revision or 0) + 1
+            validated_data["workspace"] = project.workspace
+            validated_data["created_by"] = self.context["request"].user
+            return super().create(validated_data)
+
+    def get_created_by_name(self, obj):
+        return obj.created_by.get_full_name() or obj.created_by.username
+
+    def get_approved_by_name(self, obj):
+        if not obj.approved_by:
+            return ""
+        return obj.approved_by.get_full_name() or obj.approved_by.username
+
+    class Meta:
+        model = ProductionPlan
+        fields = "__all__"
+        # Revision is assigned server-side; DRF's generated uniqueness validator
+        # would otherwise validate every new plan against the default revision 1.
+        validators = []
+        read_only_fields = [
+            "workspace",
+            "revision",
+            "created_by",
+            "approved_by",
+            "approved_at",
+            "created_at",
+            "updated_at",
+            "created_by_name",
+            "approved_by_name",
+        ]
 
 
 class TaskSerializer(serializers.ModelSerializer):

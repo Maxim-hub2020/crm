@@ -630,6 +630,52 @@ class ProjectComment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class ProductionPlan(models.Model):
+    class ProductType(models.TextChoices):
+        SHOWER = "shower", "Shower"
+        MIRROR = "mirror", "Mirror"
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        NEEDS_INPUT = "needs_input", "Needs input"
+        READY_FOR_REVIEW = "ready_for_review", "Ready for review"
+        APPROVED = "approved", "Approved"
+
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="production_plans", db_index=True)
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="production_plans")
+    revision = models.PositiveIntegerField(default=1)
+    product_type = models.CharField(max_length=20, choices=ProductType.choices)
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.DRAFT, db_index=True)
+    summary = models.TextField(blank=True, default="")
+    specification = models.JSONField(default=dict, blank=True)
+    blocking_questions = models.JSONField(default=list, blank=True)
+    warnings = models.JSONField(default=list, blank=True)
+    source_files = models.JSONField(default=list, blank=True)
+    output_files = models.JSONField(default=list, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="created_production_plans")
+    approved_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="approved_production_plans",
+        blank=True,
+        null=True,
+    )
+    approved_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-revision", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["project", "revision"], name="unique_project_production_plan_revision"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.workspace_id and self.project_id:
+            self.workspace = self.project.workspace
+        super().save(*args, **kwargs)
+
+
 class Task(models.Model):
     class Status(models.TextChoices):
         OPEN = "open", "Open"

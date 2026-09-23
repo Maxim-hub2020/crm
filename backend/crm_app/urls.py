@@ -11,6 +11,7 @@ from .views import (
     ProjectCommentViewSet,
     ProjectCustomFieldViewSet,
     ProjectStatusViewSet,
+    ProductionPlanViewSet,
     ProjectViewSet,
     TaskViewSet,
     TaskTemplateViewSet,
@@ -49,6 +50,7 @@ router.register(r"client-bonus-transactions", ClientBonusTransactionViewSet, bas
 router.register(r"projects", ProjectViewSet, basename="projects")
 router.register(r"payments", PaymentViewSet, basename="payments")
 router.register(r"project-comments", ProjectCommentViewSet, basename="project-comments")
+router.register(r"production-plans", ProductionPlanViewSet, basename="production-plans")
 router.register(r"project-statuses", ProjectStatusViewSet, basename="project-statuses")
 router.register(r"finance-categories", FinanceCategoryViewSet, basename="finance-categories")
 router.register(r"accounts", AccountViewSet, basename="accounts")

@@ -47,6 +47,7 @@ from .models import (
     ProjectComment,
     ProjectCustomField,
     ProjectStatus,
+    ProductionPlan,
     Task,
     TaskTemplate,
     User,
@@ -76,6 +77,7 @@ from .serializers import (
     ProjectCustomFieldSerializer,
     ProjectStatusSerializer,
     ProjectSerializer,
+    ProductionPlanSerializer,
     TaskSerializer,
     TaskTemplateSerializer,
     YandexDiskSettingsSerializer,
@@ -1441,6 +1443,51 @@ class ProjectCommentViewSet(viewsets.ModelViewSet):
         before = snapshot_model(instance, ["id", "project_id", "text"])
         create_audit_log(self.request.user, "comment", instance.id, "delete", before=before, workspace=workspace)
         instance.delete()
+
+
+class ProductionPlanViewSet(viewsets.ModelViewSet):
+    serializer_class = ProductionPlanSerializer
+    permission_classes = [IsAuthenticatedAny]
+
+    def get_queryset(self):
+        workspace = current_workspace(self.request.user)
+        queryset = ProductionPlan.objects.select_related("project", "created_by", "approved_by").filter(workspace=workspace)
+        if not self.request.user.is_admin():
+            queryset = queryset.filter(project__manager=self.request.user)
+        project_id = self.request.query_params.get("project")
+        if project_id:
+            queryset = queryset.filter(project_id=project_id)
+        return queryset.order_by("-revision", "-id")
+
+    def perform_destroy(self, instance):
+        if instance.status == ProductionPlan.Status.APPROVED:
+            raise ValidationError({"detail": "Утвержденную ревизию удалить нельзя."})
+        instance.delete()
+
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        plan = self.get_object()
+        if not request.user.is_admin():
+            return Response({"detail": "Утверждать чертежи может только администратор."}, status=drf_status.HTTP_403_FORBIDDEN)
+        if request.data.get("confirm") is not True:
+            return Response({"detail": "Для утверждения передайте confirm=true."}, status=drf_status.HTTP_400_BAD_REQUEST)
+        if plan.blocking_questions:
+            return Response({"detail": "Сначала закройте все обязательные вопросы."}, status=drf_status.HTTP_400_BAD_REQUEST)
+        if plan.status != ProductionPlan.Status.READY_FOR_REVIEW:
+            return Response({"detail": "Сначала переведите задание в статус готовности к проверке."}, status=drf_status.HTTP_400_BAD_REQUEST)
+        plan.status = ProductionPlan.Status.APPROVED
+        plan.approved_by = request.user
+        plan.approved_at = timezone.now()
+        plan.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
+        create_audit_log(
+            request.user,
+            "production_plan",
+            plan.id,
+            "approve",
+            after={"project_id": plan.project_id, "revision": plan.revision, "status": plan.status},
+            workspace=plan.workspace,
+        )
+        return Response(self.get_serializer(plan).data)
 
 
 class ProjectStatusViewSet(viewsets.ModelViewSet):
