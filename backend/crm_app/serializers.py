@@ -21,6 +21,8 @@ from .models import (
     DocumentTemplate,
     FinanceCategory,
     Payment,
+    MeasurementPhoto,
+    MeasurementSheet,
     Project,
     ProjectComment,
     ProjectCustomField,
@@ -919,6 +921,51 @@ class ProductionPlanSerializer(serializers.ModelSerializer):
             "created_by_name",
             "approved_by_name",
         ]
+
+
+class MeasurementPhotoSerializer(serializers.ModelSerializer):
+    url = serializers.SerializerMethodField()
+
+    def get_url(self, obj):
+        request = self.context.get("request")
+        url = obj.file.url if obj.file else ""
+        return request.build_absolute_uri(url) if request and url.startswith("/") else url
+
+    class Meta:
+        model = MeasurementPhoto
+        fields = ["id", "original_name", "url", "created_at"]
+        read_only_fields = fields
+
+
+class MeasurementSheetSerializer(serializers.ModelSerializer):
+    photos = MeasurementPhotoSerializer(many=True, read_only=True)
+
+    def validate_project(self, project):
+        request = self.context["request"]
+        queryset = Project.objects.filter(workspace=current_workspace(request.user))
+        if not request.user.is_admin():
+            queryset = queryset.filter(manager=request.user)
+        if not queryset.filter(pk=project.pk).exists():
+            raise serializers.ValidationError("Проект не найден или недоступен.")
+        return project
+
+    def create(self, validated_data):
+        project = validated_data["project"]
+        sheet, _ = MeasurementSheet.objects.update_or_create(
+            project=project,
+            defaults={
+                **validated_data,
+                "workspace": project.workspace,
+                "created_by": self.context["request"].user,
+            },
+        )
+        return sheet
+
+    class Meta:
+        model = MeasurementSheet
+        fields = "__all__"
+        extra_kwargs = {"project": {"validators": []}}
+        read_only_fields = ["workspace", "created_by", "created_at", "updated_at", "photos"]
 
 
 class TaskSerializer(serializers.ModelSerializer):

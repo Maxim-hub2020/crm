@@ -1,7 +1,7 @@
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
-from .models import ProductionPlan, Project, User, Workspace
+from .models import MeasurementSheet, ProductionPlan, Project, User, Workspace
 
 
 class TestProductionPlansApi(APITestCase):
@@ -64,3 +64,14 @@ class TestProductionPlansApi(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_measurement_sheet_is_upserted_and_isolated(self):
+        client = self.auth(self.admin)
+        first = client.post("/api/measurement-sheets/", {"project": self.project.id, "data": {"shape": "rectangle"}}, format="json")
+        second = client.post("/api/measurement-sheets/", {"project": self.project.id, "data": {"shape": "round"}}, format="json")
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(second.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(first.data["id"], second.data["id"])
+        self.assertEqual(MeasurementSheet.objects.get(project=self.project).data["shape"], "round")
+        hidden = self.auth(self.other_admin).get(f"/api/measurement-sheets/{first.data['id']}/")
+        self.assertEqual(hidden.status_code, status.HTTP_404_NOT_FOUND)

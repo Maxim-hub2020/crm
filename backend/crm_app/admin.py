@@ -12,6 +12,8 @@ from .models import (
     DocumentTemplate,
     FinanceCategory,
     Payment,
+    MeasurementPhoto,
+    MeasurementSheet,
     Project,
     ProjectCustomField,
     ProjectStatus,
@@ -30,6 +32,8 @@ admin.site.register(ClientBonusTransaction)
 admin.site.register(ProjectStatus)
 admin.site.register(Project)
 admin.site.register(ProductionPlan)
+admin.site.register(MeasurementSheet)
+admin.site.register(MeasurementPhoto)
 admin.site.register(Payment)
 admin.site.register(Task)
 admin.site.register(TaskTemplate)

@@ -8,6 +8,7 @@ from .views import (
     DocumentTemplateViewSet,
     FinanceCategoryViewSet,
     PaymentViewSet,
+    MeasurementSheetViewSet,
     ProjectCommentViewSet,
     ProjectCustomFieldViewSet,
     ProjectStatusViewSet,
@@ -51,6 +52,7 @@ router.register(r"projects", ProjectViewSet, basename="projects")
 router.register(r"payments", PaymentViewSet, basename="payments")
 router.register(r"project-comments", ProjectCommentViewSet, basename="project-comments")
 router.register(r"production-plans", ProductionPlanViewSet, basename="production-plans")
+router.register(r"measurement-sheets", MeasurementSheetViewSet, basename="measurement-sheets")
 router.register(r"project-statuses", ProjectStatusViewSet, basename="project-statuses")
 router.register(r"finance-categories", FinanceCategoryViewSet, basename="finance-categories")
 router.register(r"accounts", AccountViewSet, basename="accounts")

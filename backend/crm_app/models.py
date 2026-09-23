@@ -676,6 +676,27 @@ class ProductionPlan(models.Model):
         super().save(*args, **kwargs)
 
 
+class MeasurementSheet(models.Model):
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="measurement_sheets", db_index=True)
+    project = models.OneToOneField(Project, on_delete=models.CASCADE, related_name="measurement_sheet")
+    data = models.JSONField(default=dict, blank=True)
+    is_complete = models.BooleanField(default=False)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="created_measurement_sheets")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+def measurement_photo_upload_to(instance, filename):
+    return f"measurement_sheets/{instance.sheet.project_id}/{filename}"
+
+
+class MeasurementPhoto(models.Model):
+    sheet = models.ForeignKey(MeasurementSheet, on_delete=models.CASCADE, related_name="photos")
+    file = models.FileField(upload_to=measurement_photo_upload_to)
+    original_name = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class Task(models.Model):
     class Status(models.TextChoices):
         OPEN = "open", "Open"

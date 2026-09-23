@@ -43,6 +43,8 @@ from .models import (
     DocumentTemplate,
     FinanceCategory,
     Payment,
+    MeasurementPhoto,
+    MeasurementSheet,
     Project,
     ProjectComment,
     ProjectCustomField,
@@ -73,6 +75,7 @@ from .serializers import (
     FinanceCategorySerializer,
     MeSerializer,
     PaymentSerializer,
+    MeasurementSheetSerializer,
     ProjectCommentSerializer,
     ProjectCustomFieldSerializer,
     ProjectStatusSerializer,
@@ -1488,6 +1491,29 @@ class ProductionPlanViewSet(viewsets.ModelViewSet):
             workspace=plan.workspace,
         )
         return Response(self.get_serializer(plan).data)
+
+
+class MeasurementSheetViewSet(viewsets.ModelViewSet):
+    serializer_class = MeasurementSheetSerializer
+    permission_classes = [IsAuthenticatedAny]
+
+    def get_queryset(self):
+        queryset = MeasurementSheet.objects.prefetch_related("photos").filter(workspace=current_workspace(self.request.user))
+        if not self.request.user.is_admin():
+            queryset = queryset.filter(project__manager=self.request.user)
+        project_id = self.request.query_params.get("project")
+        return queryset.filter(project_id=project_id) if project_id else queryset
+
+    @action(detail=True, methods=["post"], parser_classes=[MultiPartParser, FormParser], url_path="photos")
+    def upload_photos(self, request, pk=None):
+        sheet = self.get_object()
+        files = request.FILES.getlist("files") or request.FILES.getlist("file")
+        if not files:
+            return Response({"detail": "Прикрепите хотя бы одну фотографию."}, status=drf_status.HTTP_400_BAD_REQUEST)
+        for uploaded in files:
+            MeasurementPhoto.objects.create(sheet=sheet, file=uploaded, original_name=uploaded.name or "photo")
+        sheet.refresh_from_db()
+        return Response(self.get_serializer(sheet).data)
 
 
 class ProjectStatusViewSet(viewsets.ModelViewSet):

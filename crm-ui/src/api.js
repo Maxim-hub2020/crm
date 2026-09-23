@@ -224,6 +224,28 @@ export async function fetchProjects() {
   return data;
 }
 
+export async function fetchMeasurementSheet(projectId) {
+  initApiAuth();
+  const { data } = await api.get("/api/measurement-sheets/", { params: { project: projectId } });
+  return Array.isArray(data) ? data[0] || null : data?.results?.[0] || null;
+}
+
+export async function saveMeasurementSheet(payload) {
+  initApiAuth();
+  const { data } = await api.post("/api/measurement-sheets/", payload);
+  return data;
+}
+
+export async function uploadMeasurementPhotos(sheetId, files) {
+  initApiAuth();
+  const formData = new FormData();
+  files.forEach((file) => formData.append("files", file));
+  const { data } = await api.post(`/api/measurement-sheets/${sheetId}/photos/`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+
 export async function fetchCalculatorLeads() {
   initApiAuth();
   const { data } = await api.get("/api/calculator-leads/");
