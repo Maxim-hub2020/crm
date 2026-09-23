@@ -78,6 +78,7 @@ import MeasurementSheet from "../components/MeasurementSheet.jsx";
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits, phoneSearchDigits } from "../utils/phone.js";
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
+const OFFLINE_PROJECTS_KEY = "crm_projects_offline_cache_v1";
 const PROJECT_DRAG_HOLD_MS = 1500;
 const PROJECT_DRAG_MOVE_CANCEL_PX = 12;
 
@@ -1124,10 +1125,19 @@ function ProjectDragGhost({ project, amount, ageDays, left, top, width }) {
   );
 }
 
+function readOfflineProjects() {
+  try {
+    const value = JSON.parse(localStorage.getItem(OFFLINE_PROJECTS_KEY) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function Projects() {
   const location = useLocation();
 
-  const [projects, setProjects] = useState([]);
+  const [projects, setProjects] = useState(readOfflineProjects);
   const [clients, setClients] = useState([]);
   const [payments, setPayments] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -1269,6 +1279,7 @@ export default function Projects() {
       ]);
 
       setProjects(projectRows);
+      localStorage.setItem(OFFLINE_PROJECTS_KEY, JSON.stringify(projectRows));
       setClients(clientRows);
       setPayments(paymentRows);
       setTasks(taskRows);
@@ -1336,7 +1347,7 @@ export default function Projects() {
 
   useEffect(() => {
     reloadData().catch(() => {
-      setProjects([]);
+      setProjects(readOfflineProjects());
       setClients([]);
       setPayments([]);
       setTasks([]);
@@ -1353,7 +1364,10 @@ export default function Projects() {
     const refreshProjects = () => {
       if (document.visibilityState !== "visible") return;
       void fetchProjects().then((rows) => {
-        if (active) setProjects(rows);
+        if (active) {
+          setProjects(rows);
+          localStorage.setItem(OFFLINE_PROJECTS_KEY, JSON.stringify(rows));
+        }
       }).catch(() => {});
     };
     const interval = window.setInterval(refreshProjects, 15000);
