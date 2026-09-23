@@ -3922,7 +3922,19 @@ export default function Projects() {
                       {activeProject.yandex_disk_error}
                     </div>
                   ) : null}
-                  <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                    {activeProject.calculator_quote_info?.url ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="justify-center px-3"
+                        onClick={() => window.open(activeProject.calculator_quote_info.url, "_blank", "noopener,noreferrer")}
+                        title="Открыть связанное коммерческое предложение в калькуляторе"
+                      >
+                        <Link size={16} />
+                        КП №{activeProject.calculator_quote_info.number}
+                      </Button>
+                    ) : null}
                     {activeProject.yandex_disk_web_url ? (
                       <Button
                         type="button"

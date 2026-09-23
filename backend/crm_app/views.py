@@ -954,7 +954,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         workspace = current_workspace(self.request.user)
-        qs = Project.objects.select_related("client").filter(workspace=workspace).order_by("-created_at")
+        qs = Project.objects.select_related("client", "calculator_quote").filter(workspace=workspace).order_by("-created_at")
         if self.request.user.is_admin():
             return qs
         return qs.filter(manager=self.request.user)

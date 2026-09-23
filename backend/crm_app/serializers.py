@@ -1,6 +1,8 @@
 import json
 import logging
+from urllib.parse import quote as url_quote
 
+from django.conf import settings
 from django.db import transaction
 from rest_framework import serializers
 from django.utils import timezone
@@ -141,6 +143,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     client_info = ClientSerializer(source="client", read_only=True)
     order_number_label = serializers.SerializerMethodField()
     referred_by_client_name = serializers.CharField(source="referred_by_client.name", read_only=True)
+    calculator_quote_info = serializers.SerializerMethodField()
 
     def _workspace(self):
         request = self.context.get("request")
@@ -345,6 +348,24 @@ class ProjectSerializer(serializers.ModelSerializer):
     def get_order_number_label(self, obj):
         return f"{obj.order_number:04d}" if obj.order_number else ""
 
+    def get_calculator_quote_info(self, obj):
+        try:
+            calculator_quote = obj.calculator_quote
+        except CalculatorQuote.DoesNotExist:
+            return None
+        if calculator_quote.lead_deleted:
+            return None
+        quote_id = str(calculator_quote.quote_id or "").strip()
+        if not quote_id:
+            return None
+        domain = str(settings.CALCULATOR_DOMAIN or "calc.cehcrm.ru").strip().strip("/")
+        return {
+            "id": quote_id,
+            "number": calculator_quote.number or quote_id[:8],
+            "url": f"https://{domain}/?quote={url_quote(quote_id, safe='')}",
+            "updated_at": calculator_quote.updated_at,
+        }
+
     class Meta:
         model = Project
         fields = "__all__"
@@ -354,6 +375,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "client_info",
+            "calculator_quote_info",
             "order_number",
             "order_number_label",
             "referred_by_client",

@@ -57,6 +57,18 @@ class CalculatorQuoteProjectTests(APITestCase):
         self.assertEqual(project.pk, project_id)
         self.assertEqual(project.total_amount, Decimal("75500"))
 
+    def test_project_exposes_direct_link_to_linked_quote(self):
+        self.sync()
+        project = Project.objects.get()
+        response = self.client.get(f"/api/projects/{project.pk}/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["calculator_quote_info"]["id"], self.quote["id"])
+        self.assertEqual(response.data["calculator_quote_info"]["number"], self.quote["number"])
+        self.assertEqual(
+            response.data["calculator_quote_info"]["url"],
+            "https://calc.cehcrm.ru/?quote=saved-quote-1",
+        )
+
     def test_stale_revision_does_not_change_project(self):
         self.sync()
         stale = deepcopy(self.quote)
