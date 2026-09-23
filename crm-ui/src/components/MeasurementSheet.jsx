@@ -4,6 +4,7 @@ import { Camera, CheckCircle2, Cloud, CloudOff, FileDown, Paperclip, Trash2 } fr
 import { extractApiErrorMessage, fetchMeasurementSheet, saveMeasurementSheet, uploadMeasurementPhotos } from "../api";
 import { Button, Input, Label, Select } from "./ui.jsx";
 import { addOfflineMeasurementPhoto, deleteOfflineMeasurementPhoto, listOfflineMeasurementPhotos } from "../utils/offlineMeasurements.js";
+import MeasurementCanvas, { createDefaultDiagram } from "./MeasurementCanvas.jsx";
 
 const EMPTY = {
   product_type: "mirror",
@@ -16,6 +17,7 @@ const EMPTY = {
   light_type: "none", light_offset: "", light_temperature: "4000",
   power_x: "", power_y: "", power_control: "switch",
   wall_material: "", mounting: "", wall_notes: "", openings: "", notes: "",
+  diagram: createDefaultDiagram(),
 };
 
 function storageKey(projectId) {
@@ -144,7 +146,7 @@ export default function MeasurementSheet({ project }) {
   }
 
   function printSheet() {
-    const rows = Object.entries(form).filter(([, value]) => value).map(([key, value]) => `<tr><td>${escapeHtml(key.replaceAll("_", " "))}</td><td>${escapeHtml(value)}</td></tr>`).join("");
+    const rows = Object.entries(form).filter(([key, value]) => key !== "diagram" && value).map(([key, value]) => `<tr><td>${escapeHtml(key.replaceAll("_", " "))}</td><td>${escapeHtml(value)}</td></tr>`).join("");
     const popup = window.open("", "_blank");
     if (!popup) return;
     popup.opener = null;
@@ -175,8 +177,9 @@ export default function MeasurementSheet({ project }) {
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Конструкция"><Select value={form.mirror_type} onChange={(e) => { const value = e.target.value; setForm((previous) => ({ ...previous, mirror_type: value, light_type: value === "backlight" ? "rear" : value === "frontlight" ? "front" : previous.light_type })); }}><option value="plain">Обычное зеркало</option><option value="backlight">Задняя подсветка</option><option value="frontlight">Лицевая подсветка</option><option value="frame">С рамкой</option><option value="frame_light">Рамка и подсветка</option></Select></Field>
-        <Field label="Форма"><Select value={form.shape} onChange={(e) => change("shape", e.target.value)}><option value="rectangle">Прямоугольник</option><option value="round">Круг</option><option value="oval">Овал</option><option value="arch">Арка</option><option value="custom">Произвольная</option></Select></Field>
+        <Field label="Форма"><Select value={form.shape} onChange={(e) => { const shape = e.target.value; setForm((previous) => ({ ...previous, shape, diagram: { ...createDefaultDiagram(), ...(previous.diagram || {}), product: { ...createDefaultDiagram().product, ...(previous.diagram?.product || {}), shape } } })); }}><option value="rectangle">Прямоугольник</option><option value="round">Круг</option><option value="oval">Овал</option><option value="arch">Арка</option><option value="custom">Произвольная</option></Select></Field>
       </div>
+      <MeasurementCanvas value={form.diagram} onChange={(diagram) => change("diagram", diagram)} />
       <Section title="Размеры места установки, мм">
         <div className="grid gap-3 sm:grid-cols-3">{[["width_top","Ширина сверху"],["width_middle","Ширина по центру"],["width_bottom","Ширина снизу"],["height_left","Высота слева"],["height_middle","Высота по центру"],["height_right","Высота справа"],["diagonal_one","Диагональ 1"],["diagonal_two","Диагональ 2"]].map(([key,label]) => <Field key={key} label={label}><Input inputMode="decimal" value={form[key]} onChange={(e) => change(key,e.target.value)} /></Field>)}</div>
       </Section>
