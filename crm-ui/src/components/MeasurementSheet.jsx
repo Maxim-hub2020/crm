@@ -1,7 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Camera, CheckCircle2, Cloud, CloudOff, FileDown, Paperclip, Plus, Trash2 } from "lucide-react";
+import { Camera, CheckCircle2, Cloud, CloudOff, FileDown, Paperclip, Plus, ScanLine, Smartphone, Trash2 } from "lucide-react";
 
-import { extractApiErrorMessage, fetchMeasurementSheet, saveMeasurementSheet, uploadMeasurementPhotos } from "../api";
+import {
+  createMeasurementScanSession,
+  extractApiErrorMessage,
+  fetchMeasurementScanSession,
+  fetchMeasurementSheet,
+  markMeasurementScanApplied,
+  saveMeasurementSheet,
+  uploadMeasurementPhotos,
+} from "../api";
 import { Button, Input, Label, Select } from "./ui.jsx";
 import { addOfflineMeasurementPhoto, deleteOfflineMeasurementPhoto, listOfflineMeasurementPhotos } from "../utils/offlineMeasurements.js";
 import MeasurementCanvas, { createDefaultDiagram } from "./MeasurementCanvas.jsx";
@@ -45,6 +53,73 @@ function storageKey(projectId) {
   return `crm.measurement-sheet.v1.${projectId}`;
 }
 
+function scanStorageKey(projectId) {
+  return `crm.measurement-lidar-scan.v1.${projectId}`;
+}
+
+function readPendingScan(projectId) {
+  try { return JSON.parse(localStorage.getItem(scanStorageKey(projectId)) || "null"); } catch { return null; }
+}
+
+const SCAN_ELEMENT_DEFAULTS = {
+  socket_single: { label: "Розетка", width: 68, height: 68, diameter: 68, count: 1 },
+  socket_double: { label: "Двойная розетка", width: 139, height: 68, diameter: 68, count: 2, spacing: 71 },
+  socket_triple: { label: "Тройная розетка", width: 210, height: 68, diameter: 68, count: 3, spacing: 71 },
+  cut_circle: { label: "Круглый вырез", width: 68, height: 68, diameter: 68, count: 1 },
+  cut_rect: { label: "Прямоугольный вырез", width: 100, height: 70, count: 1 },
+  power: { label: "Вывод проводов", width: 60, height: 60, count: 1 },
+};
+
+function diagramFromScan(diagram, scanSession) {
+  const source = scanSession.result || {};
+  const wallWidth = Math.max(Number(diagram?.wall?.width || 2000), 100);
+  const wallHeight = Math.max(Number(diagram?.wall?.height || 2600), 100);
+  const contour = Array.isArray(source.wall?.contour) ? source.wall.contour.map((point) => ({
+    x: Math.round(Number(point.x || 0) * wallWidth),
+    y: Math.round((1 - Number(point.y || 0)) * wallHeight),
+  })) : [];
+  const previousElements = Array.isArray(diagram?.elements)
+    ? diagram.elements.filter((element) => element.source_scan_session !== scanSession.id)
+    : [];
+  const scannedElements = (Array.isArray(source.elements) ? source.elements : []).map((element, index) => {
+    const template = SCAN_ELEMENT_DEFAULTS[element.type] || SCAN_ELEMENT_DEFAULTS.cut_rect;
+    const x = Math.round(Number(element.x || 0) * wallWidth);
+    const y = Math.round((1 - Number(element.y || 0)) * wallHeight);
+    const width = element.width ? Math.max(Math.round(Number(element.width) * wallWidth), 20) : template.width;
+    const height = element.height ? Math.max(Math.round(Number(element.height) * wallHeight), 20) : template.height;
+    const diameter = element.diameter
+      ? Math.max(Math.round(Number(element.diameter) * Math.min(wallWidth, wallHeight)), 20)
+      : template.diameter;
+    return {
+      ...template,
+      id: `lidar-${scanSession.id}-${index}`,
+      type: element.type,
+      side: "wall",
+      label: element.label || template.label,
+      x,
+      y,
+      width,
+      height,
+      ...(diameter ? { diameter } : {}),
+      horizontal_reference: "left",
+      vertical_reference: "bottom",
+      horizontal_distance: x,
+      vertical_distance: y,
+      confidence: Number(element.confidence || 0),
+      needs_review: Number(element.confidence || 0) < 0.8,
+      source_scan_session: scanSession.id,
+      note: Number(element.confidence || 0) < 0.8 ? "Проверьте объект, распознавание неуверенное" : "Распознано LiDAR-сканером",
+    };
+  });
+  return {
+    ...createDefaultDiagram(),
+    ...(diagram || {}),
+    active_view: "wall",
+    wall: { ...createDefaultDiagram().wall, ...(diagram?.wall || {}), ...(contour.length >= 3 ? { points: contour } : {}) },
+    elements: [...previousElements, ...scannedElements],
+  };
+}
+
 function readDraft(projectId) {
   try { return JSON.parse(localStorage.getItem(storageKey(projectId)) || "null"); } catch { return null; }
 }
@@ -61,8 +136,14 @@ export default function MeasurementSheet({ project }) {
   const [pendingPhotos, setPendingPhotos] = useState([]);
   const [syncState, setSyncState] = useState(navigator.onLine ? "saved" : "offline");
   const [error, setError] = useState("");
+  const [scanSession, setScanSession] = useState(() => readPendingScan(project.id));
+  const [scanMessage, setScanMessage] = useState("");
   const loadedRef = useRef(false);
   const syncingRef = useRef(false);
+  const applyingScanRef = useRef(new Set());
+  const formRef = useRef(form);
+
+  useEffect(() => { formRef.current = form; }, [form]);
 
   async function loadPending() {
     setPendingPhotos(await listOfflineMeasurementPhotos(project.id));
@@ -75,6 +156,8 @@ export default function MeasurementSheet({ project }) {
     setForm(localForm);
     setActiveRoomId(localForm.rooms[0]?.id || null);
     setSheet(null);
+    setScanSession(readPendingScan(project.id));
+    setScanMessage("");
     setCompleteRequested(Boolean(local?.completeRequested));
     loadPending().catch(() => {});
     if (!navigator.onLine) {
@@ -184,6 +267,72 @@ export default function MeasurementSheet({ project }) {
     });
   }
 
+  async function applyCompletedScan(completedSession) {
+    if (applyingScanRef.current.has(completedSession.id)) return;
+    applyingScanRef.current.add(completedSession.id);
+    try {
+      const roomFound = formRef.current.rooms.some((room) => room.id === completedSession.room_id);
+      if (!roomFound) {
+        setScanMessage("Комната для этого сканирования уже удалена. Запустите новое сканирование.");
+        return;
+      }
+      setForm((previous) => {
+        const rooms = previous.rooms.map((room) => {
+          if (room.id !== completedSession.room_id) return room;
+          return { ...room, diagram: diagramFromScan(room.diagram, completedSession) };
+        });
+        return { ...previous, rooms, diagram: rooms[0]?.diagram || previous.diagram };
+      });
+      setActiveRoomId(completedSession.room_id);
+      await markMeasurementScanApplied(completedSession.id);
+      localStorage.removeItem(scanStorageKey(project.id));
+      setScanSession({ ...completedSession, status: "applied" });
+      const reviewCount = (completedSession.result?.elements || []).filter((element) => Number(element.confidence || 0) < 0.8).length;
+      setScanMessage(reviewCount
+        ? `Сканирование импортировано. Проверьте выделенные объекты: ${reviewCount}.`
+        : "Сканирование импортировано. Теперь проставьте точные размеры.");
+    } finally {
+      applyingScanRef.current.delete(completedSession.id);
+    }
+  }
+
+  useEffect(() => {
+    if (!scanSession?.id || ["applied", "expired"].includes(scanSession.status)) return undefined;
+    let cancelled = false;
+    async function checkScan() {
+      try {
+        const current = await fetchMeasurementScanSession(scanSession.id);
+        if (cancelled) return;
+        setScanSession(current);
+        localStorage.setItem(scanStorageKey(project.id), JSON.stringify(current));
+        if (current.status === "completed") await applyCompletedScan(current);
+        if (current.status === "expired") setScanMessage("Время сканирования истекло. Запустите его ещё раз.");
+      } catch (requestError) {
+        if (!cancelled) setScanMessage(extractApiErrorMessage(requestError, "Не удалось получить результат сканирования."));
+      }
+    }
+    checkScan();
+    const timer = window.setInterval(checkScan, 3000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [scanSession?.id, scanSession?.status, project.id]);
+
+  async function startLidarScan() {
+    if (!activeRoom) return;
+    try {
+      setScanMessage("Открываем LiDAR-сканер...");
+      const created = await createMeasurementScanSession({
+        project: project.id,
+        room_id: activeRoom.id,
+        room_name: activeRoom.name,
+      });
+      localStorage.setItem(scanStorageKey(project.id), JSON.stringify(created));
+      setScanSession(created);
+      window.location.assign(created.launch_url);
+    } catch (requestError) {
+      setScanMessage(extractApiErrorMessage(requestError, "Не удалось запустить LiDAR-сканер."));
+    }
+  }
+
   async function addPhotos(event) {
     const files = Array.from(event.target.files || []);
     await Promise.all(files.map((file) => addOfflineMeasurementPhoto(project.id, file)));
@@ -260,6 +409,11 @@ export default function MeasurementSheet({ project }) {
           <Field label="Название комнаты"><Input value={activeRoom?.name || ""} onChange={(event) => updateActiveRoom({ name: event.target.value })} placeholder="Например, ванная" /></Field>
           {form.rooms.length > 1 ? <Button type="button" variant="secondary" onClick={() => removeRoom(activeRoom.id)} title="Удалить лист"><Trash2 size={16} /></Button> : null}
         </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-2xl bg-sky-50 p-3">
+          <Button type="button" onClick={startLidarScan}><ScanLine size={17} />Сканировать стену LiDAR</Button>
+          <div className="min-w-0 flex-1 text-xs leading-relaxed text-slate-600"><span className="inline-flex items-center gap-1 font-black text-slate-800"><Smartphone size={14} />iPhone Pro</span><br />Контур и объекты появятся в этой комнате. Точные размеры вводятся вручную.</div>
+        </div>
+        {scanMessage ? <div className="mt-2 rounded-xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700">{scanMessage}</div> : null}
       </section>
       {activeRoom ? <MeasurementCanvas key={activeRoom.id} value={activeRoom.diagram} onChange={(diagram) => updateActiveRoom({ diagram })} /> : null}
       {hasFrame ? <Section title="Рамка"><div className="grid gap-3 sm:grid-cols-3"><Field label="Материал"><Input value={form.frame_material} onChange={(e)=>change("frame_material",e.target.value)} /></Field><Field label="Профиль"><Input value={form.frame_profile} onChange={(e)=>change("frame_profile",e.target.value)} /></Field><Field label="Цвет"><Input value={form.frame_color} onChange={(e)=>change("frame_color",e.target.value)} /></Field></div></Section> : null}

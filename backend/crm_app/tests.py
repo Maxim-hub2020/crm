@@ -2067,11 +2067,11 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
             name="Фурнитура для душевой",
             type=FinanceCategory.Type.EXPENSE,
         )
-        delivery_category = FinanceCategory.objects.create(
+        delivery_category = FinanceCategory.objects.get_or_create(
             workspace=self.manager.workspace,
             name="Доставка",
             type=FinanceCategory.Type.EXPENSE,
-        )
+        )[0]
 
         for index, total_amount in enumerate((Decimal("100000.00"), Decimal("120000.00")), start=1):
             reference_project = Project.objects.create(

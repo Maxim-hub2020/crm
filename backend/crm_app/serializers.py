@@ -1,6 +1,8 @@
 import json
 import logging
-from urllib.parse import quote as url_quote
+import secrets
+from datetime import timedelta
+from urllib.parse import quote as url_quote, urlencode
 
 from django.conf import settings
 from django.db import transaction
@@ -22,6 +24,7 @@ from .models import (
     FinanceCategory,
     Payment,
     MeasurementPhoto,
+    MeasurementScanSession,
     MeasurementSheet,
     Project,
     ProjectComment,
@@ -966,6 +969,58 @@ class MeasurementSheetSerializer(serializers.ModelSerializer):
         fields = "__all__"
         extra_kwargs = {"project": {"validators": []}}
         read_only_fields = ["workspace", "created_by", "created_at", "updated_at", "photos"]
+
+
+class MeasurementScanSessionSerializer(serializers.ModelSerializer):
+    launch_url = serializers.SerializerMethodField()
+
+    def validate_project(self, project):
+        request = self.context["request"]
+        queryset = Project.objects.filter(workspace=current_workspace(request.user))
+        if not request.user.is_admin():
+            queryset = queryset.filter(manager=request.user)
+        if not queryset.filter(pk=project.pk).exists():
+            raise serializers.ValidationError("Проект не найден или недоступен.")
+        return project
+
+    def create(self, validated_data):
+        request = self.context["request"]
+        project = validated_data["project"]
+        raw_token = secrets.token_urlsafe(32)
+        session = MeasurementScanSession.objects.create(
+            **validated_data,
+            workspace=project.workspace,
+            created_by=request.user,
+            token_hash=MeasurementScanSession.hash_token(raw_token),
+            expires_at=timezone.now() + timedelta(minutes=20),
+        )
+        session._raw_scan_token = raw_token
+        return session
+
+    def get_launch_url(self, obj):
+        raw_token = getattr(obj, "_raw_scan_token", "")
+        request = self.context.get("request")
+        if not raw_token or not request:
+            return ""
+        upload_url = request.build_absolute_uri(f"/api/measurement-scan-sessions/{obj.pk}/complete/")
+        return f"cehcrm-lidar://scan?{urlencode({'session': str(obj.pk), 'token': raw_token, 'upload_url': upload_url, 'room': obj.room_name})}"
+
+    class Meta:
+        model = MeasurementScanSession
+        fields = [
+            "id",
+            "project",
+            "room_id",
+            "room_name",
+            "status",
+            "result",
+            "expires_at",
+            "completed_at",
+            "created_at",
+            "updated_at",
+            "launch_url",
+        ]
+        read_only_fields = ["status", "result", "expires_at", "completed_at", "created_at", "updated_at", "launch_url"]
 
 
 class TaskSerializer(serializers.ModelSerializer):

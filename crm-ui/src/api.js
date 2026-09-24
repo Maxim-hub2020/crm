@@ -246,6 +246,24 @@ export async function uploadMeasurementPhotos(sheetId, files) {
   return data;
 }
 
+export async function createMeasurementScanSession(payload) {
+  initApiAuth();
+  const { data } = await api.post("/api/measurement-scan-sessions/", payload);
+  return data;
+}
+
+export async function fetchMeasurementScanSession(sessionId) {
+  initApiAuth();
+  const { data } = await api.get(`/api/measurement-scan-sessions/${sessionId}/`);
+  return data;
+}
+
+export async function markMeasurementScanApplied(sessionId) {
+  initApiAuth();
+  const { data } = await api.post(`/api/measurement-scan-sessions/${sessionId}/applied/`, {});
+  return data;
+}
+
 export async function fetchCalculatorLeads() {
   initApiAuth();
   const { data } = await api.get("/api/calculator-leads/");

@@ -1,3 +1,6 @@
+import hashlib
+import uuid
+
 from django.utils import timezone
 from django.db import models
 from django.contrib.auth.models import AbstractUser
@@ -695,6 +698,38 @@ class MeasurementPhoto(models.Model):
     file = models.FileField(upload_to=measurement_photo_upload_to)
     original_name = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class MeasurementScanSession(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        COMPLETED = "completed", "Completed"
+        APPLIED = "applied", "Applied"
+        EXPIRED = "expired", "Expired"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="measurement_scan_sessions", db_index=True)
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="measurement_scan_sessions")
+    room_id = models.CharField(max_length=120)
+    room_name = models.CharField(max_length=160, blank=True, default="")
+    token_hash = models.CharField(max_length=64)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
+    result = models.JSONField(default=dict, blank=True)
+    expires_at = models.DateTimeField(db_index=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="created_measurement_scan_sessions")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    @staticmethod
+    def hash_token(token):
+        return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+    def is_expired(self):
+        return timezone.now() >= self.expires_at
 
 
 class Task(models.Model):

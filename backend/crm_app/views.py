@@ -1,4 +1,5 @@
 import json
+import hmac
 import logging
 import os
 import re
@@ -45,6 +46,7 @@ from .models import (
     FinanceCategory,
     Payment,
     MeasurementPhoto,
+    MeasurementScanSession,
     MeasurementSheet,
     Project,
     ProjectComment,
@@ -77,6 +79,7 @@ from .serializers import (
     MeSerializer,
     PaymentSerializer,
     MeasurementSheetSerializer,
+    MeasurementScanSessionSerializer,
     ProjectCommentSerializer,
     ProjectCustomFieldSerializer,
     ProjectStatusSerializer,
@@ -1586,6 +1589,123 @@ class MeasurementSheetViewSet(viewsets.ModelViewSet):
             MeasurementPhoto.objects.create(sheet=sheet, file=uploaded, original_name=uploaded.name or "photo")
         sheet.refresh_from_db()
         return Response(self.get_serializer(sheet).data)
+
+
+def _normalized_scan_number(value, field_name):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValidationError({"result": f"Поле {field_name} должно быть числом."})
+    if number < 0 or number > 1:
+        raise ValidationError({"result": f"Поле {field_name} должно быть в диапазоне от 0 до 1."})
+    return round(number, 6)
+
+
+def _scan_confidence(value):
+    try:
+        return round(max(0.0, min(float(value or 0), 1.0)), 4)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _validated_measurement_scan_result(value):
+    if not isinstance(value, dict):
+        raise ValidationError({"result": "Результат сканирования должен быть объектом."})
+    if len(json.dumps(value, ensure_ascii=False)) > 2_000_000:
+        raise ValidationError({"result": "Результат сканирования слишком большой."})
+
+    wall = value.get("wall") if isinstance(value.get("wall"), dict) else {}
+    raw_contour = wall.get("contour") if isinstance(wall.get("contour"), list) else []
+    if len(raw_contour) > 200:
+        raise ValidationError({"result": "Контур стены содержит слишком много точек."})
+    contour = []
+    for index, point in enumerate(raw_contour):
+        if not isinstance(point, dict):
+            raise ValidationError({"result": f"Точка контура {index + 1} имеет неверный формат."})
+        contour.append({
+            "x": _normalized_scan_number(point.get("x"), f"contour[{index}].x"),
+            "y": _normalized_scan_number(point.get("y"), f"contour[{index}].y"),
+        })
+
+    allowed_types = {"socket_single", "socket_double", "socket_triple", "cut_circle", "cut_rect", "power"}
+    raw_elements = value.get("elements") if isinstance(value.get("elements"), list) else []
+    if len(raw_elements) > 200:
+        raise ValidationError({"result": "Найдено слишком много объектов на стене."})
+    elements = []
+    for index, element in enumerate(raw_elements):
+        if not isinstance(element, dict) or element.get("type") not in allowed_types:
+            raise ValidationError({"result": f"Объект {index + 1} имеет неподдерживаемый тип."})
+        normalized = {
+            "type": element["type"],
+            "x": _normalized_scan_number(element.get("x"), f"elements[{index}].x"),
+            "y": _normalized_scan_number(element.get("y"), f"elements[{index}].y"),
+            "confidence": _scan_confidence(element.get("confidence")),
+        }
+        for key in ("width", "height", "diameter"):
+            if element.get(key) is not None:
+                normalized[key] = _normalized_scan_number(element.get(key), f"elements[{index}].{key}")
+        if element.get("label"):
+            normalized["label"] = str(element["label"])[:120]
+        elements.append(normalized)
+
+    return {
+        "schema_version": 1,
+        "wall": {"contour": contour, "confidence": _scan_confidence(wall.get("confidence"))},
+        "elements": elements,
+        "warnings": [str(item)[:300] for item in (value.get("warnings") or []) if str(item).strip()][:50],
+    }
+
+
+class MeasurementScanSessionViewSet(viewsets.ModelViewSet):
+    serializer_class = MeasurementScanSessionSerializer
+    permission_classes = [IsAuthenticatedAny]
+    http_method_names = ["get", "post", "head", "options"]
+
+    def get_queryset(self):
+        queryset = MeasurementScanSession.objects.filter(workspace=current_workspace(self.request.user)).select_related("project")
+        if not self.request.user.is_admin():
+            queryset = queryset.filter(project__manager=self.request.user)
+        project_id = self.request.query_params.get("project")
+        return queryset.filter(project_id=project_id) if project_id else queryset
+
+    def retrieve(self, request, *args, **kwargs):
+        scan_session = self.get_object()
+        if scan_session.status == MeasurementScanSession.Status.PENDING and scan_session.is_expired():
+            scan_session.status = MeasurementScanSession.Status.EXPIRED
+            scan_session.save(update_fields=["status", "updated_at"])
+        return Response(self.get_serializer(scan_session).data)
+
+    @action(detail=True, methods=["post"], permission_classes=[AllowAny], authentication_classes=[], url_path="complete")
+    def complete(self, request, pk=None):
+        try:
+            scan_session = MeasurementScanSession.objects.select_related("project").get(pk=pk)
+        except (MeasurementScanSession.DoesNotExist, ValueError):
+            return Response({"detail": "Сессия сканирования не найдена."}, status=drf_status.HTTP_404_NOT_FOUND)
+
+        token = request.headers.get("X-Scan-Token") or request.data.get("token")
+        if not token or not hmac.compare_digest(scan_session.token_hash, MeasurementScanSession.hash_token(token)):
+            return Response({"detail": "Неверный токен сканирования."}, status=drf_status.HTTP_403_FORBIDDEN)
+        if scan_session.is_expired():
+            if scan_session.status == MeasurementScanSession.Status.PENDING:
+                scan_session.status = MeasurementScanSession.Status.EXPIRED
+                scan_session.save(update_fields=["status", "updated_at"])
+            return Response({"detail": "Сессия сканирования истекла. Запустите её заново из CRM."}, status=drf_status.HTTP_410_GONE)
+        if scan_session.status in {MeasurementScanSession.Status.COMPLETED, MeasurementScanSession.Status.APPLIED}:
+            return Response({"id": scan_session.id, "status": scan_session.status})
+
+        scan_session.result = _validated_measurement_scan_result(request.data.get("result"))
+        scan_session.status = MeasurementScanSession.Status.COMPLETED
+        scan_session.completed_at = timezone.now()
+        scan_session.save(update_fields=["result", "status", "completed_at", "updated_at"])
+        return Response({"id": scan_session.id, "status": scan_session.status})
+
+    @action(detail=True, methods=["post"], url_path="applied")
+    def applied(self, request, pk=None):
+        scan_session = self.get_object()
+        if scan_session.status == MeasurementScanSession.Status.COMPLETED:
+            scan_session.status = MeasurementScanSession.Status.APPLIED
+            scan_session.save(update_fields=["status", "updated_at"])
+        return Response(self.get_serializer(scan_session).data)
 
 
 class ProjectStatusViewSet(viewsets.ModelViewSet):

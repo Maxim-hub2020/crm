@@ -463,7 +463,7 @@ function DiagramElement({ element, selected, toSvg, wallWidth, wallHeight, onPoi
   const center = toSvg(element);
   const width = Math.max((numberValue(element.width, 60) / wallWidth) * CANVAS.width, 24);
   const height = Math.max((numberValue(element.height, 60) / wallHeight) * CANVAS.height, 24);
-  const stroke = selected ? "#0284c7" : "#0f172a";
+  const stroke = selected ? "#0284c7" : element.needs_review ? "#ea580c" : "#0f172a";
   const count = Math.max(numberValue(element.count, 1), 1);
   const spacing = Math.max((numberValue(element.spacing, 72) / wallWidth) * CANVAS.width, 22);
   const groupWidth = element.type === "light" ? spacing * (count - 1) : 0;
@@ -478,6 +478,7 @@ function DiagramElement({ element, selected, toSvg, wallWidth, wallHeight, onPoi
     {element.type === "cut_circle" ? <g><circle cx={center.x} cy={center.y} r={Math.max(width / 2, 12)} fill="#fffdf6" stroke={stroke} strokeWidth="5" /><text x={center.x} y={center.y + 5} textAnchor="middle" fontSize="13" fontWeight="900" fill={stroke}>Ø{Math.round(numberValue(element.diameter, element.width))}</text></g> : null}
     {element.type === "cut_rect" ? <g><rect x={center.x - width / 2} y={center.y - height / 2} width={width} height={height} rx="4" fill="#fffdf6" stroke={stroke} strokeWidth="5" /><line x1={center.x - width / 2} y1={center.y - height / 2} x2={center.x + width / 2} y2={center.y + height / 2} stroke={stroke} strokeWidth="2" /><line x1={center.x + width / 2} y1={center.y - height / 2} x2={center.x - width / 2} y2={center.y + height / 2} stroke={stroke} strokeWidth="2" /></g> : null}
     <text x={center.x} y={center.y + height / 2 + 22} textAnchor="middle" fontSize="15" fontWeight="800" fill="#334155">{element.label}</text>
+    {element.needs_review ? <g pointerEvents="none"><rect x={center.x - 43} y={center.y + height / 2 + 30} width="86" height="22" rx="8" fill="#ffedd5" stroke="#ea580c" /><text x={center.x} y={center.y + height / 2 + 45} textAnchor="middle" fontSize="11" fontWeight="900" fill="#c2410c">ПРОВЕРИТЬ</text></g> : null}
     {selected ? <><text x={center.x} y={center.y - height / 2 - 17} textAnchor="middle" fontSize="14" fontWeight="800" fill="#0369a1">X {Math.round(element.x)} · Y {Math.round(element.y)}</text></> : null}
   </g>;
 }
