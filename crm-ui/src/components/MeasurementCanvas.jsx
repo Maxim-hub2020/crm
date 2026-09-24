@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 
 const CANVAS = { x: 54, y: 42, width: 892, height: 596 };
-const VIEW_LABELS = { wall: "Стена", front: "Лицевая сторона", back: "Задняя сторона" };
+const VIEW_LABELS = { wall: "Стена" };
 const ELEMENT_TYPES = {
   socket_single: { label: "Розетка", width: 68, height: 68, diameter: 68, count: 1, spacing: 71 },
   socket_double: { label: "Двойная розетка", width: 139, height: 68, diameter: 68, count: 2, spacing: 71 },
@@ -107,7 +107,7 @@ function optionalPositiveNumber(value) {
 
 export default function MeasurementCanvas({ value, onChange }) {
   const diagram = normalizeDiagram(value);
-  const [view, setView] = useState(diagram.active_view || "wall");
+  const view = "wall";
   const [tool, setTool] = useState("select");
   const [selectedId, setSelectedId] = useState(null);
   const [history, setHistory] = useState([]);
@@ -142,10 +142,6 @@ export default function MeasurementCanvas({ value, onChange }) {
 
   function updateDiagram(patch, remember = true) {
     commit({ ...diagram, ...patch }, remember);
-  }
-
-  function updateProduct(key, nextValue) {
-    updateDiagram({ product: { ...diagram.product, [key]: Math.max(numberValue(nextValue, 0), 0) } });
   }
 
   function updateElement(id, patch, remember = true) {
@@ -185,13 +181,6 @@ export default function MeasurementCanvas({ value, onChange }) {
       });
     });
     return nearest || point;
-  }
-
-  function changeView(nextView) {
-    setView(nextView);
-    setSelectedId(null);
-    onChange({ ...diagram, active_view: nextView });
-    if (nextView === "back" && tool.startsWith("socket")) setTool("select");
   }
 
   function handleCanvasPointerDown(event) {
@@ -241,7 +230,7 @@ export default function MeasurementCanvas({ value, onChange }) {
   function startDrag(event, element) {
     event.stopPropagation();
     setSelectedId(element.id);
-    if (tool !== "select") return;
+    if (tool !== "select") setTool("select");
     event.currentTarget.setPointerCapture?.(event.pointerId);
     dragRef.current = element.type === "dimension"
       ? { id: element.id, kind: "dimension", start: fromPointer(event), x1: element.x1, y1: element.y1, x2: element.x2, y2: element.y2, snapshot: diagram }
@@ -250,7 +239,7 @@ export default function MeasurementCanvas({ value, onChange }) {
 
   function startEndpointDrag(event, element, endpoint) {
     event.stopPropagation();
-    if (tool !== "select") return;
+    if (tool !== "select") setTool("select");
     setSelectedId(element.id);
     event.currentTarget.setPointerCapture?.(event.pointerId);
     dragRef.current = { id: element.id, kind: "dimension-end", endpoint, snapshot: diagram };
@@ -376,10 +365,6 @@ export default function MeasurementCanvas({ value, onChange }) {
   const wallPoints = (diagram.wall.points || []).map(toSvg);
   const wallPolygon = wallPoints.length >= 2 ? wallPoints.map((point) => `${point.x},${point.y}`).join(" ") : "";
   const visibleElements = diagram.elements.filter((element) => element.side === view);
-  const productTopLeft = toSvg({ x: diagram.product.x, y: diagram.product.y + diagram.product.height });
-  const productWidth = (diagram.product.width / wallWidth) * CANVAS.width;
-  const productHeight = (diagram.product.height / wallHeight) * CANVAS.height;
-
   return (
     <section className="overflow-hidden rounded-[26px] border border-slate-200 bg-slate-950 text-white shadow-xl">
       <div className="border-b border-white/10 bg-slate-900 px-4 py-4 sm:px-5">
@@ -394,13 +379,10 @@ export default function MeasurementCanvas({ value, onChange }) {
             <IconButton label="Удалить выбранное" disabled={!selected} onClick={removeSelected} danger><Trash2 size={17} /></IconButton>
           </div>
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-1 rounded-2xl bg-slate-800 p-1">
-          {Object.entries(VIEW_LABELS).map(([id, label]) => <button key={id} type="button" onClick={() => changeView(id)} className={`rounded-xl px-2 py-2 text-xs font-bold transition ${view === id ? "bg-white text-slate-950" : "text-slate-400 hover:text-white"}`}>{label}</button>)}
-        </div>
       </div>
 
       <div className="flex gap-2 overflow-x-auto border-b border-white/10 bg-slate-900/80 px-3 py-3 [scrollbar-width:none] sm:flex-wrap sm:px-5">
-        {TOOLS.filter((item) => view !== "back" || !item.id.startsWith("socket")).map(({ id, label, icon: Icon }) => (
+        {TOOLS.map(({ id, label, icon: Icon }) => (
           <button key={id} type="button" onClick={() => { setTool(id); setSelectedId(null); setDraftLine(null); drawRef.current = null; }} className={`flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold transition ${tool === id ? "border-sky-400 bg-sky-400 text-slate-950" : "border-white/10 bg-white/5 text-slate-300"}`}><Icon size={15} />{label}</button>
         ))}
       </div>
@@ -420,7 +402,6 @@ export default function MeasurementCanvas({ value, onChange }) {
           {wallPolygon ? <polygon points={wallPolygon} fill="#e0eef0" fillOpacity="0.62" stroke="#0f172a" strokeWidth="5" strokeLinejoin="round" pointerEvents="none" /> : null}
           {wallPoints.map((point, index) => <circle key={`${point.x}-${point.y}-${index}`} cx={point.x} cy={point.y} r="8" fill="#38bdf8" stroke="#0f172a" strokeWidth="3" pointerEvents="none" />)}
 
-          {view !== "wall" ? <ProductShape product={diagram.product} x={productTopLeft.x} y={productTopLeft.y} width={productWidth} height={productHeight} /> : null}
           {visibleElements.map((element) => element.type === "dimension"
             ? <MeasurementLine key={element.id} element={element} selected={element.id === selectedId} toSvg={toSvg} onPointerDown={(event) => startDrag(event, element)} onEndpointPointerDown={(event, endpoint) => startEndpointDrag(event, element, endpoint)} />
             : <DiagramElement key={element.id} element={element} selected={element.id === selectedId} toSvg={toSvg} wallWidth={wallWidth} wallHeight={wallHeight} onPointerDown={(event) => startDrag(event, element)} />)}
@@ -444,12 +425,6 @@ export default function MeasurementCanvas({ value, onChange }) {
       />
 
       <div className="grid gap-4 border-t border-white/10 bg-slate-900 p-4 sm:grid-cols-2 sm:p-5">
-        {view !== "wall" ? <EditorGroup title="Изделие">
-          <NumberField label="Ширина изделия" value={diagram.product.width} onChange={(value) => updateProduct("width", value)} />
-          <NumberField label="Высота изделия" value={diagram.product.height} onChange={(value) => updateProduct("height", value)} />
-          <NumberField label="От левого края" value={diagram.product.x} onChange={(value) => updateProduct("x", value)} />
-          <NumberField label="От пола" value={diagram.product.y} onChange={(value) => updateProduct("y", value)} />
-        </EditorGroup> : null}
         <EditorGroup title={selected ? "Выбранный элемент" : "Как работать"}>
           {selected?.type === "dimension" ? <>
             <NumberField label="Размер линии" value={selected.value} onChange={(value) => updateElement(selected.id, { value: optionalPositiveNumber(value) })} />
@@ -582,12 +557,6 @@ function PowerSymbol({ center, size, stroke }) {
 
 function MountSymbol({ center, width, height, stroke }) {
   return <g><rect x={center.x - width / 2} y={center.y - height / 2} width={width} height={height} rx="5" fill="#dbe4e6" stroke={stroke} strokeWidth="4" /><circle cx={center.x - width * 0.35} cy={center.y} r="5" fill="#fffdf6" stroke={stroke} strokeWidth="3" /><circle cx={center.x + width * 0.35} cy={center.y} r="5" fill="#fffdf6" stroke={stroke} strokeWidth="3" /><path d={`M ${center.x - width * 0.16} ${center.y + height * 0.18} L ${center.x} ${center.y - height * 0.2} L ${center.x + width * 0.16} ${center.y + height * 0.18}`} fill="none" stroke={stroke} strokeWidth="4" /></g>;
-}
-
-function ProductShape({ product, x, y, width, height }) {
-  if (product.shape === "round" || product.shape === "oval") return <ellipse cx={x + width / 2} cy={y + height / 2} rx={width / 2} ry={height / 2} fill="#d6f0f4" fillOpacity="0.78" stroke="#0f172a" strokeWidth="5" pointerEvents="none" />;
-  if (product.shape === "arch") return <path d={`M ${x} ${y + height} L ${x} ${y + width / 2} A ${width / 2} ${width / 2} 0 0 1 ${x + width} ${y + width / 2} L ${x + width} ${y + height} Z`} fill="#d6f0f4" fillOpacity="0.78" stroke="#0f172a" strokeWidth="5" pointerEvents="none" />;
-  return <rect x={x} y={y} width={width} height={height} rx={product.shape === "custom" ? 28 : 4} fill="#d6f0f4" fillOpacity="0.78" stroke="#0f172a" strokeWidth="5" pointerEvents="none" />;
 }
 
 function EditorGroup({ title, children }) {
