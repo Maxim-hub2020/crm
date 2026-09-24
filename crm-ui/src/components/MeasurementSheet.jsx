@@ -146,7 +146,16 @@ export default function MeasurementSheet({ project }) {
   }
 
   function printSheet() {
-    const rows = Object.entries(form).filter(([key, value]) => key !== "diagram" && value).map(([key, value]) => `<tr><td>${escapeHtml(key.replaceAll("_", " "))}</td><td>${escapeHtml(value)}</td></tr>`).join("");
+    const regularRows = Object.entries(form).filter(([key, value]) => key !== "diagram" && value).map(([key, value]) => `<tr><td>${escapeHtml(key.replaceAll("_", " "))}</td><td>${escapeHtml(value)}</td></tr>`);
+    const diagramElements = Array.isArray(form.diagram?.elements) ? form.diagram.elements : [];
+    const drawingRows = diagramElements.map((element, index) => {
+      const side = { wall: "Стена", front: "Лицевая сторона", back: "Задняя сторона" }[element.side] || element.side || "";
+      if (element.type === "dimension") return `<tr><td>Размерная линия ${index + 1} · ${escapeHtml(side)}</td><td><strong>${escapeHtml(element.value)} мм</strong>; от (${escapeHtml(element.x1)}, ${escapeHtml(element.y1)}) до (${escapeHtml(element.x2)}, ${escapeHtml(element.y2)})${element.note ? `; ${escapeHtml(element.note)}` : ""}</td></tr>`;
+      if (element.type === "cut_circle" || element.type?.startsWith("socket")) return `<tr><td>${escapeHtml(element.label)} · ${escapeHtml(side)}</td><td>Ø ${escapeHtml(element.diameter)} мм; центр X ${escapeHtml(element.x)}, Y ${escapeHtml(element.y)}${Number(element.count || 1) > 1 ? `; количество ${escapeHtml(element.count)}; шаг ${escapeHtml(element.spacing)} мм` : ""}</td></tr>`;
+      if (element.type === "cut_rect") return `<tr><td>${escapeHtml(element.label)} · ${escapeHtml(side)}</td><td>${escapeHtml(element.width)} × ${escapeHtml(element.height)} мм; центр X ${escapeHtml(element.x)}, Y ${escapeHtml(element.y)}</td></tr>`;
+      return "";
+    }).filter(Boolean);
+    const rows = [...regularRows, ...drawingRows].join("");
     const popup = window.open("", "_blank");
     if (!popup) return;
     popup.opener = null;
@@ -159,10 +168,13 @@ export default function MeasurementSheet({ project }) {
   const hasFrame = form.mirror_type === "frame" || form.mirror_type === "frame_light";
   const hasLight = form.mirror_type === "backlight" || form.mirror_type === "frontlight" || form.mirror_type === "frame_light";
   const photoCount = (sheet?.photos?.length || 0) + pendingPhotos.length;
+  const diagramElements = Array.isArray(form.diagram?.elements) ? form.diagram.elements : [];
+  const validDimensionCount = diagramElements.filter((element) => element.type === "dimension" && Number(element.value) > 0).length;
+  const requiredDimensionCount = form.shape === "round" ? 1 : 2;
+  const hasPowerPoint = diagramElements.some((element) => element.type === "power");
   const validationIssues = [
-    ...(!form.width_middle ? ["Укажите основную ширину"] : []),
-    ...(!form.height_middle ? ["Укажите основную высоту"] : []),
-    ...(hasLight && (!form.power_x || !form.power_y) ? ["Укажите координаты вывода питания"] : []),
+    ...(validDimensionCount < requiredDimensionCount ? [`Добавьте размеры изделия на чертёж: минимум ${requiredDimensionCount}`] : []),
+    ...(hasLight && !hasPowerPoint && (!form.power_x || !form.power_y) ? ["Добавьте на заднюю сторону точку вывода питания"] : []),
     ...(photoCount === 0 ? ["Добавьте хотя бы одну фотографию"] : []),
   ];
   const statusText = syncState === "offline" ? "Сохранено на телефоне" : syncState === "syncing" ? "Отправляем..." : syncState === "pending" ? "Есть изменения" : "Синхронизировано";
@@ -180,13 +192,9 @@ export default function MeasurementSheet({ project }) {
         <Field label="Форма"><Select value={form.shape} onChange={(e) => { const shape = e.target.value; setForm((previous) => ({ ...previous, shape, diagram: { ...createDefaultDiagram(), ...(previous.diagram || {}), product: { ...createDefaultDiagram().product, ...(previous.diagram?.product || {}), shape } } })); }}><option value="rectangle">Прямоугольник</option><option value="round">Круг</option><option value="oval">Овал</option><option value="arch">Арка</option><option value="custom">Произвольная</option></Select></Field>
       </div>
       <MeasurementCanvas value={form.diagram} onChange={(diagram) => change("diagram", diagram)} />
-      <Section title="Размеры места установки, мм">
-        <div className="grid gap-3 sm:grid-cols-3">{[["width_top","Ширина сверху"],["width_middle","Ширина по центру"],["width_bottom","Ширина снизу"],["height_left","Высота слева"],["height_middle","Высота по центру"],["height_right","Высота справа"],["diagonal_one","Диагональ 1"],["diagonal_two","Диагональ 2"]].map(([key,label]) => <Field key={key} label={label}><Input inputMode="decimal" value={form[key]} onChange={(e) => change(key,e.target.value)} /></Field>)}</div>
-      </Section>
       {hasFrame ? <Section title="Рамка"><div className="grid gap-3 sm:grid-cols-3"><Field label="Материал"><Input value={form.frame_material} onChange={(e)=>change("frame_material",e.target.value)} /></Field><Field label="Профиль"><Input value={form.frame_profile} onChange={(e)=>change("frame_profile",e.target.value)} /></Field><Field label="Цвет"><Input value={form.frame_color} onChange={(e)=>change("frame_color",e.target.value)} /></Field></div></Section> : null}
       {hasLight ? <Section title="Подсветка и электрика"><div className="grid gap-3 sm:grid-cols-3"><Field label="Тип"><Select value={form.light_type} onChange={(e)=>change("light_type",e.target.value)}><option value="rear">Задняя</option><option value="front">Лицевая</option></Select></Field><Field label="Отступ световой линии"><Input inputMode="decimal" value={form.light_offset} onChange={(e)=>change("light_offset",e.target.value)} /></Field><Field label="Температура"><Select value={form.light_temperature} onChange={(e)=>change("light_temperature",e.target.value)}><option value="3000">3000 K</option><option value="4000">4000 K</option><option value="6000">6000 K</option></Select></Field><Field label="Вывод питания X"><Input inputMode="decimal" value={form.power_x} onChange={(e)=>change("power_x",e.target.value)} /></Field><Field label="Вывод питания Y"><Input inputMode="decimal" value={form.power_y} onChange={(e)=>change("power_y",e.target.value)} /></Field><Field label="Управление"><Select value={form.power_control} onChange={(e)=>change("power_control",e.target.value)}><option value="switch">Выключатель</option><option value="sensor">Датчик</option><option value="dimmer">Диммер</option></Select></Field></div></Section> : null}
       <Section title="Монтаж"><div className="grid gap-3 sm:grid-cols-2"><Field label="Материал стены"><Input value={form.wall_material} onChange={(e)=>change("wall_material",e.target.value)} /></Field><Field label="Крепление"><Input value={form.mounting} onChange={(e)=>change("mounting",e.target.value)} /></Field></div><Field label="Неровности, препятствия, коммуникации"><textarea className="mt-1 min-h-24 w-full rounded-xl border border-slate-200 p-3 text-sm" value={form.wall_notes} onChange={(e)=>change("wall_notes",e.target.value)} /></Field></Section>
-      <Section title="Отверстия и вырезы"><textarea className="min-h-28 w-full rounded-xl border border-slate-200 p-3 text-sm" value={form.openings} onChange={(e)=>change("openings",e.target.value)} placeholder="Для каждого элемента: тип, размер, X от левого края, Y от верхнего края" /></Section>
       <Section title="Фотографии"><div className="flex flex-wrap gap-2">{sheet?.photos?.map((photo)=><a key={photo.id} href={photo.url} target="_blank" rel="noreferrer" className="rounded-full bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">{photo.original_name}</a>)}{pendingPhotos.map((photo)=><span key={photo.id} className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">{photo.name}<button type="button" onClick={()=>removePendingPhoto(photo.id)}><Trash2 size={13}/></button></span>)}</div><div className="mt-3 flex flex-wrap gap-2"><label className="btn-hover inline-flex cursor-pointer items-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white"><Camera size={16}/>Снять или выбрать фото<input type="file" accept="image/*" capture="environment" multiple className="hidden" onChange={addPhotos}/></label><label className="btn-hover inline-flex cursor-pointer items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold"><Paperclip size={16}/>Добавить файлы<input type="file" multiple className="hidden" onChange={addPhotos}/></label></div></Section>
       <Field label="Общий комментарий"><textarea className="mt-1 min-h-28 w-full rounded-xl border border-slate-200 p-3 text-sm" value={form.notes} onChange={(e)=>change("notes",e.target.value)} /></Field>
       {validationIssues.length ? <div className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-900"><div className="font-black">До завершения замера:</div><ul className="mt-1 list-disc pl-5">{validationIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div> : null}
