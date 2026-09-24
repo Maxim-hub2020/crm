@@ -118,16 +118,18 @@ export default function MeasurementCanvas({ value, onChange }) {
   const dragRef = useRef(null);
   const drawRef = useRef(null);
   const dimensionInputRef = useRef(null);
+  const autoFocusDimensionIdRef = useRef(null);
 
   const wallWidth = Math.max(numberValue(diagram.wall.width, 2000), 100);
   const wallHeight = Math.max(numberValue(diagram.wall.height, 2600), 100);
   const selected = diagram.elements.find((element) => element.id === selectedId) || null;
 
   useEffect(() => {
-    if (selected?.type !== "dimension") return;
+    if (selected?.type !== "dimension" || autoFocusDimensionIdRef.current !== selectedId) return;
     const frame = requestAnimationFrame(() => {
       dimensionInputRef.current?.focus();
       dimensionInputRef.current?.select();
+      autoFocusDimensionIdRef.current = null;
     });
     return () => cancelAnimationFrame(frame);
   }, [selectedId, selected?.type]);
@@ -329,6 +331,7 @@ export default function MeasurementCanvas({ value, onChange }) {
         setHistory((items) => [...items.slice(-29), snapshot]);
         setFuture([]);
         onChange({ ...diagram, elements: [...diagram.elements, element], active_view: view });
+        autoFocusDimensionIdRef.current = element.id;
         setSelectedId(element.id);
       }
       return;
