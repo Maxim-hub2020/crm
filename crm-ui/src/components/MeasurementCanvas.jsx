@@ -65,23 +65,31 @@ function normalizeDiagram(value) {
     wall: { ...fallback.wall, ...(value?.wall || {}) },
     product: { ...fallback.product, ...(value?.product || {}) },
     elements: Array.isArray(value?.elements) ? value.elements.map((element) => {
+      const referenceDefaults = {
+        horizontal_reference: element.horizontal_reference || "left",
+        vertical_reference: element.vertical_reference || "bottom",
+        horizontal_distance: numberValue(element.horizontal_distance, numberValue(element.x)),
+        vertical_distance: numberValue(element.vertical_distance, numberValue(element.y)),
+      };
       if (element.type === "hole") {
         const diameter = numberValue(element.diameter, numberValue(element.width, 60));
-        return { ...element, type: "cut_circle", diameter, width: diameter, height: diameter };
+        return { ...element, ...referenceDefaults, type: "cut_circle", diameter, width: diameter, height: diameter };
       }
       if (element.type?.startsWith("socket")) {
         const count = Math.max(numberValue(element.count, 1), 1);
         const diameter = numberValue(element.diameter, numberValue(element.height, 68));
-        return { ...element, diameter, spacing: numberValue(element.spacing, 71), width: diameter + (count - 1) * numberValue(element.spacing, 71), height: diameter };
+        return { ...element, ...referenceDefaults, diameter, spacing: numberValue(element.spacing, 71), width: diameter + (count - 1) * numberValue(element.spacing, 71), height: diameter };
       }
-      return element;
+      return element.type === "cut_circle" || element.type === "cut_rect" ? { ...element, ...referenceDefaults } : element;
     }) : [],
     specifications: { ...fallback.specifications, ...(value?.specifications || {}) },
   };
 }
 
 function numberValue(value, fallback = 0) {
-  const parsed = Number(String(value ?? "").replace(",", "."));
+  const prepared = String(value ?? "").replace(",", ".").trim();
+  if (!prepared) return fallback;
+  const parsed = Number(prepared);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
@@ -105,6 +113,7 @@ export default function MeasurementCanvas({ value, onChange }) {
   const [history, setHistory] = useState([]);
   const [future, setFuture] = useState([]);
   const [draftLine, setDraftLine] = useState(null);
+  const [snapTarget, setSnapTarget] = useState(null);
   const svgRef = useRef(null);
   const dragRef = useRef(null);
   const drawRef = useRef(null);
@@ -135,10 +144,6 @@ export default function MeasurementCanvas({ value, onChange }) {
     commit({ ...diagram, ...patch }, remember);
   }
 
-  function updateWall(key, nextValue) {
-    updateDiagram({ wall: { ...diagram.wall, [key]: Math.max(numberValue(nextValue, 0), 0) } });
-  }
-
   function updateProduct(key, nextValue) {
     updateDiagram({ product: { ...diagram.product, [key]: Math.max(numberValue(nextValue, 0), 0) } });
   }
@@ -164,6 +169,24 @@ export default function MeasurementCanvas({ value, onChange }) {
     };
   }
 
+  function snapToLineEndpoint(point, excludeId = null) {
+    let nearest = null;
+    let nearestDistance = 18;
+    const svgPoint = toSvg(point);
+    diagram.elements.forEach((element) => {
+      if (element.type !== "dimension" || element.side !== view || element.id === excludeId) return;
+      [{ x: element.x1, y: element.y1 }, { x: element.x2, y: element.y2 }].forEach((candidate) => {
+        const svgCandidate = toSvg(candidate);
+        const distance = Math.hypot(svgCandidate.x - svgPoint.x, svgCandidate.y - svgPoint.y);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearest = { x: numberValue(candidate.x), y: numberValue(candidate.y) };
+        }
+      });
+    });
+    return nearest || point;
+  }
+
   function changeView(nextView) {
     setView(nextView);
     setSelectedId(null);
@@ -173,11 +196,13 @@ export default function MeasurementCanvas({ value, onChange }) {
 
   function handleCanvasPointerDown(event) {
     if (event.target !== event.currentTarget && event.target.dataset.canvas !== "surface") return;
-    const point = fromPointer(event);
+    const rawPoint = fromPointer(event);
     if (tool === "line") {
+      const point = snapToLineEndpoint(rawPoint);
       event.currentTarget.setPointerCapture?.(event.pointerId);
       drawRef.current = { start: point, snapshot: diagram };
       setDraftLine({ start: point, end: point });
+      setSnapTarget(point.x !== rawPoint.x || point.y !== rawPoint.y ? point : null);
       return;
     }
     if (tool === "select") {
@@ -186,6 +211,7 @@ export default function MeasurementCanvas({ value, onChange }) {
     }
     const template = ELEMENT_TYPES[tool];
     if (!template) return;
+    const point = rawPoint;
     const element = {
       id: globalThis.crypto?.randomUUID?.() || `element-${Date.now()}`,
       type: tool,
@@ -200,6 +226,12 @@ export default function MeasurementCanvas({ value, onChange }) {
       spacing: template.spacing || 72,
       mounting_type: tool === "mounting" ? "Монтажная планка" : "",
       note: "",
+      ...(tool === "cut_circle" || tool === "cut_rect" || tool.startsWith("socket") ? {
+        horizontal_reference: "left",
+        vertical_reference: "bottom",
+        horizontal_distance: point.x,
+        vertical_distance: point.y,
+      } : {}),
     };
     commit({ ...diagram, elements: [...diagram.elements, element], active_view: view });
     setSelectedId(element.id);
@@ -216,17 +248,51 @@ export default function MeasurementCanvas({ value, onChange }) {
       : { id: element.id, kind: "element", start: fromPointer(event), x: element.x, y: element.y, snapshot: diagram };
   }
 
+  function startEndpointDrag(event, element, endpoint) {
+    event.stopPropagation();
+    if (tool !== "select") return;
+    setSelectedId(element.id);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    dragRef.current = { id: element.id, kind: "dimension-end", endpoint, snapshot: diagram };
+  }
+
   function handlePointerMove(event) {
     if (drawRef.current) {
-      setDraftLine({ start: drawRef.current.start, end: fromPointer(event) });
+      const rawPoint = fromPointer(event);
+      const point = snapToLineEndpoint(rawPoint);
+      setDraftLine({ start: drawRef.current.start, end: point });
+      setSnapTarget(point.x !== rawPoint.x || point.y !== rawPoint.y ? point : null);
       return;
     }
     const drag = dragRef.current;
     if (!drag) return;
     const point = fromPointer(event);
+    if (drag.kind === "dimension-end") {
+      const snappedPoint = snapToLineEndpoint(point, drag.id);
+      setSnapTarget(snappedPoint.x !== point.x || snappedPoint.y !== point.y ? snappedPoint : null);
+      updateElement(drag.id, drag.endpoint === "start"
+        ? { x1: snappedPoint.x, y1: snappedPoint.y }
+        : { x2: snappedPoint.x, y2: snappedPoint.y }, false);
+      return;
+    }
     if (drag.kind === "dimension") {
-      const dx = point.x - drag.start.x;
-      const dy = point.y - drag.start.y;
+      let dx = point.x - drag.start.x;
+      let dy = point.y - drag.start.y;
+      const movedStart = { x: drag.x1 + dx, y: drag.y1 + dy };
+      const movedEnd = { x: drag.x2 + dx, y: drag.y2 + dy };
+      const snappedStart = snapToLineEndpoint(movedStart, drag.id);
+      const snappedEnd = snapToLineEndpoint(movedEnd, drag.id);
+      if (snappedStart.x !== movedStart.x || snappedStart.y !== movedStart.y) {
+        dx += snappedStart.x - movedStart.x;
+        dy += snappedStart.y - movedStart.y;
+        setSnapTarget(snappedStart);
+      } else if (snappedEnd.x !== movedEnd.x || snappedEnd.y !== movedEnd.y) {
+        dx += snappedEnd.x - movedEnd.x;
+        dy += snappedEnd.y - movedEnd.y;
+        setSnapTarget(snappedEnd);
+      } else {
+        setSnapTarget(null);
+      }
       updateElement(drag.id, {
         x1: snap(clamp(drag.x1 + dx, 0, wallWidth)),
         y1: snap(clamp(drag.y1 + dy, 0, wallHeight)),
@@ -248,14 +314,16 @@ export default function MeasurementCanvas({ value, onChange }) {
       if (event.type === "pointercancel") {
         drawRef.current = null;
         setDraftLine(null);
+        setSnapTarget(null);
         return;
       }
       const start = drawRef.current.start;
-      const end = fromPointer(event);
+      const end = snapToLineEndpoint(fromPointer(event));
       const measured = Math.round(Math.hypot(end.x - start.x, end.y - start.y));
       const snapshot = drawRef.current.snapshot;
       drawRef.current = null;
       setDraftLine(null);
+      setSnapTarget(null);
       if (measured >= 5) {
         const element = {
           id: globalThis.crypto?.randomUUID?.() || `dimension-${Date.now()}`,
@@ -280,6 +348,7 @@ export default function MeasurementCanvas({ value, onChange }) {
     setHistory((items) => [...items.slice(-29), dragRef.current.snapshot]);
     setFuture([]);
     dragRef.current = null;
+    setSnapTarget(null);
   }
 
   function undo() {
@@ -336,7 +405,7 @@ export default function MeasurementCanvas({ value, onChange }) {
         ))}
       </div>
 
-      {tool === "line" ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100"><span className="font-bold">Проведите линию пальцем или мышью.</span> После отпускания появится размерная линия и поле точного размера.</div> : null}
+      {tool === "line" ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100"><span className="font-bold">Проведите линию пальцем или мышью.</span> Конец примагнитится к ближайшему концу другой линии.</div> : null}
       {tool === "cut_circle" || tool.startsWith("socket") ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100">Коснитесь центра выреза. После добавления укажите точный диаметр и координаты.</div> : null}
 
       <div className="bg-[#dce8ea] p-2 sm:p-4">
@@ -344,6 +413,7 @@ export default function MeasurementCanvas({ value, onChange }) {
           <defs>
             <pattern id="minor-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#cbd5d1" strokeWidth="1" /></pattern>
             <pattern id="major-grid" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#minor-grid)" /><path d="M 100 0 L 0 0 0 100" fill="none" stroke="#9fb3b4" strokeWidth="1.5" /></pattern>
+            <marker id="measurement-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#0ea5e9" /></marker>
           </defs>
           <rect data-canvas="surface" width="1000" height="700" fill="url(#major-grid)" />
           <rect data-canvas="surface" x={CANVAS.x} y={CANVAS.y} width={CANVAS.width} height={CANVAS.height} rx="8" fill="#fffdf6" fillOpacity="0.72" stroke="#82989a" strokeWidth="3" strokeDasharray={wallPolygon ? "8 8" : "0"} />
@@ -352,9 +422,10 @@ export default function MeasurementCanvas({ value, onChange }) {
 
           {view !== "wall" ? <ProductShape product={diagram.product} x={productTopLeft.x} y={productTopLeft.y} width={productWidth} height={productHeight} /> : null}
           {visibleElements.map((element) => element.type === "dimension"
-            ? <MeasurementLine key={element.id} element={element} selected={element.id === selectedId} toSvg={toSvg} onPointerDown={(event) => startDrag(event, element)} />
+            ? <MeasurementLine key={element.id} element={element} selected={element.id === selectedId} toSvg={toSvg} onPointerDown={(event) => startDrag(event, element)} onEndpointPointerDown={(event, endpoint) => startEndpointDrag(event, element, endpoint)} />
             : <DiagramElement key={element.id} element={element} selected={element.id === selectedId} toSvg={toSvg} wallWidth={wallWidth} wallHeight={wallHeight} onPointerDown={(event) => startDrag(event, element)} />)}
           {draftLine ? <MeasurementLine element={{ type: "dimension", x1: draftLine.start.x, y1: draftLine.start.y, x2: draftLine.end.x, y2: draftLine.end.y, value: Math.round(Math.hypot(draftLine.end.x - draftLine.start.x, draftLine.end.y - draftLine.start.y)) }} selected toSvg={toSvg} draft /> : null}
+          {snapTarget ? (() => { const point = toSvg(snapTarget); return <g pointerEvents="none"><circle cx={point.x} cy={point.y} r="14" fill="#22c55e" fillOpacity="0.2" stroke="#16a34a" strokeWidth="3" /><circle cx={point.x} cy={point.y} r="4" fill="#16a34a" /></g>; })() : null}
 
         </svg>
       </div>
@@ -373,11 +444,12 @@ export default function MeasurementCanvas({ value, onChange }) {
       />
 
       <div className="grid gap-4 border-t border-white/10 bg-slate-900 p-4 sm:grid-cols-2 sm:p-5">
-        <EditorGroup title="Масштаб листа">
-          <NumberField label="Область по ширине" value={diagram.wall.width} onChange={(value) => updateWall("width", value)} />
-          <NumberField label="Область по высоте" value={diagram.wall.height} onChange={(value) => updateWall("height", value)} />
-          {view !== "wall" ? <><NumberField label="Ширина изделия" value={diagram.product.width} onChange={(value) => updateProduct("width", value)} /><NumberField label="Высота изделия" value={diagram.product.height} onChange={(value) => updateProduct("height", value)} /><NumberField label="Изделие от левого края" value={diagram.product.x} onChange={(value) => updateProduct("x", value)} /><NumberField label="Изделие от пола" value={diagram.product.y} onChange={(value) => updateProduct("y", value)} /></> : null}
-        </EditorGroup>
+        {view !== "wall" ? <EditorGroup title="Изделие">
+          <NumberField label="Ширина изделия" value={diagram.product.width} onChange={(value) => updateProduct("width", value)} />
+          <NumberField label="Высота изделия" value={diagram.product.height} onChange={(value) => updateProduct("height", value)} />
+          <NumberField label="От левого края" value={diagram.product.x} onChange={(value) => updateProduct("x", value)} />
+          <NumberField label="От пола" value={diagram.product.y} onChange={(value) => updateProduct("y", value)} />
+        </EditorGroup> : null}
         <EditorGroup title={selected ? "Выбранный элемент" : "Как работать"}>
           {selected?.type === "dimension" ? <>
             <NumberField label="Размер линии" value={selected.value} onChange={(value) => updateElement(selected.id, { value: optionalPositiveNumber(value) })} />
@@ -393,10 +465,16 @@ export default function MeasurementCanvas({ value, onChange }) {
             {selected.type === "cut_circle" || selected.type.startsWith("socket") ? <NumberField label={selected.type.startsWith("socket") ? "Диаметр каждого выреза" : "Диаметр выреза"} value={selected.diameter} onChange={(value) => { const diameter = Math.max(numberValue(value), 0); const count = Math.max(numberValue(selected.count, 1), 1); updateElement(selected.id, { diameter, width: diameter + (count - 1) * numberValue(selected.spacing, 71), height: diameter }); }} /> : <NumberField label="Ширина" value={selected.width} onChange={(value) => updateElement(selected.id, { width: numberValue(value) })} />}
             {selected.type !== "cut_circle" && !selected.type.startsWith("socket") ? <NumberField label="Высота" value={selected.height} onChange={(value) => updateElement(selected.id, { height: numberValue(value) })} /> : null}
             {selected.type.startsWith("socket") ? <><NumberField label="Количество вырезов" value={selected.count} onChange={(value) => { const count = Math.max(Math.round(numberValue(value, 1)), 1); updateElement(selected.id, { count, width: numberValue(selected.diameter, 68) + (count - 1) * numberValue(selected.spacing, 71) }); }} /><NumberField label="Шаг между центрами" value={selected.spacing} onChange={(value) => { const spacing = Math.max(numberValue(value), 0); updateElement(selected.id, { spacing, width: numberValue(selected.diameter, 68) + (Math.max(numberValue(selected.count, 1), 1) - 1) * spacing }); }} /></> : null}
+            {selected.type === "cut_circle" || selected.type === "cut_rect" || selected.type.startsWith("socket") ? <>
+              <ReferenceSideField label="Горизонтальный размер" value={selected.horizontal_reference || "left"} options={[{ value: "left", label: "От левой стены" }, { value: "right", label: "От правой стены" }]} onChange={(value) => updateElement(selected.id, { horizontal_reference: value })} />
+              <NumberField label={selected.horizontal_reference === "right" ? "Размер справа" : "Размер слева"} value={selected.horizontal_distance} onChange={(value) => updateElement(selected.id, { horizontal_distance: optionalPositiveNumber(value) })} />
+              <ReferenceSideField label="Вертикальный размер" value={selected.vertical_reference || "bottom"} options={[{ value: "bottom", label: "От пола" }, { value: "top", label: "От потолка" }]} onChange={(value) => updateElement(selected.id, { vertical_reference: value })} />
+              <NumberField label={selected.vertical_reference === "top" ? "Размер от потолка" : "Размер от пола"} value={selected.vertical_distance} onChange={(value) => updateElement(selected.id, { vertical_distance: optionalPositiveNumber(value) })} />
+            </> : null}
             {selected.type === "light" ? <><NumberField label="Количество светильников" value={selected.count} onChange={(value) => updateElement(selected.id, { count: Math.max(numberValue(value, 1), 1) })} /><NumberField label="Шаг между центрами" value={selected.spacing} onChange={(value) => updateElement(selected.id, { spacing: numberValue(value) })} /></> : null}
             {selected.type === "mounting" ? <TextField label="Тип крепежа" value={selected.mounting_type} onChange={(value) => updateElement(selected.id, { mounting_type: value })} /> : null}
             <TextField label="Комментарий" value={selected.note} onChange={(value) => updateElement(selected.id, { note: value })} />
-          </> : <div className="col-span-2 space-y-2 text-sm leading-relaxed text-slate-400"><p>1. Выберите «Линия с размером» и проведите отрезок.</p><p>2. Сразу введите фактический размер в появившемся поле.</p><p>3. Вырезы и розетки ставьте по центру и задавайте диаметр.</p><p>4. Любой объект можно выбрать, перетащить и уточнить координатами.</p></div>}
+          </> : <div className="col-span-2 space-y-2 text-sm leading-relaxed text-slate-400"><p>1. Проведите линию: её конец примагнитится к другой линии.</p><p>2. Тяните линию за середину, а её концы — за круглые точки.</p><p>3. Для розеток и вырезов выберите стороны отсчёта размеров.</p><p>4. Любой объект можно перетащить пальцем или мышью.</p></div>}
         </EditorGroup>
       </div>
     </section>
@@ -411,7 +489,9 @@ function DiagramElement({ element, selected, toSvg, wallWidth, wallHeight, onPoi
   const count = Math.max(numberValue(element.count, 1), 1);
   const spacing = Math.max((numberValue(element.spacing, 72) / wallWidth) * CANVAS.width, 22);
   const groupWidth = element.type === "light" ? spacing * (count - 1) : 0;
+  const showsReferences = element.type === "cut_circle" || element.type === "cut_rect" || element.type.startsWith("socket");
   return <g onPointerDown={onPointerDown} className="cursor-grab active:cursor-grabbing">
+    {showsReferences ? <CutoutReferenceDimensions element={element} center={center} /> : null}
     {selected ? <rect x={center.x - width / 2 - 8 - groupWidth / 2} y={center.y - height / 2 - 8} width={width + 16 + groupWidth} height={height + 16} rx="12" fill="none" stroke="#38bdf8" strokeWidth="3" strokeDasharray="8 6" /> : null}
     {element.type.startsWith("socket") ? <CutoutGroup center={center} diameter={Math.max((numberValue(element.diameter, 68) / wallWidth) * CANVAS.width, 18)} count={element.count} spacing={spacing} stroke={stroke} /> : null}
     {element.type === "light" ? Array.from({ length: count }, (_, index) => <LightSymbol key={index} x={center.x - groupWidth / 2 + index * spacing} y={center.y} radius={Math.max(width / 2, 15)} stroke={stroke} />) : null}
@@ -433,7 +513,27 @@ function CutoutGroup({ center, diameter, count, spacing, stroke }) {
   })}</g>;
 }
 
-function MeasurementLine({ element, selected, toSvg, onPointerDown, draft = false }) {
+function CutoutReferenceDimensions({ element, center }) {
+  const horizontalToRight = element.horizontal_reference === "right";
+  const verticalToTop = element.vertical_reference === "top";
+  const horizontalEdge = horizontalToRight ? CANVAS.x + CANVAS.width : CANVAS.x;
+  const verticalEdge = verticalToTop ? CANVAS.y : CANVAS.y + CANVAS.height;
+  const horizontalY = center.y + 34;
+  const verticalX = center.x + 34;
+  const horizontalLabel = `${Math.round(numberValue(element.horizontal_distance))} мм`;
+  const verticalLabel = `${Math.round(numberValue(element.vertical_distance))} мм`;
+  return <g pointerEvents="none">
+    <line x1={center.x} y1={center.y} x2={center.x} y2={horizontalY} stroke="#0ea5e9" strokeWidth="1.8" strokeDasharray="5 4" />
+    <line x1={horizontalEdge} y1={horizontalY} x2={center.x} y2={horizontalY} stroke="#0ea5e9" strokeWidth="2" markerStart="url(#measurement-arrow)" markerEnd="url(#measurement-arrow)" />
+    <rect x={(horizontalEdge + center.x) / 2 - 34} y={horizontalY - 13} width="68" height="20" rx="6" fill="#fffdf6" />
+    <text x={(horizontalEdge + center.x) / 2} y={horizontalY + 2} textAnchor="middle" fontSize="12" fontWeight="900" fill="#0369a1">{horizontalLabel}</text>
+    <line x1={center.x} y1={center.y} x2={verticalX} y2={center.y} stroke="#0ea5e9" strokeWidth="1.8" strokeDasharray="5 4" />
+    <line x1={verticalX} y1={verticalEdge} x2={verticalX} y2={center.y} stroke="#0ea5e9" strokeWidth="2" markerStart="url(#measurement-arrow)" markerEnd="url(#measurement-arrow)" />
+    <g transform={`rotate(-90 ${verticalX} ${(verticalEdge + center.y) / 2})`}><rect x={verticalX - 34} y={(verticalEdge + center.y) / 2 - 13} width="68" height="20" rx="6" fill="#fffdf6" /><text x={verticalX} y={(verticalEdge + center.y) / 2 + 2} textAnchor="middle" fontSize="12" fontWeight="900" fill="#0369a1">{verticalLabel}</text></g>
+  </g>;
+}
+
+function MeasurementLine({ element, selected, toSvg, onPointerDown, onEndpointPointerDown, draft = false }) {
   const start = toSvg({ x: numberValue(element.x1), y: numberValue(element.y1) });
   const end = toSvg({ x: numberValue(element.x2), y: numberValue(element.y2) });
   const dx = end.x - start.x;
@@ -464,6 +564,10 @@ function MeasurementLine({ element, selected, toSvg, onPointerDown, draft = fals
       <rect x={labelX - labelWidth / 2} y={labelY - 15} width={labelWidth} height="22" rx="7" fill="#fffdf6" stroke={selected ? "#38bdf8" : "#94a3b8"} />
       <text x={labelX} y={labelY + 1} textAnchor="middle" fontSize="14" fontWeight="900" fill={color}>{dimensionLabel}</text>
     </g>
+    {selected && !draft ? <>
+      <circle cx={start.x} cy={start.y} r="13" fill="#fffdf6" stroke="#0ea5e9" strokeWidth="4" className="cursor-crosshair" onPointerDown={(event) => onEndpointPointerDown?.(event, "start")} />
+      <circle cx={end.x} cy={end.y} r="13" fill="#fffdf6" stroke="#0ea5e9" strokeWidth="4" className="cursor-crosshair" onPointerDown={(event) => onEndpointPointerDown?.(event, "end")} />
+    </> : null}
   </g>;
 }
 
@@ -496,6 +600,10 @@ function NumberField({ label, value, onChange }) {
 
 function TextField({ label, value, onChange }) {
   return <label className="col-span-2 space-y-1"><span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</span><input value={value ?? ""} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm font-bold text-white outline-none focus:border-sky-400" /></label>;
+}
+
+function ReferenceSideField({ label, value, options, onChange }) {
+  return <div className="col-span-2 space-y-1"><span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</span><div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-950 p-1">{options.map((option) => <button key={option.value} type="button" onClick={() => onChange(option.value)} className={`rounded-lg px-2 py-2 text-xs font-bold transition ${value === option.value ? "bg-sky-400 text-slate-950" : "text-slate-400 hover:text-white"}`}>{option.label}</button>)}</div></div>;
 }
 
 function IconButton({ label, children, danger = false, ...props }) {

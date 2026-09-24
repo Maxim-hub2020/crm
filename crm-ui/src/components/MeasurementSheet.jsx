@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Camera, CheckCircle2, Cloud, CloudOff, FileDown, Paperclip, Trash2 } from "lucide-react";
+import { Camera, CheckCircle2, Cloud, CloudOff, FileDown, Paperclip, Plus, Trash2 } from "lucide-react";
 
 import { extractApiErrorMessage, fetchMeasurementSheet, saveMeasurementSheet, uploadMeasurementPhotos } from "../api";
 import { Button, Input, Label, Select } from "./ui.jsx";
@@ -18,7 +18,28 @@ const EMPTY = {
   power_x: "", power_y: "", power_control: "switch",
   wall_material: "", mounting: "", wall_notes: "", openings: "", notes: "",
   diagram: createDefaultDiagram(),
+  rooms: [],
 };
+
+function createRoom(index = 0, diagram = createDefaultDiagram()) {
+  return {
+    id: globalThis.crypto?.randomUUID?.() || `room-${Date.now()}-${index}`,
+    name: `Комната ${index + 1}`,
+    diagram,
+  };
+}
+
+function normalizeMeasurementData(data) {
+  const source = data || {};
+  const rooms = Array.isArray(source.rooms) && source.rooms.length
+    ? source.rooms.map((room, index) => ({
+      id: room.id || `room-${index + 1}`,
+      name: String(room.name || `Комната ${index + 1}`),
+      diagram: room.diagram || createDefaultDiagram(),
+    }))
+    : [createRoom(0, source.diagram || createDefaultDiagram())];
+  return { ...EMPTY, ...source, rooms, diagram: rooms[0].diagram };
+}
 
 function storageKey(projectId) {
   return `crm.measurement-sheet.v1.${projectId}`;
@@ -33,7 +54,8 @@ function escapeHtml(value) {
 }
 
 export default function MeasurementSheet({ project }) {
-  const [form, setForm] = useState(EMPTY);
+  const [form, setForm] = useState(() => normalizeMeasurementData(null));
+  const [activeRoomId, setActiveRoomId] = useState(null);
   const [sheet, setSheet] = useState(null);
   const [completeRequested, setCompleteRequested] = useState(false);
   const [pendingPhotos, setPendingPhotos] = useState([]);
@@ -49,7 +71,9 @@ export default function MeasurementSheet({ project }) {
   useEffect(() => {
     loadedRef.current = false;
     const local = readDraft(project.id);
-    setForm(local?.data ? { ...EMPTY, ...local.data } : EMPTY);
+    const localForm = normalizeMeasurementData(local?.data);
+    setForm(localForm);
+    setActiveRoomId(localForm.rooms[0]?.id || null);
     setSheet(null);
     setCompleteRequested(Boolean(local?.completeRequested));
     loadPending().catch(() => {});
@@ -61,7 +85,11 @@ export default function MeasurementSheet({ project }) {
     fetchMeasurementSheet(project.id)
       .then((remote) => {
         setSheet(remote);
-        if (!local?.dirty && remote?.data) setForm({ ...EMPTY, ...remote.data });
+        if (!local?.dirty && remote?.data) {
+          const remoteForm = normalizeMeasurementData(remote.data);
+          setForm(remoteForm);
+          setActiveRoomId(remoteForm.rooms[0]?.id || null);
+        }
       })
       .catch((requestError) => setError(extractApiErrorMessage(requestError, "Не удалось загрузить замер.")))
       .finally(() => { loadedRef.current = true; });
@@ -132,6 +160,30 @@ export default function MeasurementSheet({ project }) {
     setForm((previous) => ({ ...previous, [key]: value }));
   }
 
+  function addRoom() {
+    setForm((previous) => {
+      const room = createRoom(previous.rooms.length);
+      setActiveRoomId(room.id);
+      return { ...previous, rooms: [...previous.rooms, room] };
+    });
+  }
+
+  function updateActiveRoom(patch) {
+    setForm((previous) => {
+      const rooms = previous.rooms.map((room) => room.id === activeRoomId ? { ...room, ...patch } : room);
+      return { ...previous, rooms, diagram: rooms[0]?.diagram || previous.diagram };
+    });
+  }
+
+  function removeRoom(roomId) {
+    setForm((previous) => {
+      if (previous.rooms.length <= 1) return previous;
+      const rooms = previous.rooms.filter((room) => room.id !== roomId);
+      if (activeRoomId === roomId) setActiveRoomId(rooms[0].id);
+      return { ...previous, rooms, diagram: rooms[0]?.diagram || createDefaultDiagram() };
+    });
+  }
+
   async function addPhotos(event) {
     const files = Array.from(event.target.files || []);
     await Promise.all(files.map((file) => addOfflineMeasurementPhoto(project.id, file)));
@@ -146,16 +198,20 @@ export default function MeasurementSheet({ project }) {
   }
 
   function printSheet() {
-    const regularRows = Object.entries(form).filter(([key, value]) => key !== "diagram" && value).map(([key, value]) => `<tr><td>${escapeHtml(key.replaceAll("_", " "))}</td><td>${escapeHtml(value)}</td></tr>`);
-    const diagramElements = Array.isArray(form.diagram?.elements) ? form.diagram.elements : [];
-    const drawingRows = diagramElements.map((element, index) => {
+    const regularRows = Object.entries(form).filter(([key, value]) => key !== "diagram" && key !== "rooms" && value).map(([key, value]) => `<tr><td>${escapeHtml(key.replaceAll("_", " "))}</td><td>${escapeHtml(value)}</td></tr>`);
+    const roomRows = form.rooms.flatMap((room) => {
+      const diagramElements = Array.isArray(room.diagram?.elements) ? room.diagram.elements : [];
+      const drawingRows = diagramElements.map((element, index) => {
       const side = { wall: "Стена", front: "Лицевая сторона", back: "Задняя сторона" }[element.side] || element.side || "";
       if (element.type === "dimension") return `<tr><td>Размерная линия ${index + 1} · ${escapeHtml(side)}</td><td><strong>${escapeHtml(element.value)} мм</strong>; от (${escapeHtml(element.x1)}, ${escapeHtml(element.y1)}) до (${escapeHtml(element.x2)}, ${escapeHtml(element.y2)})${element.note ? `; ${escapeHtml(element.note)}` : ""}</td></tr>`;
-      if (element.type === "cut_circle" || element.type?.startsWith("socket")) return `<tr><td>${escapeHtml(element.label)} · ${escapeHtml(side)}</td><td>Ø ${escapeHtml(element.diameter)} мм; центр X ${escapeHtml(element.x)}, Y ${escapeHtml(element.y)}${Number(element.count || 1) > 1 ? `; количество ${escapeHtml(element.count)}; шаг ${escapeHtml(element.spacing)} мм` : ""}</td></tr>`;
-      if (element.type === "cut_rect") return `<tr><td>${escapeHtml(element.label)} · ${escapeHtml(side)}</td><td>${escapeHtml(element.width)} × ${escapeHtml(element.height)} мм; центр X ${escapeHtml(element.x)}, Y ${escapeHtml(element.y)}</td></tr>`;
+      const references = `; ${element.horizontal_reference === "right" ? "справа" : "слева"} ${escapeHtml(element.horizontal_distance)} мм; ${element.vertical_reference === "top" ? "от потолка" : "от пола"} ${escapeHtml(element.vertical_distance)} мм`;
+      if (element.type === "cut_circle" || element.type?.startsWith("socket")) return `<tr><td>${escapeHtml(element.label)} · ${escapeHtml(side)}</td><td>Ø ${escapeHtml(element.diameter)} мм${references}${Number(element.count || 1) > 1 ? `; количество ${escapeHtml(element.count)}; шаг ${escapeHtml(element.spacing)} мм` : ""}</td></tr>`;
+      if (element.type === "cut_rect") return `<tr><td>${escapeHtml(element.label)} · ${escapeHtml(side)}</td><td>${escapeHtml(element.width)} × ${escapeHtml(element.height)} мм${references}</td></tr>`;
       return "";
-    }).filter(Boolean);
-    const rows = [...regularRows, ...drawingRows].join("");
+      }).filter(Boolean);
+      return [`<tr><td colspan="2" style="background:#eef2f6;font-size:16px">${escapeHtml(room.name)}</td></tr>`, ...drawingRows];
+    });
+    const rows = [...regularRows, ...roomRows].join("");
     const popup = window.open("", "_blank");
     if (!popup) return;
     popup.opener = null;
@@ -168,12 +224,16 @@ export default function MeasurementSheet({ project }) {
   const hasFrame = form.mirror_type === "frame" || form.mirror_type === "frame_light";
   const hasLight = form.mirror_type === "backlight" || form.mirror_type === "frontlight" || form.mirror_type === "frame_light";
   const photoCount = (sheet?.photos?.length || 0) + pendingPhotos.length;
-  const diagramElements = Array.isArray(form.diagram?.elements) ? form.diagram.elements : [];
-  const validDimensionCount = diagramElements.filter((element) => element.type === "dimension" && Number(element.value) > 0).length;
+  const activeRoom = form.rooms.find((room) => room.id === activeRoomId) || form.rooms[0];
+  const allDiagramElements = form.rooms.flatMap((room) => Array.isArray(room.diagram?.elements) ? room.diagram.elements : []);
   const requiredDimensionCount = form.shape === "round" ? 1 : 2;
-  const hasPowerPoint = diagramElements.some((element) => element.type === "power");
+  const roomsWithoutDimensions = form.rooms.filter((room) => {
+    const elements = Array.isArray(room.diagram?.elements) ? room.diagram.elements : [];
+    return elements.filter((element) => element.type === "dimension" && Number(element.value) > 0).length < requiredDimensionCount;
+  });
+  const hasPowerPoint = allDiagramElements.some((element) => element.type === "power");
   const validationIssues = [
-    ...(validDimensionCount < requiredDimensionCount ? [`Добавьте размеры изделия на чертёж: минимум ${requiredDimensionCount}`] : []),
+    ...roomsWithoutDimensions.map((room) => `На листе «${room.name}» добавьте минимум ${requiredDimensionCount} размер${requiredDimensionCount === 1 ? "" : "а"}`),
     ...(hasLight && !hasPowerPoint && (!form.power_x || !form.power_y) ? ["Добавьте на заднюю сторону точку вывода питания"] : []),
     ...(photoCount === 0 ? ["Добавьте хотя бы одну фотографию"] : []),
   ];
@@ -189,9 +249,19 @@ export default function MeasurementSheet({ project }) {
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Конструкция"><Select value={form.mirror_type} onChange={(e) => { const value = e.target.value; setForm((previous) => ({ ...previous, mirror_type: value, light_type: value === "backlight" ? "rear" : value === "frontlight" ? "front" : previous.light_type })); }}><option value="plain">Обычное зеркало</option><option value="backlight">Задняя подсветка</option><option value="frontlight">Лицевая подсветка</option><option value="frame">С рамкой</option><option value="frame_light">Рамка и подсветка</option></Select></Field>
-        <Field label="Форма"><Select value={form.shape} onChange={(e) => { const shape = e.target.value; setForm((previous) => ({ ...previous, shape, diagram: { ...createDefaultDiagram(), ...(previous.diagram || {}), product: { ...createDefaultDiagram().product, ...(previous.diagram?.product || {}), shape } } })); }}><option value="rectangle">Прямоугольник</option><option value="round">Круг</option><option value="oval">Овал</option><option value="arch">Арка</option><option value="custom">Произвольная</option></Select></Field>
+        <Field label="Форма"><Select value={form.shape} onChange={(e) => { const shape = e.target.value; setForm((previous) => { const rooms = previous.rooms.map((room) => room.id === activeRoomId ? { ...room, diagram: { ...createDefaultDiagram(), ...(room.diagram || {}), product: { ...createDefaultDiagram().product, ...(room.diagram?.product || {}), shape } } } : room); return { ...previous, shape, rooms, diagram: rooms[0]?.diagram || previous.diagram }; }); }}><option value="rectangle">Прямоугольник</option><option value="round">Круг</option><option value="oval">Овал</option><option value="arch">Арка</option><option value="custom">Произвольная</option></Select></Field>
       </div>
-      <MeasurementCanvas value={form.diagram} onChange={(diagram) => change("diagram", diagram)} />
+      <section className="rounded-[24px] border border-slate-200 bg-white p-3 sm:p-4">
+        <div className="flex gap-2 overflow-x-auto pb-3 [scrollbar-width:none]">
+          {form.rooms.map((room) => <button key={room.id} type="button" onClick={() => setActiveRoomId(room.id)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold transition ${room.id === activeRoom?.id ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`}>{room.name}</button>)}
+          <button type="button" onClick={addRoom} className="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed border-slate-300 px-4 py-2 text-sm font-bold text-slate-600"><Plus size={15} />Добавить комнату</button>
+        </div>
+        <div className="flex items-end gap-2 border-t border-slate-100 pt-3">
+          <Field label="Название комнаты"><Input value={activeRoom?.name || ""} onChange={(event) => updateActiveRoom({ name: event.target.value })} placeholder="Например, ванная" /></Field>
+          {form.rooms.length > 1 ? <Button type="button" variant="secondary" onClick={() => removeRoom(activeRoom.id)} title="Удалить лист"><Trash2 size={16} /></Button> : null}
+        </div>
+      </section>
+      {activeRoom ? <MeasurementCanvas key={activeRoom.id} value={activeRoom.diagram} onChange={(diagram) => updateActiveRoom({ diagram })} /> : null}
       {hasFrame ? <Section title="Рамка"><div className="grid gap-3 sm:grid-cols-3"><Field label="Материал"><Input value={form.frame_material} onChange={(e)=>change("frame_material",e.target.value)} /></Field><Field label="Профиль"><Input value={form.frame_profile} onChange={(e)=>change("frame_profile",e.target.value)} /></Field><Field label="Цвет"><Input value={form.frame_color} onChange={(e)=>change("frame_color",e.target.value)} /></Field></div></Section> : null}
       {hasLight ? <Section title="Подсветка и электрика"><div className="grid gap-3 sm:grid-cols-3"><Field label="Тип"><Select value={form.light_type} onChange={(e)=>change("light_type",e.target.value)}><option value="rear">Задняя</option><option value="front">Лицевая</option></Select></Field><Field label="Отступ световой линии"><Input inputMode="decimal" value={form.light_offset} onChange={(e)=>change("light_offset",e.target.value)} /></Field><Field label="Температура"><Select value={form.light_temperature} onChange={(e)=>change("light_temperature",e.target.value)}><option value="3000">3000 K</option><option value="4000">4000 K</option><option value="6000">6000 K</option></Select></Field><Field label="Вывод питания X"><Input inputMode="decimal" value={form.power_x} onChange={(e)=>change("power_x",e.target.value)} /></Field><Field label="Вывод питания Y"><Input inputMode="decimal" value={form.power_y} onChange={(e)=>change("power_y",e.target.value)} /></Field><Field label="Управление"><Select value={form.power_control} onChange={(e)=>change("power_control",e.target.value)}><option value="switch">Выключатель</option><option value="sensor">Датчик</option><option value="dimmer">Диммер</option></Select></Field></div></Section> : null}
       <Section title="Монтаж"><div className="grid gap-3 sm:grid-cols-2"><Field label="Материал стены"><Input value={form.wall_material} onChange={(e)=>change("wall_material",e.target.value)} /></Field><Field label="Крепление"><Input value={form.mounting} onChange={(e)=>change("mounting",e.target.value)} /></Field></div><Field label="Неровности, препятствия, коммуникации"><textarea className="mt-1 min-h-24 w-full rounded-xl border border-slate-200 p-3 text-sm" value={form.wall_notes} onChange={(e)=>change("wall_notes",e.target.value)} /></Field></Section>
