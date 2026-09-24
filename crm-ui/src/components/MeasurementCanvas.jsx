@@ -336,10 +336,11 @@ export default function MeasurementCanvas({ value, onChange }) {
       }
       return;
     }
-    if (!dragRef.current) return;
-    setHistory((items) => [...items.slice(-29), dragRef.current.snapshot]);
-    setFuture([]);
+    const completedDrag = dragRef.current;
+    if (!completedDrag) return;
     dragRef.current = null;
+    setHistory((items) => [...items.slice(-29), completedDrag.snapshot]);
+    setFuture([]);
     setSnapTarget(null);
   }
 
