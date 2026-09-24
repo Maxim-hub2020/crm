@@ -10,7 +10,7 @@ import {
   saveMeasurementSheet,
   uploadMeasurementPhotos,
 } from "../api";
-import { Button, Input, Label, Select } from "./ui.jsx";
+import { Button, Input, Label, Modal, Select } from "./ui.jsx";
 import { addOfflineMeasurementPhoto, deleteOfflineMeasurementPhoto, listOfflineMeasurementPhotos } from "../utils/offlineMeasurements.js";
 import MeasurementCanvas, { createDefaultDiagram } from "./MeasurementCanvas.jsx";
 
@@ -56,6 +56,9 @@ function storageKey(projectId) {
 function scanStorageKey(projectId) {
   return `crm.measurement-lidar-scan.v1.${projectId}`;
 }
+
+const lidarScannerDistributed = import.meta.env.VITE_LIDAR_SCANNER_DISTRIBUTED === "true";
+const lidarScannerInstallUrl = String(import.meta.env.VITE_LIDAR_SCANNER_INSTALL_URL || "").trim();
 
 function readPendingScan(projectId) {
   try { return JSON.parse(localStorage.getItem(scanStorageKey(projectId)) || "null"); } catch { return null; }
@@ -138,6 +141,7 @@ export default function MeasurementSheet({ project }) {
   const [error, setError] = useState("");
   const [scanSession, setScanSession] = useState(() => readPendingScan(project.id));
   const [scanMessage, setScanMessage] = useState("");
+  const [lidarSetupOpen, setLidarSetupOpen] = useState(false);
   const loadedRef = useRef(false);
   const syncingRef = useRef(false);
   const applyingScanRef = useRef(new Set());
@@ -318,6 +322,10 @@ export default function MeasurementSheet({ project }) {
 
   async function startLidarScan() {
     if (!activeRoom) return;
+    if (!lidarScannerDistributed) {
+      setLidarSetupOpen(true);
+      return;
+    }
     try {
       setScanMessage("Открываем LiDAR-сканер...");
       const created = await createMeasurementScanSession({
@@ -424,6 +432,14 @@ export default function MeasurementSheet({ project }) {
       {validationIssues.length ? <div className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-900"><div className="font-black">До завершения замера:</div><ul className="mt-1 list-disc pl-5">{validationIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div> : null}
       {error ? <div className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800">{error}</div> : null}
       <Button type="button" className="w-full sm:w-auto" disabled={validationIssues.length > 0} onClick={() => { setCompleteRequested(true); syncNow(form, true); }}><CheckCircle2 size={17}/>{sheet?.is_complete || completeRequested ? "Замер завершён" : "Завершить замер"}</Button>
+      <Modal open={lidarSetupOpen} title="Приложение CEH LiDAR не установлено" onClose={() => setLidarSetupOpen(false)} widthClassName="max-w-lg">
+        <div className="space-y-4 text-sm leading-relaxed text-slate-600">
+          <p>Safari не умеет работать с RoomPlan и LiDAR напрямую. Для сканирования на iPhone 15 Pro нужно отдельное приложение CEH LiDAR, установленное через TestFlight или Xcode.</p>
+          <p className="rounded-2xl bg-amber-50 px-4 py-3 font-semibold text-amber-900">Сканер пока не опубликован для установки, поэтому CRM больше не открывает недействительный адрес в Safari.</p>
+          {lidarScannerInstallUrl ? <a href={lidarScannerInstallUrl} target="_blank" rel="noreferrer" className="inline-flex rounded-full bg-slate-900 px-4 py-2.5 font-bold text-white">Установить CEH LiDAR</a> : null}
+          <div><Button type="button" variant="secondary" onClick={() => setLidarSetupOpen(false)}>Понятно</Button></div>
+        </div>
+      </Modal>
     </div>
   );
 }

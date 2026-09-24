@@ -9,6 +9,8 @@
 3. Открыть `CEHLidarScanner.xcodeproj`.
 4. В Signing & Capabilities выбрать Apple Developer Team и при необходимости изменить bundle identifier.
 5. Собрать приложение на физический iPhone 15 Pro. Симулятор не поддерживает LiDAR.
+6. После установки приложения включить запуск в production-сборке CRM: `VITE_LIDAR_SCANNER_DISTRIBUTED=true`.
+7. Если приложение опубликовано в TestFlight или App Store, указать ссылку: `VITE_LIDAR_SCANNER_INSTALL_URL=https://...`.
 
 CRM открывает приложение схемой `cehcrm-lidar://scan`. Ссылка содержит только короткоживущий одноразовый токен сканирования, а не пароль пользователя или JWT CRM.
 
