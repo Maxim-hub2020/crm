@@ -18,6 +18,7 @@ import {
   Unplug,
   Wrench,
 } from "lucide-react";
+import { mergeMeasurementSpecifications, packageMeasurementTranscript } from "../utils/measurementTranscript.js";
 
 const CANVAS = { x: 54, y: 42, width: 892, height: 596 };
 const VIEW_LABELS = { wall: "Стена" };
@@ -584,18 +585,6 @@ function IconButton({ label, children, danger = false, ...props }) {
   return <button type="button" title={label} aria-label={label} className={`rounded-full p-2 transition disabled:opacity-30 ${danger ? "bg-red-500/10 text-red-300 hover:bg-red-500/20" : "bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"}`} {...props}>{children}</button>;
 }
 
-function packageTranscript(value) {
-  const prepared = String(value || "")
-    .replace(/\s+(?:следующий пункт|новый пункт|дальше|далее)\s*[:,.-]?\s*/gi, "\n")
-    .replace(/(?:^|\s)(?:первый|первое|второй|второе|третий|третье|четв[её]ртый|четв[её]ртое|пятый|пятое)\s+пункт\s*[:,.-]?\s*/gi, "\n")
-    .replace(/\s+-\s+/g, "\n");
-  return prepared
-    .split(/\n|[.!?;]+/)
-    .map((part) => part.replace(/^\s*[,.:;-]+|\s+/g, " ").trim())
-    .filter(Boolean)
-    .map((text) => ({ id: globalThis.crypto?.randomUUID?.() || `note-${Date.now()}-${Math.random()}`, text: text.charAt(0).toUpperCase() + text.slice(1) }));
-}
-
 function VoiceSpecification({ view, items, onChange }) {
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState("");
@@ -612,8 +601,8 @@ function VoiceSpecification({ view, items, onChange }) {
   useEffect(() => () => recognitionRef.current?.abort?.(), []);
 
   function appendPackaged(text) {
-    const packaged = packageTranscript(text);
-    if (packaged.length) onChangeRef.current([...itemsRef.current, ...packaged]);
+    const packaged = packageMeasurementTranscript(text);
+    if (packaged.length) onChangeRef.current(mergeMeasurementSpecifications(itemsRef.current, packaged));
   }
 
   function startListening() {
@@ -686,7 +675,7 @@ function VoiceSpecification({ view, items, onChange }) {
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
         <h4 className="text-sm font-black">Специфика: {VIEW_LABELS[view]}</h4>
-        <p className="mt-1 text-xs text-slate-500">Надиктуйте всё подряд, после остановки речь станет отдельными пунктами.</p>
+        <p className="mt-1 text-xs text-slate-500">Назовите изделие и особенности. После остановки система разложит их по понятным пунктам.</p>
       </div>
       <button type="button" onClick={listening ? stopListening : startListening} className={`inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-black transition ${listening ? "bg-red-500 text-white" : "bg-sky-400 text-slate-950"}`}>{listening ? <MicOff size={17} /> : <Mic size={17} />}{listening ? "Закончить" : "Надиктовать"}</button>
     </div>
