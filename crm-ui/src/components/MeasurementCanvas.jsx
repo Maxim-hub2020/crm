@@ -24,6 +24,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { mergeMeasurementSpecifications, packageMeasurementTranscript } from "../utils/measurementTranscript.js";
+import { snapOrthogonalPoint } from "../utils/measurementGeometry.js";
 import { MEASUREMENT_VIEWPORT, measurementViewportFraction, measurementViewportRenderBox, panMeasurementViewport, zoomMeasurementViewport } from "../utils/measurementViewport.js";
 
 const CANVAS = { x: 54, y: 42, width: 892, height: 596 };
@@ -121,6 +122,7 @@ export default function MeasurementCanvas({ value, onChange }) {
   const [future, setFuture] = useState([]);
   const [draftLine, setDraftLine] = useState(null);
   const [snapTarget, setSnapTarget] = useState(null);
+  const [orthogonalGuide, setOrthogonalGuide] = useState(null);
   const [viewport, setViewport] = useState(MEASUREMENT_VIEWPORT);
   const [drawingFullscreen, setDrawingFullscreen] = useState(false);
   const sectionRef = useRef(null);
@@ -220,6 +222,7 @@ export default function MeasurementCanvas({ value, onChange }) {
     panRef.current = null;
     setDraftLine(null);
     setSnapTarget(null);
+    setOrthogonalGuide(null);
   }
 
   function beginPan(event) {
@@ -294,6 +297,15 @@ export default function MeasurementCanvas({ value, onChange }) {
     return nearest || point;
   }
 
+  function resolveLinePoint(start, rawPoint, excludeId = null) {
+    const endpoint = snapToLineEndpoint(rawPoint, excludeId);
+    if (endpoint.x !== rawPoint.x || endpoint.y !== rawPoint.y) {
+      return { point: endpoint, endpointSnapped: true, axis: null };
+    }
+    const orthogonal = snapOrthogonalPoint(start, rawPoint);
+    return { point: orthogonal.point, endpointSnapped: false, axis: orthogonal.axis };
+  }
+
   function handleCanvasPointerDown(event) {
     activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -310,6 +322,7 @@ export default function MeasurementCanvas({ value, onChange }) {
       drawRef.current = { start: point, snapshot: diagram };
       setDraftLine({ start: point, end: point });
       setSnapTarget(point.x !== rawPoint.x || point.y !== rawPoint.y ? point : null);
+      setOrthogonalGuide(null);
       return;
     }
     if (tool === "select") {
@@ -374,7 +387,13 @@ export default function MeasurementCanvas({ value, onChange }) {
     if (tool !== "select") setTool("select");
     setSelectedId(element.id);
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    dragRef.current = { id: element.id, kind: "dimension-end", endpoint, snapshot: diagram };
+    dragRef.current = {
+      id: element.id,
+      kind: "dimension-end",
+      endpoint,
+      anchor: endpoint === "start" ? { x: element.x2, y: element.y2 } : { x: element.x1, y: element.y1 },
+      snapshot: diagram,
+    };
   }
 
   function handlePointerMove(event) {
@@ -395,23 +414,27 @@ export default function MeasurementCanvas({ value, onChange }) {
     }
     if (drawRef.current) {
       const rawPoint = fromPointer(event);
-      const point = snapToLineEndpoint(rawPoint);
-      setDraftLine({ start: drawRef.current.start, end: point });
-      setSnapTarget(point.x !== rawPoint.x || point.y !== rawPoint.y ? point : null);
+      const resolved = resolveLinePoint(drawRef.current.start, rawPoint);
+      setDraftLine({ start: drawRef.current.start, end: resolved.point });
+      setSnapTarget(resolved.endpointSnapped ? resolved.point : null);
+      setOrthogonalGuide(resolved.axis ? { start: drawRef.current.start, end: resolved.point, axis: resolved.axis } : null);
       return;
     }
     const drag = dragRef.current;
     if (!drag) return;
     const point = fromPointer(event);
     if (drag.kind === "dimension-end") {
-      const snappedPoint = snapToLineEndpoint(point, drag.id);
-      setSnapTarget(snappedPoint.x !== point.x || snappedPoint.y !== point.y ? snappedPoint : null);
+      const resolved = resolveLinePoint(drag.anchor, point, drag.id);
+      const snappedPoint = resolved.point;
+      setSnapTarget(resolved.endpointSnapped ? snappedPoint : null);
+      setOrthogonalGuide(resolved.axis ? { start: drag.anchor, end: snappedPoint, axis: resolved.axis } : null);
       updateElement(drag.id, drag.endpoint === "start"
         ? { x1: snappedPoint.x, y1: snappedPoint.y }
         : { x2: snappedPoint.x, y2: snappedPoint.y }, false);
       return;
     }
     if (drag.kind === "dimension") {
+      setOrthogonalGuide(null);
       let dx = point.x - drag.start.x;
       let dy = point.y - drag.start.y;
       const movedStart = { x: drag.x1 + dx, y: drag.y1 + dy };
@@ -438,6 +461,7 @@ export default function MeasurementCanvas({ value, onChange }) {
       return;
     }
     const movingElement = diagram.elements.find((element) => element.id === drag.id);
+    setOrthogonalGuide(null);
     const width = numberValue(movingElement?.width, 0);
     const height = numberValue(movingElement?.height, 0);
     const x = snap(clamp(drag.x + point.x - drag.start.x, 0, Math.max(wallWidth - width / 2, 0)));
@@ -461,15 +485,17 @@ export default function MeasurementCanvas({ value, onChange }) {
         drawRef.current = null;
         setDraftLine(null);
         setSnapTarget(null);
+        setOrthogonalGuide(null);
         return;
       }
       const start = drawRef.current.start;
-      const end = snapToLineEndpoint(fromPointer(event));
+      const end = resolveLinePoint(start, fromPointer(event)).point;
       const measured = Math.round(Math.hypot(end.x - start.x, end.y - start.y));
       const snapshot = drawRef.current.snapshot;
       drawRef.current = null;
       setDraftLine(null);
       setSnapTarget(null);
+      setOrthogonalGuide(null);
       if (measured >= 5) {
         const element = {
           id: globalThis.crypto?.randomUUID?.() || `dimension-${Date.now()}`,
@@ -497,6 +523,7 @@ export default function MeasurementCanvas({ value, onChange }) {
     setHistory((items) => [...items.slice(-29), completedDrag.snapshot]);
     setFuture([]);
     setSnapTarget(null);
+    setOrthogonalGuide(null);
   }
 
   function undo() {
@@ -574,6 +601,17 @@ export default function MeasurementCanvas({ value, onChange }) {
           {visibleElements.map((element) => element.type === "dimension"
             ? <MeasurementLine key={element.id} element={element} selected={element.id === selectedId} toSvg={toSvg} onPointerDown={(event) => startDrag(event, element)} onEndpointPointerDown={(event, endpoint) => startEndpointDrag(event, element, endpoint)} />
             : <DiagramElement key={element.id} element={element} selected={element.id === selectedId} toSvg={toSvg} wallWidth={wallWidth} wallHeight={wallHeight} onPointerDown={(event) => startDrag(event, element)} />)}
+          {orthogonalGuide ? (() => {
+            const start = toSvg(orthogonalGuide.start);
+            const end = toSvg(orthogonalGuide.end);
+            const x = (start.x + end.x) / 2;
+            const y = (start.y + end.y) / 2;
+            return <g pointerEvents="none">
+              <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="#0284c7" strokeWidth="2" strokeDasharray="8 7" />
+              <rect x={x - 25} y={y - 15} width="50" height="24" rx="8" fill="#e0f2fe" stroke="#0284c7" strokeWidth="2" />
+              <text x={x} y={y + 2} textAnchor="middle" fontSize="13" fontWeight="900" fill="#0369a1">90°</text>
+            </g>;
+          })() : null}
           {draftLine ? <MeasurementLine element={{ type: "dimension", x1: draftLine.start.x, y1: draftLine.start.y, x2: draftLine.end.x, y2: draftLine.end.y, value: Math.round(Math.hypot(draftLine.end.x - draftLine.start.x, draftLine.end.y - draftLine.start.y)) }} selected toSvg={toSvg} draft /> : null}
           {snapTarget ? (() => { const point = toSvg(snapTarget); return <g pointerEvents="none"><circle cx={point.x} cy={point.y} r="14" fill="#22c55e" fillOpacity="0.2" stroke="#16a34a" strokeWidth="3" /><circle cx={point.x} cy={point.y} r="4" fill="#16a34a" /></g>; })() : null}
 
