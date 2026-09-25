@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://amalgama.cehcrm.ru/sitemap.xml
+Host: amalgama.cehcrm.ru
