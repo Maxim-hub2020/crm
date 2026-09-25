@@ -4,9 +4,11 @@ import {
   ArrowUp,
   Cable,
   CircleDot,
+  Expand,
   Hand,
   LampWallUp,
   Maximize2,
+  Minimize2,
   Minus,
   MousePointer2,
   Mic,
@@ -18,12 +20,11 @@ import {
   Trash2,
   Undo2,
   Unplug,
-  Wrench,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import { mergeMeasurementSpecifications, packageMeasurementTranscript } from "../utils/measurementTranscript.js";
-import { MEASUREMENT_VIEWPORT, panMeasurementViewport, zoomMeasurementViewport } from "../utils/measurementViewport.js";
+import { MEASUREMENT_VIEWPORT, measurementViewportFraction, measurementViewportRenderBox, panMeasurementViewport, zoomMeasurementViewport } from "../utils/measurementViewport.js";
 
 const CANVAS = { x: 54, y: 42, width: 892, height: 596 };
 const VIEW_LABELS = { wall: "Стена" };
@@ -47,7 +48,6 @@ const TOOLS = [
   { id: "socket_triple", label: "3 розетки", icon: Unplug },
   { id: "light", label: "Светильник", icon: LampWallUp },
   { id: "power", label: "Питание", icon: Cable },
-  { id: "mounting", label: "Крепёж", icon: Wrench },
   { id: "cut_circle", label: "Круглый вырез", icon: CircleDot },
   { id: "cut_rect", label: "Прямоугольный вырез", icon: ScanLine },
 ];
@@ -122,6 +122,8 @@ export default function MeasurementCanvas({ value, onChange }) {
   const [draftLine, setDraftLine] = useState(null);
   const [snapTarget, setSnapTarget] = useState(null);
   const [viewport, setViewport] = useState(MEASUREMENT_VIEWPORT);
+  const [drawingFullscreen, setDrawingFullscreen] = useState(false);
+  const sectionRef = useRef(null);
   const svgRef = useRef(null);
   const dragRef = useRef(null);
   const drawRef = useRef(null);
@@ -144,6 +146,39 @@ export default function MeasurementCanvas({ value, onChange }) {
     });
     return () => cancelAnimationFrame(frame);
   }, [selectedId, selected?.type]);
+
+  useEffect(() => {
+    if (!drawingFullscreen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [drawingFullscreen]);
+
+  useEffect(() => {
+    function handleFullscreenChange() {
+      if (!document.fullscreenElement) setDrawingFullscreen(false);
+    }
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  async function openDrawingFullscreen() {
+    setDrawingFullscreen(true);
+    try {
+      await sectionRef.current?.requestFullscreen?.({ navigationUI: "hide" });
+      await globalThis.screen?.orientation?.lock?.("landscape");
+    } catch {
+      // iPhone uses the fixed PWA layout when Fullscreen/Orientation APIs are unavailable.
+    }
+  }
+
+  async function closeDrawingFullscreen() {
+    setDrawingFullscreen(false);
+    try { globalThis.screen?.orientation?.unlock?.(); } catch { /* no-op */ }
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+    } catch { /* the fixed layout has already been closed */ }
+  }
 
   function commit(nextDiagram, remember = true) {
     if (remember) {
@@ -170,8 +205,9 @@ export default function MeasurementCanvas({ value, onChange }) {
 
   function fromPointer(event) {
     const rect = svgRef.current.getBoundingClientRect();
-    const svgX = viewport.x + ((event.clientX - rect.left) / rect.width) * viewport.width;
-    const svgY = viewport.y + ((event.clientY - rect.top) / rect.height) * viewport.height;
+    const fraction = measurementViewportFraction({ x: event.clientX, y: event.clientY }, rect, viewport);
+    const svgX = viewport.x + fraction.x * viewport.width;
+    const svgY = viewport.y + fraction.y * viewport.height;
     return {
       x: snap(clamp(((svgX - CANVAS.x) / CANVAS.width) * wallWidth, 0, wallWidth)),
       y: snap(clamp(((CANVAS.y + CANVAS.height - svgY) / CANVAS.height) * wallHeight, 0, wallHeight)),
@@ -200,7 +236,7 @@ export default function MeasurementCanvas({ value, onChange }) {
     const [first, second] = points;
     const rect = svgRef.current.getBoundingClientRect();
     const center = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
-    const normalizedCenter = { x: (center.x - rect.left) / rect.width, y: (center.y - rect.top) / rect.height };
+    const normalizedCenter = measurementViewportFraction(center, rect, viewport);
     cancelCanvasInteraction();
     pinchRef.current = {
       distance: Math.max(Math.hypot(second.x - first.x, second.y - first.y), 1),
@@ -219,7 +255,7 @@ export default function MeasurementCanvas({ value, onChange }) {
     const [first, second] = points;
     const rect = svgRef.current.getBoundingClientRect();
     const center = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
-    const normalizedCenter = { x: (center.x - rect.left) / rect.width, y: (center.y - rect.top) / rect.height };
+    const normalizedCenter = measurementViewportFraction(center, rect, pinchRef.current.viewport);
     const distance = Math.max(Math.hypot(second.x - first.x, second.y - first.y), 1);
     const nextWidth = pinchRef.current.viewport.width / (distance / pinchRef.current.distance);
     const nextHeight = nextWidth * 0.7;
@@ -236,10 +272,7 @@ export default function MeasurementCanvas({ value, onChange }) {
     setViewport((current) => {
       if (!clientPoint || !svgRef.current) return zoomMeasurementViewport(current, factor);
       const rect = svgRef.current.getBoundingClientRect();
-      return zoomMeasurementViewport(current, factor, {
-        x: clamp((clientPoint.x - rect.left) / rect.width, 0, 1),
-        y: clamp((clientPoint.y - rect.top) / rect.height, 0, 1),
-      });
+      return zoomMeasurementViewport(current, factor, measurementViewportFraction(clientPoint, rect, current));
     });
   }
 
@@ -351,11 +384,12 @@ export default function MeasurementCanvas({ value, onChange }) {
     if (updatePinch()) return;
     if (panRef.current?.pointerId === event.pointerId && svgRef.current) {
       const rect = svgRef.current.getBoundingClientRect();
+      const rendered = measurementViewportRenderBox(rect, panRef.current.viewport);
       const pan = panRef.current;
       setViewport(panMeasurementViewport(
         pan.viewport,
-        ((pan.x - event.clientX) / rect.width) * pan.viewport.width,
-        ((pan.y - event.clientY) / rect.height) * pan.viewport.height,
+        ((pan.x - event.clientX) / rendered.width) * pan.viewport.width,
+        ((pan.y - event.clientY) / rendered.height) * pan.viewport.height,
       ));
       return;
     }
@@ -492,38 +526,41 @@ export default function MeasurementCanvas({ value, onChange }) {
   const visibleElements = diagram.elements.filter((element) => element.side === view);
   const zoomPercent = Math.round((MEASUREMENT_VIEWPORT.width / viewport.width) * 100);
   return (
-    <section className="overflow-hidden rounded-[26px] border border-slate-200 bg-slate-950 text-white shadow-xl">
-      <div className="border-b border-white/10 bg-slate-900 px-4 py-4 sm:px-5">
+    <section ref={sectionRef} className={`overflow-hidden bg-slate-950 text-white shadow-xl ${drawingFullscreen ? "fixed inset-0 z-[100] flex h-[100dvh] w-screen flex-col rounded-none border-0" : "rounded-[26px] border border-slate-200"}`}>
+      <div className={`shrink-0 border-b border-white/10 bg-slate-900 px-4 sm:px-5 ${drawingFullscreen ? "pb-2 pt-[max(0.5rem,env(safe-area-inset-top))]" : "py-4"}`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2 text-sm font-black"><Ruler size={18} className="text-sky-400" />Интерактивный замер</div>
-            <p className="mt-1 text-xs text-slate-400">Все координаты сохраняются в миллиметрах</p>
+            <div className="flex items-center gap-2 text-sm font-black"><Ruler size={18} className="text-sky-400" />{drawingFullscreen ? "Чертёжный лист" : "Интерактивный замер"}</div>
+            {!drawingFullscreen ? <p className="mt-1 text-xs text-slate-400">Все координаты сохраняются в миллиметрах</p> : null}
           </div>
           <div className="flex items-center gap-1">
             <IconButton label="Отменить" disabled={!history.length} onClick={undo}><Undo2 size={17} /></IconButton>
             <IconButton label="Повторить" disabled={!future.length} onClick={redo}><Redo2 size={17} /></IconButton>
             <IconButton label="Удалить выбранное" disabled={!selected} onClick={removeSelected} danger><Trash2 size={17} /></IconButton>
+            {drawingFullscreen
+              ? <IconButton label="Закрыть полный экран" onClick={closeDrawingFullscreen}><Minimize2 size={18} /></IconButton>
+              : <IconButton label="Развернуть чертёж на весь экран" onClick={openDrawingFullscreen}><Expand size={18} /></IconButton>}
           </div>
         </div>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto border-b border-white/10 bg-slate-900/80 px-3 py-3 [scrollbar-width:none] sm:flex-wrap sm:px-5">
+      <div className={`flex shrink-0 gap-2 overflow-x-auto border-b border-white/10 bg-slate-900/80 px-3 [scrollbar-width:none] sm:px-5 ${drawingFullscreen ? "py-2" : "py-3 sm:flex-wrap"}`}>
         {TOOLS.map(({ id, label, icon: Icon }) => (
           <button key={id} type="button" onClick={() => { setTool(id); setSelectedId(null); setDraftLine(null); drawRef.current = null; }} className={`flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold transition ${tool === id ? "border-sky-400 bg-sky-400 text-slate-950" : "border-white/10 bg-white/5 text-slate-300"}`}><Icon size={15} />{label}</button>
         ))}
       </div>
 
-      {tool === "line" ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100"><span className="font-bold">Проведите линию пальцем или мышью.</span> Конец примагнитится к ближайшему концу другой линии.</div> : null}
-      {tool === "cut_circle" || tool.startsWith("socket") ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100">Коснитесь центра выреза. После добавления укажите точный диаметр и координаты.</div> : null}
+      {!drawingFullscreen && tool === "line" ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100"><span className="font-bold">Проведите линию пальцем или мышью.</span> Конец примагнитится к ближайшему концу другой линии.</div> : null}
+      {!drawingFullscreen && (tool === "cut_circle" || tool.startsWith("socket")) ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100">Коснитесь центра выреза. После добавления укажите точный диаметр и координаты.</div> : null}
 
-      <div className="relative bg-[#dce8ea] p-2 sm:p-4">
+      <div className={`relative min-h-0 bg-[#dce8ea] ${drawingFullscreen ? "flex-1 p-1" : "p-2 sm:p-4"}`}>
         <div className="absolute right-4 top-4 z-10 flex items-center gap-1 rounded-2xl border border-slate-200 bg-white/95 p-1.5 text-slate-900 shadow-lg backdrop-blur sm:right-6 sm:top-6">
           <button type="button" onClick={() => zoomAt(1 / 1.4)} disabled={zoomPercent <= 100} aria-label="Уменьшить" className="flex h-10 w-10 items-center justify-center rounded-xl transition hover:bg-slate-100 disabled:opacity-30"><ZoomOut size={19} /></button>
           <span className="min-w-12 text-center text-xs font-black tabular-nums">{zoomPercent}%</span>
           <button type="button" onClick={() => zoomAt(1.4)} disabled={zoomPercent >= 600} aria-label="Увеличить" className="flex h-10 w-10 items-center justify-center rounded-xl transition hover:bg-slate-100 disabled:opacity-30"><ZoomIn size={19} /></button>
           <button type="button" onClick={() => setViewport(MEASUREMENT_VIEWPORT)} disabled={zoomPercent <= 100} aria-label="Показать весь лист" className="flex h-10 w-10 items-center justify-center rounded-xl transition hover:bg-slate-100 disabled:opacity-30"><Maximize2 size={18} /></button>
         </div>
-        <svg ref={svgRef} viewBox={`${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}`} role="img" aria-label={`Схема: ${VIEW_LABELS[view]}`} className={`block aspect-[10/7] w-full touch-none rounded-2xl bg-[#f7f4eb] shadow-inner ${tool === "pan" ? "cursor-grab active:cursor-grabbing" : ""}`} onPointerDown={handleCanvasPointerDown} onPointerMove={handlePointerMove} onPointerUp={endPointer} onPointerCancel={endPointer} onWheel={(event) => { event.preventDefault(); zoomAt(event.deltaY < 0 ? 1.2 : 1 / 1.2, { x: event.clientX, y: event.clientY }); }}>
+        <svg ref={svgRef} viewBox={`${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}`} role="img" aria-label={`Схема: ${VIEW_LABELS[view]}`} className={`block w-full touch-none bg-[#f7f4eb] shadow-inner ${drawingFullscreen ? "h-full rounded-lg" : "aspect-[10/7] rounded-2xl"} ${tool === "pan" ? "cursor-grab active:cursor-grabbing" : ""}`} onPointerDown={handleCanvasPointerDown} onPointerMove={handlePointerMove} onPointerUp={endPointer} onPointerCancel={endPointer} onWheel={(event) => { event.preventDefault(); zoomAt(event.deltaY < 0 ? 1.2 : 1 / 1.2, { x: event.clientX, y: event.clientY }); }}>
           <defs>
             <pattern id="minor-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#cbd5d1" strokeWidth="1" /></pattern>
             <pattern id="major-grid" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#minor-grid)" /><path d="M 100 0 L 0 0 0 100" fill="none" stroke="#9fb3b4" strokeWidth="1.5" /></pattern>
@@ -543,20 +580,20 @@ export default function MeasurementCanvas({ value, onChange }) {
         </svg>
       </div>
 
-      {selected?.type === "dimension" ? <div className="border-t border-sky-400/20 bg-sky-400/10 px-4 py-4 sm:px-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <label className="flex-1 space-y-1"><span className="block text-xs font-black uppercase tracking-widest text-sky-200">Точный размер линии, мм</span><input ref={dimensionInputRef} type="number" inputMode="decimal" value={selected.value ?? ""} placeholder="Введите фактический размер" onChange={(event) => updateElement(selected.id, { value: optionalPositiveNumber(event.target.value) })} className="w-full rounded-2xl border-2 border-sky-400 bg-slate-950 px-4 py-3 text-xl font-black text-white outline-none placeholder:text-slate-600" /></label>
-          <button type="button" onClick={() => { setSelectedId(null); setTool("line"); }} className="rounded-2xl bg-sky-400 px-5 py-3 text-sm font-black text-slate-950">Готово, рисовать дальше</button>
+      {selected?.type === "dimension" ? <div className={`shrink-0 border-t border-sky-400/20 bg-slate-950 px-3 sm:px-5 ${drawingFullscreen ? "pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2" : "py-4"}`}>
+        <div className={`flex gap-2 ${drawingFullscreen ? "items-center" : "flex-col sm:flex-row sm:items-end"}`}>
+          <label className={`flex-1 ${drawingFullscreen ? "min-w-0" : "space-y-1"}`}>{!drawingFullscreen ? <span className="block text-xs font-black uppercase tracking-widest text-sky-200">Точный размер линии, мм</span> : null}<input ref={dimensionInputRef} type="number" inputMode="decimal" value={selected.value ?? ""} placeholder="Точный размер, мм" onChange={(event) => updateElement(selected.id, { value: optionalPositiveNumber(event.target.value) })} className={`w-full border-2 border-sky-400 bg-slate-950 font-black text-white outline-none placeholder:text-slate-600 ${drawingFullscreen ? "rounded-xl px-3 py-2 text-base" : "rounded-2xl px-4 py-3 text-xl"}`} /></label>
+          <button type="button" onClick={() => { setSelectedId(null); setTool("line"); }} className={`shrink-0 bg-sky-400 font-black text-slate-950 ${drawingFullscreen ? "rounded-xl px-4 py-2 text-xs" : "rounded-2xl px-5 py-3 text-sm"}`}>{drawingFullscreen ? "Готово" : "Готово, рисовать дальше"}</button>
         </div>
       </div> : null}
 
-      <VoiceSpecification
+      {!drawingFullscreen ? <VoiceSpecification
         view={view}
         items={diagram.specifications?.[view] || []}
         onChange={(items) => updateDiagram({ specifications: { ...diagram.specifications, [view]: items } })}
-      />
+      /> : null}
 
-      <div className="grid gap-4 border-t border-white/10 bg-slate-900 p-4 sm:grid-cols-2 sm:p-5">
+      {!drawingFullscreen ? <div className="grid gap-4 border-t border-white/10 bg-slate-900 p-4 sm:grid-cols-2 sm:p-5">
         <EditorGroup title={selected ? "Выбранный элемент" : "Как работать"}>
           {selected?.type === "dimension" ? <>
             <NumberField label="Размер линии" value={selected.value} onChange={(value) => updateElement(selected.id, { value: optionalPositiveNumber(value) })} />
@@ -583,7 +620,7 @@ export default function MeasurementCanvas({ value, onChange }) {
             <TextField label="Комментарий" value={selected.note} onChange={(value) => updateElement(selected.id, { note: value })} />
           </> : <div className="col-span-2 space-y-2 text-sm leading-relaxed text-slate-400"><p>1. Проведите линию: её конец примагнитится к другой линии.</p><p>2. Тяните линию за середину, а её концы — за круглые точки.</p><p>3. Для розеток и вырезов выберите стороны отсчёта размеров.</p><p>4. Любой объект можно перетащить пальцем или мышью.</p></div>}
         </EditorGroup>
-      </div>
+      </div> : null}
     </section>
   );
 }

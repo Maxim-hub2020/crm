@@ -32,3 +32,22 @@ export function panMeasurementViewport(viewport, deltaX, deltaY) {
     y: viewport.y + deltaY,
   });
 }
+
+export function measurementViewportRenderBox(rect, viewport) {
+  const viewportAspect = viewport.width / viewport.height;
+  const rectAspect = rect.width / rect.height;
+  if (rectAspect > viewportAspect) {
+    const width = rect.height * viewportAspect;
+    return { x: rect.left + (rect.width - width) / 2, y: rect.top, width, height: rect.height };
+  }
+  const height = rect.width / viewportAspect;
+  return { x: rect.left, y: rect.top + (rect.height - height) / 2, width: rect.width, height };
+}
+
+export function measurementViewportFraction(clientPoint, rect, viewport) {
+  const rendered = measurementViewportRenderBox(rect, viewport);
+  return {
+    x: Math.min(Math.max((clientPoint.x - rendered.x) / rendered.width, 0), 1),
+    y: Math.min(Math.max((clientPoint.y - rendered.y) / rendered.height, 0), 1),
+  };
+}
