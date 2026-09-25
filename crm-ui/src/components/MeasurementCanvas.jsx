@@ -129,6 +129,7 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
   const [drawingFullscreen, setDrawingFullscreen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [contextEditorOpen, setContextEditorOpen] = useState(false);
+  const [magnifier, setMagnifier] = useState(null);
   const sectionRef = useRef(null);
   const svgRef = useRef(null);
   const dragRef = useRef(null);
@@ -243,6 +244,7 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     setDraftLine(null);
     setSnapTarget(null);
     setOrthogonalGuide(null);
+    setMagnifier(null);
   }
 
   function beginPan(event) {
@@ -299,9 +301,9 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     });
   }
 
-  function snapToLineEndpoint(point, excludeId = null) {
+  function snapToLineEndpoint(point, excludeId = null, tolerance = 18) {
     let nearest = null;
-    let nearestDistance = 18;
+    let nearestDistance = tolerance;
     const svgPoint = toSvg(point);
     diagram.elements.forEach((element) => {
       if (element.type !== "dimension" || element.side !== view || element.id === excludeId) return;
@@ -317,8 +319,8 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     return nearest || point;
   }
 
-  function resolveLinePoint(start, rawPoint, excludeId = null) {
-    const endpoint = snapToLineEndpoint(rawPoint, excludeId);
+  function resolveLinePoint(start, rawPoint, excludeId = null, endpointTolerance = 18) {
+    const endpoint = snapToLineEndpoint(rawPoint, excludeId, endpointTolerance);
     if (endpoint.x !== rawPoint.x || endpoint.y !== rawPoint.y) {
       return { point: endpoint, endpointSnapped: true, axis: null };
     }
@@ -326,11 +328,11 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     return { point: orthogonal.point, endpointSnapped: false, axis: orthogonal.axis };
   }
 
-  function finishLine(rawPoint) {
+  function finishLine(rawPoint, endpointTolerance = 18) {
     const drawing = drawRef.current;
     if (!drawing) return;
     const start = drawing.start;
-    const end = resolveLinePoint(start, rawPoint).point;
+    const end = resolveLinePoint(start, rawPoint, null, endpointTolerance).point;
     const measured = Math.round(Math.hypot(end.x - start.x, end.y - start.y));
     if (measured < 5) return;
     const element = {
@@ -349,6 +351,7 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     setDraftLine(null);
     setSnapTarget(null);
     setOrthogonalGuide(null);
+    setMagnifier(null);
     setHistory((items) => [...items.slice(-29), drawing.snapshot]);
     setFuture([]);
     onChange({ ...diagram, elements: [...diagram.elements, element], active_view: view });
@@ -360,14 +363,25 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     event.stopPropagation();
     const rawPoint = fromPointer(event);
     if (drawRef.current) {
+      if (event.pointerType === "touch") {
+        drawRef.current.aimingPointerId = event.pointerId;
+        svgRef.current?.setPointerCapture?.(event.pointerId);
+        const resolved = resolveLinePoint(drawRef.current.start, rawPoint, null, 42);
+        setDraftLine({ start: drawRef.current.start, end: resolved.point });
+        setSnapTarget(resolved.endpointSnapped ? resolved.point : null);
+        setOrthogonalGuide(resolved.axis ? { start: drawRef.current.start, end: resolved.point, axis: resolved.axis } : null);
+        setMagnifier({ focus: toSvg(rawPoint), snapped: resolved.endpointSnapped });
+        return;
+      }
       finishLine(rawPoint);
       return;
     }
-    const point = snapToLineEndpoint(rawPoint);
+    const point = snapToLineEndpoint(rawPoint, null, event.pointerType === "touch" ? 42 : 18);
     drawRef.current = { start: point, snapshot: diagram };
     setDraftLine({ start: point, end: point });
     setSnapTarget(point.x !== rawPoint.x || point.y !== rawPoint.y ? point : null);
     setOrthogonalGuide(null);
+    setMagnifier(null);
     setSelectedId(null);
   }
 
@@ -481,20 +495,24 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     }
     if (drawRef.current) {
       const rawPoint = fromPointer(event);
-      const resolved = resolveLinePoint(drawRef.current.start, rawPoint);
+      const resolved = resolveLinePoint(drawRef.current.start, rawPoint, null, event.pointerType === "touch" ? 42 : 18);
       setDraftLine({ start: drawRef.current.start, end: resolved.point });
       setSnapTarget(resolved.endpointSnapped ? resolved.point : null);
       setOrthogonalGuide(resolved.axis ? { start: drawRef.current.start, end: resolved.point, axis: resolved.axis } : null);
+      if (event.pointerType === "touch" && drawRef.current.aimingPointerId === event.pointerId) {
+        setMagnifier({ focus: toSvg(rawPoint), snapped: resolved.endpointSnapped });
+      }
       return;
     }
     const drag = dragRef.current;
     if (!drag) return;
     const point = fromPointer(event);
     if (drag.kind === "dimension-end") {
-      const resolved = resolveLinePoint(drag.anchor, point, drag.id);
+      const resolved = resolveLinePoint(drag.anchor, point, drag.id, event.pointerType === "touch" ? 42 : 18);
       const snappedPoint = resolved.point;
       setSnapTarget(resolved.endpointSnapped ? snappedPoint : null);
       setOrthogonalGuide(resolved.axis ? { start: drag.anchor, end: snappedPoint, axis: resolved.axis } : null);
+      if (event.pointerType === "touch") setMagnifier({ focus: toSvg(point), snapped: resolved.endpointSnapped });
       updateElement(drag.id, drag.endpoint === "start"
         ? { x1: snappedPoint.x, y1: snappedPoint.y }
         : { x2: snappedPoint.x, y2: snappedPoint.y }, false);
@@ -547,7 +565,17 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
       panRef.current = null;
       return;
     }
-    if (drawRef.current) return;
+    if (drawRef.current) {
+      if (drawRef.current.aimingPointerId === event.pointerId) {
+        if (event.type === "pointercancel") {
+          delete drawRef.current.aimingPointerId;
+          setMagnifier(null);
+        } else {
+          finishLine(fromPointer(event), event.pointerType === "touch" ? 42 : 18);
+        }
+      }
+      return;
+    }
     const completedDrag = dragRef.current;
     if (!completedDrag) return;
     dragRef.current = null;
@@ -555,6 +583,7 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     setFuture([]);
     setSnapTarget(null);
     setOrthogonalGuide(null);
+    setMagnifier(null);
   }
 
   function undo() {
@@ -592,7 +621,8 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     top: `${clamp(((selectedAnchor.y - viewport.y) / viewport.height) * 100, 10, 86)}%`,
   } : null;
   const selectedMenuAbove = selectedAnchor ? ((selectedAnchor.y - viewport.y) / viewport.height) > 0.55 : false;
-  const showMobileLidar = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
+  const isTouchDevice = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
+  const magnifierOnRight = magnifier?.focus.x < viewport.x + viewport.width / 2;
   return (
     <section ref={sectionRef} className={`overflow-hidden bg-slate-950 text-white shadow-xl ${drawingFullscreen ? "fixed inset-0 z-[100] flex h-[100dvh] w-screen flex-col rounded-none border-0" : "rounded-[26px] border border-slate-200"}`}>
       <div className={`shrink-0 border-b border-white/10 bg-slate-900 px-4 sm:px-5 ${drawingFullscreen ? "pb-2 pt-[max(0.5rem,env(safe-area-inset-top))]" : "py-4"}`}>
@@ -610,7 +640,7 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
               : <IconButton label="Развернуть чертёж на весь экран" onClick={openDrawingFullscreen}><Expand size={18} /></IconButton>}
           </div>
         </div>
-        {onStartLidar && showMobileLidar ? <div className="relative mt-2">
+        {onStartLidar && isTouchDevice ? <div className="relative mt-2">
           <button type="button" onClick={() => setMoreOpen((open) => !open)} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-200"><MoreHorizontal size={16} />Дополнительно</button>
           {moreOpen ? <div className="absolute left-0 top-11 z-30 w-72 rounded-2xl border border-white/10 bg-slate-950 p-2 shadow-2xl">
             <button type="button" onClick={() => { setMoreOpen(false); onStartLidar(); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left text-sm font-bold text-white hover:bg-white/10"><ScanLine size={17} className="text-sky-400" />Сканировать стену LiDAR</button>
@@ -641,6 +671,7 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
             <pattern id="major-grid" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#minor-grid)" /><path d="M 100 0 L 0 0 0 100" fill="none" stroke="#9fb3b4" strokeWidth="1.5" /></pattern>
             <marker id="measurement-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#0ea5e9" /></marker>
           </defs>
+          <g id="measurement-scene">
           <rect data-canvas="surface" width="1000" height="700" fill="url(#major-grid)" />
           <rect data-canvas="surface" x={CANVAS.x} y={CANVAS.y} width={CANVAS.width} height={CANVAS.height} rx="8" fill="#fffdf6" fillOpacity="0.72" stroke="#82989a" strokeWidth="3" strokeDasharray={wallPolygon ? "8 8" : "0"} />
           {wallPolygon ? <polygon points={wallPolygon} fill="#e0eef0" fillOpacity="0.62" stroke="#0f172a" strokeWidth="5" strokeLinejoin="round" pointerEvents="none" /> : null}
@@ -662,8 +693,18 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
           })() : null}
           {draftLine ? <MeasurementLine element={{ type: "dimension", x1: draftLine.start.x, y1: draftLine.start.y, x2: draftLine.end.x, y2: draftLine.end.y, value: Math.round(Math.hypot(draftLine.end.x - draftLine.start.x, draftLine.end.y - draftLine.start.y)) }} selected toSvg={toSvg} draft /> : null}
           {snapTarget ? (() => { const point = toSvg(snapTarget); return <g pointerEvents="none"><circle cx={point.x} cy={point.y} r="14" fill="#22c55e" fillOpacity="0.2" stroke="#16a34a" strokeWidth="3" /><circle cx={point.x} cy={point.y} r="4" fill="#16a34a" /></g>; })() : null}
+          </g>
 
         </svg>
+        {magnifier && isTouchDevice ? <div className={`pointer-events-none absolute top-4 z-30 h-36 w-36 overflow-hidden rounded-full border-4 bg-[#f7f4eb] shadow-2xl ${magnifierOnRight ? "right-4" : "left-4"} ${magnifier.snapped ? "border-emerald-500" : "border-sky-500"}`}>
+          <svg viewBox={`${magnifier.focus.x - 62} ${magnifier.focus.y - 62} 124 124`} className="h-full w-full" aria-hidden="true">
+            <use href="#measurement-scene" />
+            <circle cx={magnifier.focus.x} cy={magnifier.focus.y} r="8" fill="none" stroke={magnifier.snapped ? "#16a34a" : "#0284c7"} strokeWidth="2" />
+            <line x1={magnifier.focus.x - 16} y1={magnifier.focus.y} x2={magnifier.focus.x + 16} y2={magnifier.focus.y} stroke={magnifier.snapped ? "#16a34a" : "#0284c7"} strokeWidth="1.5" />
+            <line x1={magnifier.focus.x} y1={magnifier.focus.y - 16} x2={magnifier.focus.x} y2={magnifier.focus.y + 16} stroke={magnifier.snapped ? "#16a34a" : "#0284c7"} strokeWidth="1.5" />
+          </svg>
+          <div className={`absolute inset-x-0 bottom-0 py-1.5 text-center text-[10px] font-black uppercase tracking-wide text-white ${magnifier.snapped ? "bg-emerald-600" : "bg-sky-600"}`}>{magnifier.snapped ? "Состыковано" : "Точка под пальцем"}</div>
+        </div> : null}
         {selected && selectedMenuPosition ? <div style={selectedMenuPosition} className={`absolute z-20 -translate-x-1/2 ${selectedMenuAbove ? "-translate-y-full -mt-5" : "translate-y-5"}`} onPointerDown={(event) => event.stopPropagation()}>
           <div className="flex items-center gap-1 rounded-2xl border border-slate-200 bg-white/95 p-1.5 text-slate-900 shadow-xl backdrop-blur">
             {selected.type !== "dimension" ? <span className="max-w-32 truncate px-2 text-xs font-black">{selected.label}</span> : null}
