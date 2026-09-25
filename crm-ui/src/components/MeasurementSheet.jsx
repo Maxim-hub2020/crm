@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Camera, CheckCircle2, Cloud, CloudOff, FileDown, Paperclip, Plus, ScanLine, Smartphone, Trash2 } from "lucide-react";
+import { Camera, CheckCircle2, Cloud, CloudOff, FileDown, Paperclip, Plus, Trash2 } from "lucide-react";
 
 import {
   createMeasurementScanSession,
@@ -404,10 +404,6 @@ export default function MeasurementSheet({ project }) {
         </div>
         <Button type="button" variant="secondary" onClick={printSheet}><FileDown size={16} />Печать / PDF</Button>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Конструкция"><Select value={form.mirror_type} onChange={(e) => { const value = e.target.value; setForm((previous) => ({ ...previous, mirror_type: value, light_type: value === "backlight" ? "rear" : value === "frontlight" ? "front" : previous.light_type })); }}><option value="plain">Обычное зеркало</option><option value="backlight">Задняя подсветка</option><option value="frontlight">Лицевая подсветка</option><option value="frame">С рамкой</option><option value="frame_light">Рамка и подсветка</option></Select></Field>
-        <Field label="Форма"><Select value={form.shape} onChange={(e) => { const shape = e.target.value; setForm((previous) => { const rooms = previous.rooms.map((room) => room.id === activeRoomId ? { ...room, diagram: { ...createDefaultDiagram(), ...(room.diagram || {}), product: { ...createDefaultDiagram().product, ...(room.diagram?.product || {}), shape } } } : room); return { ...previous, shape, rooms, diagram: rooms[0]?.diagram || previous.diagram }; }); }}><option value="rectangle">Прямоугольник</option><option value="round">Круг</option><option value="oval">Овал</option><option value="arch">Арка</option><option value="custom">Произвольная</option></Select></Field>
-      </div>
       <section className="rounded-[24px] border border-slate-200 bg-white p-3 sm:p-4">
         <div className="flex gap-2 overflow-x-auto pb-3 [scrollbar-width:none]">
           {form.rooms.map((room) => <button key={room.id} type="button" onClick={() => setActiveRoomId(room.id)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold transition ${room.id === activeRoom?.id ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`}>{room.name}</button>)}
@@ -417,13 +413,8 @@ export default function MeasurementSheet({ project }) {
           <Field label="Название комнаты"><Input value={activeRoom?.name || ""} onChange={(event) => updateActiveRoom({ name: event.target.value })} placeholder="Например, ванная" /></Field>
           {form.rooms.length > 1 ? <Button type="button" variant="secondary" onClick={() => removeRoom(activeRoom.id)} title="Удалить лист"><Trash2 size={16} /></Button> : null}
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-2xl bg-sky-50 p-3">
-          <Button type="button" onClick={startLidarScan}><ScanLine size={17} />Сканировать стену LiDAR</Button>
-          <div className="min-w-0 flex-1 text-xs leading-relaxed text-slate-600"><span className="inline-flex items-center gap-1 font-black text-slate-800"><Smartphone size={14} />iPhone Pro</span><br />Контур и объекты появятся в этой комнате. Точные размеры вводятся вручную.</div>
-        </div>
-        {scanMessage ? <div className="mt-2 rounded-xl bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700">{scanMessage}</div> : null}
       </section>
-      {activeRoom ? <MeasurementCanvas key={activeRoom.id} value={activeRoom.diagram} onChange={(diagram) => updateActiveRoom({ diagram })} /> : null}
+      {activeRoom ? <MeasurementCanvas key={activeRoom.id} value={activeRoom.diagram} onChange={(diagram) => updateActiveRoom({ diagram })} onStartLidar={startLidarScan} lidarStatus={scanMessage} /> : null}
       {hasFrame ? <Section title="Рамка"><div className="grid gap-3 sm:grid-cols-3"><Field label="Материал"><Input value={form.frame_material} onChange={(e)=>change("frame_material",e.target.value)} /></Field><Field label="Профиль"><Input value={form.frame_profile} onChange={(e)=>change("frame_profile",e.target.value)} /></Field><Field label="Цвет"><Input value={form.frame_color} onChange={(e)=>change("frame_color",e.target.value)} /></Field></div></Section> : null}
       {hasLight ? <Section title="Подсветка и электрика"><div className="grid gap-3 sm:grid-cols-3"><Field label="Тип"><Select value={form.light_type} onChange={(e)=>change("light_type",e.target.value)}><option value="rear">Задняя</option><option value="front">Лицевая</option></Select></Field><Field label="Отступ световой линии"><Input inputMode="decimal" value={form.light_offset} onChange={(e)=>change("light_offset",e.target.value)} /></Field><Field label="Температура"><Select value={form.light_temperature} onChange={(e)=>change("light_temperature",e.target.value)}><option value="3000">3000 K</option><option value="4000">4000 K</option><option value="6000">6000 K</option></Select></Field><Field label="Вывод питания X"><Input inputMode="decimal" value={form.power_x} onChange={(e)=>change("power_x",e.target.value)} /></Field><Field label="Вывод питания Y"><Input inputMode="decimal" value={form.power_y} onChange={(e)=>change("power_y",e.target.value)} /></Field><Field label="Управление"><Select value={form.power_control} onChange={(e)=>change("power_control",e.target.value)}><option value="switch">Выключатель</option><option value="sensor">Датчик</option><option value="dimmer">Диммер</option></Select></Field></div></Section> : null}
       <Section title="Монтаж"><div className="grid gap-3 sm:grid-cols-2"><Field label="Материал стены"><Input value={form.wall_material} onChange={(e)=>change("wall_material",e.target.value)} /></Field><Field label="Крепление"><Input value={form.mounting} onChange={(e)=>change("mounting",e.target.value)} /></Field></div><Field label="Неровности, препятствия, коммуникации"><textarea className="mt-1 min-h-24 w-full rounded-xl border border-slate-200 p-3 text-sm" value={form.wall_notes} onChange={(e)=>change("wall_notes",e.target.value)} /></Field></Section>

@@ -8,6 +8,7 @@ import {
   Hand,
   LampWallUp,
   Maximize2,
+  MoreHorizontal,
   Minimize2,
   Minus,
   MousePointer2,
@@ -17,6 +18,7 @@ import {
   Redo2,
   Ruler,
   ScanLine,
+  SlidersHorizontal,
   Trash2,
   Undo2,
   Unplug,
@@ -113,7 +115,7 @@ function optionalPositiveNumber(value) {
   return String(value ?? "").trim() === "" ? "" : Math.max(numberValue(value), 0);
 }
 
-export default function MeasurementCanvas({ value, onChange }) {
+export default function MeasurementCanvas({ value, onChange, onStartLidar, lidarStatus = "" }) {
   const diagram = normalizeDiagram(value);
   const view = "wall";
   const [tool, setTool] = useState("select");
@@ -125,6 +127,8 @@ export default function MeasurementCanvas({ value, onChange }) {
   const [orthogonalGuide, setOrthogonalGuide] = useState(null);
   const [viewport, setViewport] = useState(MEASUREMENT_VIEWPORT);
   const [drawingFullscreen, setDrawingFullscreen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [contextEditorOpen, setContextEditorOpen] = useState(false);
   const sectionRef = useRef(null);
   const svgRef = useRef(null);
   const dragRef = useRef(null);
@@ -150,6 +154,10 @@ export default function MeasurementCanvas({ value, onChange }) {
   }, [selectedId, selected?.type]);
 
   useEffect(() => {
+    setContextEditorOpen(false);
+  }, [selectedId]);
+
+  useEffect(() => {
     if (!drawingFullscreen) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -162,6 +170,18 @@ export default function MeasurementCanvas({ value, onChange }) {
     }
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key !== "Escape" || !drawRef.current) return;
+      drawRef.current = null;
+      setDraftLine(null);
+      setSnapTarget(null);
+      setOrthogonalGuide(null);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   async function openDrawingFullscreen() {
@@ -306,9 +326,53 @@ export default function MeasurementCanvas({ value, onChange }) {
     return { point: orthogonal.point, endpointSnapped: false, axis: orthogonal.axis };
   }
 
+  function finishLine(rawPoint) {
+    const drawing = drawRef.current;
+    if (!drawing) return;
+    const start = drawing.start;
+    const end = resolveLinePoint(start, rawPoint).point;
+    const measured = Math.round(Math.hypot(end.x - start.x, end.y - start.y));
+    if (measured < 5) return;
+    const element = {
+      id: globalThis.crypto?.randomUUID?.() || `dimension-${Date.now()}`,
+      type: "dimension",
+      side: view,
+      label: "Размер",
+      x1: start.x,
+      y1: start.y,
+      x2: end.x,
+      y2: end.y,
+      value: "",
+      note: "",
+    };
+    drawRef.current = null;
+    setDraftLine(null);
+    setSnapTarget(null);
+    setOrthogonalGuide(null);
+    setHistory((items) => [...items.slice(-29), drawing.snapshot]);
+    setFuture([]);
+    onChange({ ...diagram, elements: [...diagram.elements, element], active_view: view });
+    autoFocusDimensionIdRef.current = element.id;
+    setSelectedId(element.id);
+  }
+
+  function handleLineClick(event) {
+    event.stopPropagation();
+    const rawPoint = fromPointer(event);
+    if (drawRef.current) {
+      finishLine(rawPoint);
+      return;
+    }
+    const point = snapToLineEndpoint(rawPoint);
+    drawRef.current = { start: point, snapshot: diagram };
+    setDraftLine({ start: point, end: point });
+    setSnapTarget(point.x !== rawPoint.x || point.y !== rawPoint.y ? point : null);
+    setOrthogonalGuide(null);
+    setSelectedId(null);
+  }
+
   function handleCanvasPointerDown(event) {
     activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    event.currentTarget.setPointerCapture?.(event.pointerId);
     if (activePointersRef.current.size >= 2 && beginPinch()) return;
     if (tool === "pan") {
       beginPan(event);
@@ -317,12 +381,7 @@ export default function MeasurementCanvas({ value, onChange }) {
     if (event.target !== event.currentTarget && event.target.dataset.canvas !== "surface") return;
     const rawPoint = fromPointer(event);
     if (tool === "line") {
-      const point = snapToLineEndpoint(rawPoint);
-      event.currentTarget.setPointerCapture?.(event.pointerId);
-      drawRef.current = { start: point, snapshot: diagram };
-      setDraftLine({ start: point, end: point });
-      setSnapTarget(point.x !== rawPoint.x || point.y !== rawPoint.y ? point : null);
-      setOrthogonalGuide(null);
+      handleLineClick(event);
       return;
     }
     if (tool === "select") {
@@ -359,6 +418,10 @@ export default function MeasurementCanvas({ value, onChange }) {
   }
 
   function startDrag(event, element) {
+    if (tool === "line") {
+      handleLineClick(event);
+      return;
+    }
     if (tool === "pan") {
       beginPan(event);
       return;
@@ -376,6 +439,10 @@ export default function MeasurementCanvas({ value, onChange }) {
   }
 
   function startEndpointDrag(event, element, endpoint) {
+    if (tool === "line") {
+      handleLineClick(event);
+      return;
+    }
     if (tool === "pan") {
       beginPan(event);
       return;
@@ -480,43 +547,7 @@ export default function MeasurementCanvas({ value, onChange }) {
       panRef.current = null;
       return;
     }
-    if (drawRef.current) {
-      if (event.type === "pointercancel") {
-        drawRef.current = null;
-        setDraftLine(null);
-        setSnapTarget(null);
-        setOrthogonalGuide(null);
-        return;
-      }
-      const start = drawRef.current.start;
-      const end = resolveLinePoint(start, fromPointer(event)).point;
-      const measured = Math.round(Math.hypot(end.x - start.x, end.y - start.y));
-      const snapshot = drawRef.current.snapshot;
-      drawRef.current = null;
-      setDraftLine(null);
-      setSnapTarget(null);
-      setOrthogonalGuide(null);
-      if (measured >= 5) {
-        const element = {
-          id: globalThis.crypto?.randomUUID?.() || `dimension-${Date.now()}`,
-          type: "dimension",
-          side: view,
-          label: "Размер",
-          x1: start.x,
-          y1: start.y,
-          x2: end.x,
-          y2: end.y,
-          value: "",
-          note: "",
-        };
-        setHistory((items) => [...items.slice(-29), snapshot]);
-        setFuture([]);
-        onChange({ ...diagram, elements: [...diagram.elements, element], active_view: view });
-        autoFocusDimensionIdRef.current = element.id;
-        setSelectedId(element.id);
-      }
-      return;
-    }
+    if (drawRef.current) return;
     const completedDrag = dragRef.current;
     if (!completedDrag) return;
     dragRef.current = null;
@@ -546,12 +577,22 @@ export default function MeasurementCanvas({ value, onChange }) {
     if (!selected) return;
     updateDiagram({ elements: diagram.elements.filter((element) => element.id !== selected.id) });
     setSelectedId(null);
+    setContextEditorOpen(false);
   }
 
   const wallPoints = (diagram.wall.points || []).map(toSvg);
   const wallPolygon = wallPoints.length >= 2 ? wallPoints.map((point) => `${point.x},${point.y}`).join(" ") : "";
   const visibleElements = diagram.elements.filter((element) => element.side === view);
   const zoomPercent = Math.round((MEASUREMENT_VIEWPORT.width / viewport.width) * 100);
+  const selectedAnchor = selected?.type === "dimension"
+    ? toSvg({ x: (numberValue(selected.x1) + numberValue(selected.x2)) / 2, y: (numberValue(selected.y1) + numberValue(selected.y2)) / 2 })
+    : selected ? toSvg(selected) : null;
+  const selectedMenuPosition = selectedAnchor ? {
+    left: `${clamp(((selectedAnchor.x - viewport.x) / viewport.width) * 100, 8, 92)}%`,
+    top: `${clamp(((selectedAnchor.y - viewport.y) / viewport.height) * 100, 10, 86)}%`,
+  } : null;
+  const selectedMenuAbove = selectedAnchor ? ((selectedAnchor.y - viewport.y) / viewport.height) > 0.55 : false;
+  const showMobileLidar = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
   return (
     <section ref={sectionRef} className={`overflow-hidden bg-slate-950 text-white shadow-xl ${drawingFullscreen ? "fixed inset-0 z-[100] flex h-[100dvh] w-screen flex-col rounded-none border-0" : "rounded-[26px] border border-slate-200"}`}>
       <div className={`shrink-0 border-b border-white/10 bg-slate-900 px-4 sm:px-5 ${drawingFullscreen ? "pb-2 pt-[max(0.5rem,env(safe-area-inset-top))]" : "py-4"}`}>
@@ -569,6 +610,13 @@ export default function MeasurementCanvas({ value, onChange }) {
               : <IconButton label="Развернуть чертёж на весь экран" onClick={openDrawingFullscreen}><Expand size={18} /></IconButton>}
           </div>
         </div>
+        {onStartLidar && showMobileLidar ? <div className="relative mt-2">
+          <button type="button" onClick={() => setMoreOpen((open) => !open)} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-200"><MoreHorizontal size={16} />Дополнительно</button>
+          {moreOpen ? <div className="absolute left-0 top-11 z-30 w-72 rounded-2xl border border-white/10 bg-slate-950 p-2 shadow-2xl">
+            <button type="button" onClick={() => { setMoreOpen(false); onStartLidar(); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left text-sm font-bold text-white hover:bg-white/10"><ScanLine size={17} className="text-sky-400" />Сканировать стену LiDAR</button>
+            {lidarStatus ? <p className="px-3 pb-2 text-xs leading-relaxed text-slate-400">{lidarStatus}</p> : null}
+          </div> : null}
+        </div> : null}
       </div>
 
       <div className={`flex shrink-0 gap-2 overflow-x-auto border-b border-white/10 bg-slate-900/80 px-3 [scrollbar-width:none] sm:px-5 ${drawingFullscreen ? "py-2" : "py-3 sm:flex-wrap"}`}>
@@ -577,7 +625,7 @@ export default function MeasurementCanvas({ value, onChange }) {
         ))}
       </div>
 
-      {!drawingFullscreen && tool === "line" ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100"><span className="font-bold">Проведите линию пальцем или мышью.</span> Конец примагнитится к ближайшему концу другой линии.</div> : null}
+      {!drawingFullscreen && tool === "line" ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100"><span className="font-bold">Коснитесь начала линии, затем её конца.</span> Горизонталь, вертикаль и концы других линий примагнитятся автоматически.</div> : null}
       {!drawingFullscreen && (tool === "cut_circle" || tool.startsWith("socket")) ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100">Коснитесь центра выреза. После добавления укажите точный диаметр и координаты.</div> : null}
 
       <div className={`relative min-h-0 bg-[#dce8ea] ${drawingFullscreen ? "flex-1 p-1" : "p-2 sm:p-4"}`}>
@@ -599,7 +647,7 @@ export default function MeasurementCanvas({ value, onChange }) {
           {wallPoints.map((point, index) => <circle key={`${point.x}-${point.y}-${index}`} cx={point.x} cy={point.y} r="8" fill="#38bdf8" stroke="#0f172a" strokeWidth="3" pointerEvents="none" />)}
 
           {visibleElements.map((element) => element.type === "dimension"
-            ? <MeasurementLine key={element.id} element={element} selected={element.id === selectedId} toSvg={toSvg} onPointerDown={(event) => startDrag(event, element)} onEndpointPointerDown={(event, endpoint) => startEndpointDrag(event, element, endpoint)} />
+            ? <MeasurementLine key={element.id} element={element} selected={element.id === selectedId} toSvg={toSvg} onPointerDown={(event) => startDrag(event, element)} onEndpointPointerDown={(event, endpoint) => startEndpointDrag(event, element, endpoint)} inputRef={dimensionInputRef} onValueChange={(nextValue) => updateElement(element.id, { value: optionalPositiveNumber(nextValue) })} />
             : <DiagramElement key={element.id} element={element} selected={element.id === selectedId} toSvg={toSvg} wallWidth={wallWidth} wallHeight={wallHeight} onPointerDown={(event) => startDrag(event, element)} />)}
           {orthogonalGuide ? (() => {
             const start = toSvg(orthogonalGuide.start);
@@ -616,14 +664,34 @@ export default function MeasurementCanvas({ value, onChange }) {
           {snapTarget ? (() => { const point = toSvg(snapTarget); return <g pointerEvents="none"><circle cx={point.x} cy={point.y} r="14" fill="#22c55e" fillOpacity="0.2" stroke="#16a34a" strokeWidth="3" /><circle cx={point.x} cy={point.y} r="4" fill="#16a34a" /></g>; })() : null}
 
         </svg>
+        {selected && selectedMenuPosition ? <div style={selectedMenuPosition} className={`absolute z-20 -translate-x-1/2 ${selectedMenuAbove ? "-translate-y-full -mt-5" : "translate-y-5"}`} onPointerDown={(event) => event.stopPropagation()}>
+          <div className="flex items-center gap-1 rounded-2xl border border-slate-200 bg-white/95 p-1.5 text-slate-900 shadow-xl backdrop-blur">
+            {selected.type !== "dimension" ? <span className="max-w-32 truncate px-2 text-xs font-black">{selected.label}</span> : null}
+            {(selected.type === "cut_circle" || selected.type === "cut_rect" || selected.type?.startsWith("socket")) ? <>
+              <button type="button" onClick={() => updateElement(selected.id, { horizontal_reference: selected.horizontal_reference === "right" ? "left" : "right" })} className="rounded-xl px-2 py-2 text-[11px] font-bold hover:bg-slate-100">{selected.horizontal_reference === "right" ? "Справа" : "Слева"}</button>
+              <button type="button" onClick={() => updateElement(selected.id, { vertical_reference: selected.vertical_reference === "top" ? "bottom" : "top" })} className="rounded-xl px-2 py-2 text-[11px] font-bold hover:bg-slate-100">{selected.vertical_reference === "top" ? "От потолка" : "От пола"}</button>
+            </> : null}
+            {selected.type !== "dimension" ? <button type="button" onClick={() => setContextEditorOpen((open) => !open)} aria-label="Параметры выбранного элемента" className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200"><SlidersHorizontal size={16} /></button> : null}
+            <button type="button" onClick={removeSelected} aria-label="Удалить выбранное" className="flex h-9 w-9 items-center justify-center rounded-xl bg-red-50 text-red-600 hover:bg-red-100"><Trash2 size={16} /></button>
+          </div>
+          {contextEditorOpen && selected.type !== "dimension" ? <div className="mt-2 w-72 space-y-2 rounded-2xl border border-slate-200 bg-white/95 p-3 text-slate-900 shadow-xl backdrop-blur">
+            <ContextInput label="Название" value={selected.label} onChange={(nextValue) => updateElement(selected.id, { label: nextValue })} />
+            <div className="grid grid-cols-2 gap-2">
+              {(selected.type === "cut_circle" || selected.type?.startsWith("socket"))
+                ? <ContextInput label="Диаметр, мм" type="number" value={selected.diameter} onChange={(nextValue) => { const diameter = Math.max(numberValue(nextValue), 0); const count = Math.max(numberValue(selected.count, 1), 1); updateElement(selected.id, { diameter, width: diameter + (count - 1) * numberValue(selected.spacing, 71), height: diameter }); }} />
+                : <><ContextInput label="Ширина, мм" type="number" value={selected.width} onChange={(nextValue) => updateElement(selected.id, { width: Math.max(numberValue(nextValue), 0) })} /><ContextInput label="Высота, мм" type="number" value={selected.height} onChange={(nextValue) => updateElement(selected.id, { height: Math.max(numberValue(nextValue), 0) })} /></>}
+              {(selected.type === "cut_circle" || selected.type === "cut_rect" || selected.type?.startsWith("socket")) ? <>
+                <ContextInput label={selected.horizontal_reference === "right" ? "Справа, мм" : "Слева, мм"} type="number" value={selected.horizontal_distance} onChange={(nextValue) => updateElement(selected.id, { horizontal_distance: optionalPositiveNumber(nextValue) })} />
+                <ContextInput label={selected.vertical_reference === "top" ? "От потолка, мм" : "От пола, мм"} type="number" value={selected.vertical_distance} onChange={(nextValue) => updateElement(selected.id, { vertical_distance: optionalPositiveNumber(nextValue) })} />
+              </> : null}
+              {selected.type?.startsWith("socket") || selected.type === "light" ? <>
+                <ContextInput label="Количество" type="number" value={selected.count} onChange={(nextValue) => { const count = Math.max(Math.round(numberValue(nextValue, 1)), 1); updateElement(selected.id, { count, ...(selected.type?.startsWith("socket") ? { width: numberValue(selected.diameter, 68) + (count - 1) * numberValue(selected.spacing, 71) } : {}) }); }} />
+                <ContextInput label="Шаг, мм" type="number" value={selected.spacing} onChange={(nextValue) => { const spacing = Math.max(numberValue(nextValue), 0); updateElement(selected.id, { spacing, ...(selected.type?.startsWith("socket") ? { width: numberValue(selected.diameter, 68) + (Math.max(numberValue(selected.count, 1), 1) - 1) * spacing } : {}) }); }} />
+              </> : null}
+            </div>
+          </div> : null}
+        </div> : null}
       </div>
-
-      {selected?.type === "dimension" ? <div className={`shrink-0 border-t border-sky-400/20 bg-slate-950 px-3 sm:px-5 ${drawingFullscreen ? "pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2" : "py-4"}`}>
-        <div className={`flex gap-2 ${drawingFullscreen ? "items-center" : "flex-col sm:flex-row sm:items-end"}`}>
-          <label className={`flex-1 ${drawingFullscreen ? "min-w-0" : "space-y-1"}`}>{!drawingFullscreen ? <span className="block text-xs font-black uppercase tracking-widest text-sky-200">Точный размер линии, мм</span> : null}<input ref={dimensionInputRef} type="number" inputMode="decimal" value={selected.value ?? ""} placeholder="Точный размер, мм" onChange={(event) => updateElement(selected.id, { value: optionalPositiveNumber(event.target.value) })} className={`w-full border-2 border-sky-400 bg-slate-950 font-black text-white outline-none placeholder:text-slate-600 ${drawingFullscreen ? "rounded-xl px-3 py-2 text-base" : "rounded-2xl px-4 py-3 text-xl"}`} /></label>
-          <button type="button" onClick={() => { setSelectedId(null); setTool("line"); }} className={`shrink-0 bg-sky-400 font-black text-slate-950 ${drawingFullscreen ? "rounded-xl px-4 py-2 text-xs" : "rounded-2xl px-5 py-3 text-sm"}`}>{drawingFullscreen ? "Готово" : "Готово, рисовать дальше"}</button>
-        </div>
-      </div> : null}
 
       {!drawingFullscreen ? <VoiceSpecification
         view={view}
@@ -631,34 +699,6 @@ export default function MeasurementCanvas({ value, onChange }) {
         onChange={(items) => updateDiagram({ specifications: { ...diagram.specifications, [view]: items } })}
       /> : null}
 
-      {!drawingFullscreen ? <div className="grid gap-4 border-t border-white/10 bg-slate-900 p-4 sm:grid-cols-2 sm:p-5">
-        <EditorGroup title={selected ? "Выбранный элемент" : "Как работать"}>
-          {selected?.type === "dimension" ? <>
-            <NumberField label="Размер линии" value={selected.value} onChange={(value) => updateElement(selected.id, { value: optionalPositiveNumber(value) })} />
-            <NumberField label="Начало X" value={selected.x1} onChange={(value) => updateElement(selected.id, { x1: numberValue(value) })} />
-            <NumberField label="Начало Y" value={selected.y1} onChange={(value) => updateElement(selected.id, { y1: numberValue(value) })} />
-            <NumberField label="Конец X" value={selected.x2} onChange={(value) => updateElement(selected.id, { x2: numberValue(value) })} />
-            <NumberField label="Конец Y" value={selected.y2} onChange={(value) => updateElement(selected.id, { y2: numberValue(value) })} />
-            <TextField label="Комментарий к размеру" value={selected.note} onChange={(value) => updateElement(selected.id, { note: value })} />
-          </> : selected ? <>
-            <TextField label="Название" value={selected.label} onChange={(value) => updateElement(selected.id, { label: value })} />
-            <NumberField label="X от левого края" value={selected.x} onChange={(value) => updateElement(selected.id, { x: numberValue(value) })} />
-            <NumberField label="Y от пола" value={selected.y} onChange={(value) => updateElement(selected.id, { y: numberValue(value) })} />
-            {selected.type === "cut_circle" || selected.type.startsWith("socket") ? <NumberField label={selected.type.startsWith("socket") ? "Диаметр каждого выреза" : "Диаметр выреза"} value={selected.diameter} onChange={(value) => { const diameter = Math.max(numberValue(value), 0); const count = Math.max(numberValue(selected.count, 1), 1); updateElement(selected.id, { diameter, width: diameter + (count - 1) * numberValue(selected.spacing, 71), height: diameter }); }} /> : <NumberField label="Ширина" value={selected.width} onChange={(value) => updateElement(selected.id, { width: numberValue(value) })} />}
-            {selected.type !== "cut_circle" && !selected.type.startsWith("socket") ? <NumberField label="Высота" value={selected.height} onChange={(value) => updateElement(selected.id, { height: numberValue(value) })} /> : null}
-            {selected.type.startsWith("socket") ? <><NumberField label="Количество вырезов" value={selected.count} onChange={(value) => { const count = Math.max(Math.round(numberValue(value, 1)), 1); updateElement(selected.id, { count, width: numberValue(selected.diameter, 68) + (count - 1) * numberValue(selected.spacing, 71) }); }} /><NumberField label="Шаг между центрами" value={selected.spacing} onChange={(value) => { const spacing = Math.max(numberValue(value), 0); updateElement(selected.id, { spacing, width: numberValue(selected.diameter, 68) + (Math.max(numberValue(selected.count, 1), 1) - 1) * spacing }); }} /></> : null}
-            {selected.type === "cut_circle" || selected.type === "cut_rect" || selected.type.startsWith("socket") ? <>
-              <ReferenceSideField label="Горизонтальный размер" value={selected.horizontal_reference || "left"} options={[{ value: "left", label: "От левой стены" }, { value: "right", label: "От правой стены" }]} onChange={(value) => updateElement(selected.id, { horizontal_reference: value })} />
-              <NumberField label={selected.horizontal_reference === "right" ? "Размер справа" : "Размер слева"} value={selected.horizontal_distance} onChange={(value) => updateElement(selected.id, { horizontal_distance: optionalPositiveNumber(value) })} />
-              <ReferenceSideField label="Вертикальный размер" value={selected.vertical_reference || "bottom"} options={[{ value: "bottom", label: "От пола" }, { value: "top", label: "От потолка" }]} onChange={(value) => updateElement(selected.id, { vertical_reference: value })} />
-              <NumberField label={selected.vertical_reference === "top" ? "Размер от потолка" : "Размер от пола"} value={selected.vertical_distance} onChange={(value) => updateElement(selected.id, { vertical_distance: optionalPositiveNumber(value) })} />
-            </> : null}
-            {selected.type === "light" ? <><NumberField label="Количество светильников" value={selected.count} onChange={(value) => updateElement(selected.id, { count: Math.max(numberValue(value, 1), 1) })} /><NumberField label="Шаг между центрами" value={selected.spacing} onChange={(value) => updateElement(selected.id, { spacing: numberValue(value) })} /></> : null}
-            {selected.type === "mounting" ? <TextField label="Тип крепежа" value={selected.mounting_type} onChange={(value) => updateElement(selected.id, { mounting_type: value })} /> : null}
-            <TextField label="Комментарий" value={selected.note} onChange={(value) => updateElement(selected.id, { note: value })} />
-          </> : <div className="col-span-2 space-y-2 text-sm leading-relaxed text-slate-400"><p>1. Проведите линию: её конец примагнитится к другой линии.</p><p>2. Тяните линию за середину, а её концы — за круглые точки.</p><p>3. Для розеток и вырезов выберите стороны отсчёта размеров.</p><p>4. Любой объект можно перетащить пальцем или мышью.</p></div>}
-        </EditorGroup>
-      </div> : null}
     </section>
   );
 }
@@ -716,7 +756,7 @@ function CutoutReferenceDimensions({ element, center }) {
   </g>;
 }
 
-function MeasurementLine({ element, selected, toSvg, onPointerDown, onEndpointPointerDown, draft = false }) {
+function MeasurementLine({ element, selected, toSvg, onPointerDown, onEndpointPointerDown, inputRef, onValueChange, draft = false }) {
   const start = toSvg({ x: numberValue(element.x1), y: numberValue(element.y1) });
   const end = toSvg({ x: numberValue(element.x2), y: numberValue(element.y2) });
   const dx = end.x - start.x;
@@ -745,7 +785,9 @@ function MeasurementLine({ element, selected, toSvg, onPointerDown, onEndpointPo
     <line x1={dimensionEnd.x - tickX} y1={dimensionEnd.y - tickY} x2={dimensionEnd.x + tickX} y2={dimensionEnd.y + tickY} stroke="#475569" strokeWidth="2.5" />
     <g transform={`rotate(${readableAngle} ${labelX} ${labelY})`}>
       <rect x={labelX - labelWidth / 2} y={labelY - 15} width={labelWidth} height="22" rx="7" fill="#fffdf6" stroke={selected ? "#38bdf8" : "#94a3b8"} />
-      <text x={labelX} y={labelY + 1} textAnchor="middle" fontSize="14" fontWeight="900" fill={color}>{dimensionLabel}</text>
+      {selected && !draft ? <foreignObject x={labelX - 58} y={labelY - 19} width="116" height="32" transform={`rotate(${-readableAngle} ${labelX} ${labelY})`}>
+        <input ref={inputRef} type="number" inputMode="decimal" value={element.value ?? ""} placeholder="Введите размер" aria-label="Размер линии в миллиметрах" onPointerDown={(event) => event.stopPropagation()} onChange={(event) => onValueChange?.(event.target.value)} className="h-8 w-full rounded-lg border-2 border-sky-400 bg-white px-2 text-center text-sm font-black text-slate-900 outline-none" />
+      </foreignObject> : <text x={labelX} y={labelY + 1} textAnchor="middle" fontSize="14" fontWeight="900" fill={color}>{dimensionLabel}</text>}
     </g>
     {selected && !draft ? <>
       <circle cx={start.x} cy={start.y} r="13" fill="#fffdf6" stroke="#0ea5e9" strokeWidth="4" className="cursor-crosshair" onPointerDown={(event) => onEndpointPointerDown?.(event, "start")} />
@@ -767,20 +809,8 @@ function MountSymbol({ center, width, height, stroke }) {
   return <g><rect x={center.x - width / 2} y={center.y - height / 2} width={width} height={height} rx="5" fill="#dbe4e6" stroke={stroke} strokeWidth="4" /><circle cx={center.x - width * 0.35} cy={center.y} r="5" fill="#fffdf6" stroke={stroke} strokeWidth="3" /><circle cx={center.x + width * 0.35} cy={center.y} r="5" fill="#fffdf6" stroke={stroke} strokeWidth="3" /><path d={`M ${center.x - width * 0.16} ${center.y + height * 0.18} L ${center.x} ${center.y - height * 0.2} L ${center.x + width * 0.16} ${center.y + height * 0.18}`} fill="none" stroke={stroke} strokeWidth="4" /></g>;
 }
 
-function EditorGroup({ title, children }) {
-  return <div className="grid grid-cols-2 gap-3 rounded-2xl border border-white/10 bg-white/5 p-3"><h4 className="col-span-2 text-xs font-black uppercase tracking-widest text-slate-400">{title}</h4>{children}</div>;
-}
-
-function NumberField({ label, value, onChange }) {
-  return <label className="space-y-1"><span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}, мм</span><input type="number" inputMode="decimal" value={value ?? ""} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm font-bold text-white outline-none focus:border-sky-400" /></label>;
-}
-
-function TextField({ label, value, onChange }) {
-  return <label className="col-span-2 space-y-1"><span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</span><input value={value ?? ""} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm font-bold text-white outline-none focus:border-sky-400" /></label>;
-}
-
-function ReferenceSideField({ label, value, options, onChange }) {
-  return <div className="col-span-2 space-y-1"><span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</span><div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-950 p-1">{options.map((option) => <button key={option.value} type="button" onClick={() => onChange(option.value)} className={`rounded-lg px-2 py-2 text-xs font-bold transition ${value === option.value ? "bg-sky-400 text-slate-950" : "text-slate-400 hover:text-white"}`}>{option.label}</button>)}</div></div>;
+function ContextInput({ label, value, onChange, type = "text" }) {
+  return <label className={type === "text" ? "block" : "block min-w-0"}><span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-500">{label}</span><input type={type} inputMode={type === "number" ? "decimal" : undefined} value={value ?? ""} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-900 outline-none focus:border-sky-400" /></label>;
 }
 
 function IconButton({ label, children, danger = false, ...props }) {
