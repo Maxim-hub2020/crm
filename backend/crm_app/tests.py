@@ -2737,6 +2737,63 @@ class TestYandexDiskArchiveApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(archive_folder.call_args.args[0].id, response.data["id"])
 
 
+class TestMeasurementYandexDiskSyncApi(AuthenticatedApiMixin, APITestCase):
+    def setUp(self):
+        self.admin = self.create_user("admin.measurement.disk", role=User.Role.ADMIN)
+        YandexDiskSettings.objects.update_or_create(
+            workspace=self.admin.workspace,
+            defaults={
+                "enabled": True,
+                "auto_create_project_folders": True,
+                "base_path": "/CRM/Проекты",
+                "archive_path": "/CRM/Архив",
+                "oauth_token": "test-token",
+            },
+        )
+        self.project = Project.objects.create(
+            manager=self.admin,
+            title="Зеркало",
+            client_name="Антон",
+            client_phone="+7-900-000-00-01",
+            yandex_disk_path="disk:/CRM/Проекты/№0001 · Зеркало",
+        )
+
+    def test_measurement_save_uploads_json_and_room_svg_to_project_folder(self):
+        client = self.auth_client_for(self.admin)
+        measurement_data = {
+            "rooms": [
+                {
+                    "id": "room-1",
+                    "name": "Ванная",
+                    "diagram": {
+                        "wall": {"width": 2000, "height": 2600},
+                        "elements": [
+                            {"type": "dimension", "x1": 0, "y1": 0, "x2": 1200, "y2": 0, "value": 1200},
+                        ],
+                    },
+                },
+            ],
+        }
+
+        with patch("crm_app.yandex_disk.create_folder") as create_folder, patch("crm_app.yandex_disk.upload_bytes") as upload_bytes:
+            response = client.post(
+                "/api/measurement-sheets/",
+                {"project": self.project.id, "data": measurement_data},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        drawings_path = "disk:/CRM/Проекты/№0001 · Зеркало/Чертежи"
+        create_folder.assert_called_once_with("test-token", drawings_path)
+        self.assertEqual(upload_bytes.call_count, 2)
+        json_call, svg_call = upload_bytes.call_args_list
+        self.assertEqual(json_call.args[1], f"{drawings_path}/Данные замера.json")
+        self.assertEqual(svg_call.args[1], f"{drawings_path}/Замер - лист 01.svg")
+        svg = svg_call.args[2].decode("utf-8")
+        self.assertIn("Ванная", svg)
+        self.assertIn("1200 мм", svg)
+
+
 class TestYandexDiskOAuthApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
         self.admin = self.create_user("admin.yandex.oauth", role=User.Role.ADMIN)

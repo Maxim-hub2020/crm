@@ -26,7 +26,7 @@ import {
   Users,
   Wallet,
 } from "lucide-react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import {
   createPayment,
@@ -1136,6 +1136,7 @@ function readOfflineProjects() {
 
 export default function Projects() {
   const location = useLocation();
+  const navigate = useNavigate();
 
   const [projects, setProjects] = useState(readOfflineProjects);
   const [clients, setClients] = useState([]);
@@ -4413,20 +4414,25 @@ export default function Projects() {
                             : `${activeProjectPayments.length} операций`}
                         </div>
                       </div>
-                      <div className="relative w-full md:max-w-sm">
-                        <Search
-                          size={17}
-                          aria-hidden="true"
-                          className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-                        />
-                        <Input
-                          type="search"
-                          value={paymentSearch}
-                          onChange={(event) => setPaymentSearch(event.target.value)}
-                          className="pl-11"
-                          placeholder="Категория, сумма, дата, комментарий..."
-                          aria-label="Поиск финансовых операций по проекту"
-                        />
+                      <div className="flex w-full flex-col gap-2 md:max-w-xl md:flex-row">
+                        <div className="relative flex-1">
+                          <Search
+                            size={17}
+                            aria-hidden="true"
+                            className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+                          />
+                          <Input
+                            type="search"
+                            value={paymentSearch}
+                            onChange={(event) => setPaymentSearch(event.target.value)}
+                            className="pl-11"
+                            placeholder="Категория, сумма, дата, комментарий..."
+                            aria-label="Поиск финансовых операций по проекту"
+                          />
+                        </div>
+                        <Button type="button" variant="secondary" className="shrink-0" onClick={() => navigate(`/finances?project=${activeProject.id}`)}>
+                          <Wallet size={16} />Все финансы
+                        </Button>
                       </div>
                     </div>
                   </CardHeader>
@@ -4443,7 +4449,8 @@ export default function Projects() {
                         </Button>
                       </div>
                     ) : (
-                      <div className="overflow-x-auto">
+                      <>
+                      <div className="hidden overflow-x-auto md:block">
                         <table className="w-full min-w-[760px] text-left text-sm">
                           <thead className="text-slate-400">
                             <tr>
@@ -4473,26 +4480,24 @@ export default function Projects() {
                                   <td className="py-4 text-slate-500">{payment.comment || "—"}</td>
                                   <td className="py-4 text-right">
                                     <div className="flex justify-end gap-2">
-                                      <Button
+                                      <button
                                         type="button"
-                                        variant="ghost"
-                                        className="h-10 w-10 px-0 text-blue-600 hover:bg-blue-50"
+                                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-600 transition hover:bg-blue-100"
                                         onClick={() => startPaymentEdit(payment)}
                                         title="Редактировать"
                                         aria-label="Редактировать операцию"
                                       >
                                         <Pencil size={16} />
-                                      </Button>
-                                      <Button
+                                      </button>
+                                      <button
                                         type="button"
-                                        variant="ghost"
-                                        className="h-10 w-10 px-0 text-red-600 hover:bg-red-50"
+                                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-600 transition hover:bg-red-100"
                                         onClick={() => requestDeletePayment(payment.id)}
                                         title="Удалить"
                                         aria-label="Удалить операцию"
                                       >
                                         <Trash2 size={16} />
-                                      </Button>
+                                      </button>
                                     </div>
                                   </td>
                                 </tr>
@@ -4501,6 +4506,27 @@ export default function Projects() {
                           </tbody>
                         </table>
                       </div>
+                      <div className="space-y-3 md:hidden">
+                        {filteredActiveProjectPayments.map((payment) => {
+                          const signedAmount = paymentDisplaySignedAmount(payment);
+                          const futurePayment = isFuturePayment(payment);
+                          return <div key={payment.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className={`text-lg font-black ${signedAmount < 0 ? "text-red-600" : "text-emerald-600"}`}>{signedAmount < 0 ? "−" : "+"} {formatMoney(Math.abs(signedAmount))} ₽</div>
+                                <div className="mt-2"><Badge className={paymentCategoryBadgeClass(payment)}>{paymentCategoryLabel(payment)}</Badge>{futurePayment ? <Badge className="ml-2 bg-blue-50 text-blue-600">Запланировано</Badge> : null}</div>
+                              </div>
+                              <div className="text-xs font-semibold text-slate-400">{formatDateTime(payment.paid_at)}</div>
+                            </div>
+                            {payment.comment ? <div className="mt-3 text-sm text-slate-500">{payment.comment}</div> : null}
+                            <div className="mt-3 flex justify-end gap-2 border-t border-slate-200 pt-3">
+                              <button type="button" onClick={() => startPaymentEdit(payment)} aria-label="Редактировать операцию" className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-600"><Pencil size={16} /></button>
+                              <button type="button" onClick={() => requestDeletePayment(payment.id)} aria-label="Удалить операцию" className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-600"><Trash2 size={16} /></button>
+                            </div>
+                          </div>;
+                        })}
+                      </div>
+                      </>
                     )}
                   </CardBody>
                 </Card>

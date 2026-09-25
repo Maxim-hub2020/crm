@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowUpCircle, Brain, CheckCircle2, Pencil, Plus, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import {
   createPayment,
@@ -580,6 +580,7 @@ function CashForecastBlock({
 
 export default function Finances() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [projects, setProjects] = useState([]);
   const [projectStatuses, setProjectStatuses] = useState([]);
   const [payments, setPayments] = useState([]);
@@ -588,7 +589,7 @@ export default function Finances() {
   const [activeTab, setActiveTab] = useState("operations");
   const [category, setCategory] = useState("all");
   const [account, setAccount] = useState("all");
-  const [projectFilter, setProjectFilter] = useState("all");
+  const [projectFilter, setProjectFilter] = useState(() => new URLSearchParams(location.search).get("project") || "all");
   const [kindFilter, setKindFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -640,6 +641,11 @@ export default function Finances() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    setProjectFilter(new URLSearchParams(location.search).get("project") || "all");
+    setActiveTab("operations");
+  }, [location.search]);
 
   const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const applicationStatusCodes = useMemo(() => {
@@ -1148,26 +1154,24 @@ export default function Finances() {
                   <td className="max-w-xs truncate px-6 py-4 text-sm text-gray-500">{payment.comment || "—"}</td>
                   <td className="whitespace-nowrap px-6 py-4 text-right text-sm">
                     <div className="flex justify-end gap-2">
-                      <Button
+                      <button
                         type="button"
-                        variant="ghost"
-                        className="h-10 w-10 px-0 text-blue-600 hover:bg-blue-50"
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-600 transition hover:bg-blue-100"
                         onClick={() => openPaymentEdit(payment)}
                         title="Редактировать"
                         aria-label="Редактировать операцию"
                       >
                         <Pencil size={16} />
-                      </Button>
-                      <Button
+                      </button>
+                      <button
                         type="button"
-                        variant="ghost"
-                        className="h-10 w-10 px-0 text-red-600 hover:bg-red-50"
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-600 transition hover:bg-red-100"
                         onClick={() => removePayment(payment.id)}
                         title="Удалить"
                         aria-label="Удалить операцию"
                       >
                         <Trash2 size={16} />
-                      </Button>
+                      </button>
                     </div>
                   </td>
                 </tr>

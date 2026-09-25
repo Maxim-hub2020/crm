@@ -101,6 +101,7 @@ from .yandex_disk import (
     is_application_project_status,
     is_archive_project_status,
     list_disk_folders,
+    sync_measurement_drawings_to_yandex,
     yandex_disk_oauth_configured,
     yandex_disk_redirect_uri,
 )
@@ -1578,6 +1579,14 @@ class MeasurementSheetViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(project__manager=self.request.user)
         project_id = self.request.query_params.get("project")
         return queryset.filter(project_id=project_id) if project_id else queryset
+
+    def perform_create(self, serializer):
+        sheet = serializer.save()
+        sync_measurement_drawings_to_yandex(sheet)
+
+    def perform_update(self, serializer):
+        sheet = serializer.save()
+        sync_measurement_drawings_to_yandex(sheet)
 
     @action(detail=True, methods=["post"], parser_classes=[MultiPartParser, FormParser], url_path="photos")
     def upload_photos(self, request, pk=None):

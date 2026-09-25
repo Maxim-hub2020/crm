@@ -1,5 +1,6 @@
 import json
 import os
+from html import escape
 from urllib import error as urllib_error
 from urllib import parse, request as urllib_request
 
@@ -11,6 +12,7 @@ from .models import ProjectStatus, Workspace, YandexDiskSettings
 
 YANDEX_DISK_API_BASE = "https://cloud-api.yandex.net/v1/disk/resources"
 YANDEX_DISK_MOVE_API = f"{YANDEX_DISK_API_BASE}/move"
+YANDEX_DISK_UPLOAD_API = f"{YANDEX_DISK_API_BASE}/upload"
 YANDEX_OAUTH_AUTHORIZE_URL = "https://oauth.yandex.ru/authorize"
 YANDEX_OAUTH_TOKEN_URL = "https://oauth.yandex.ru/token"
 YANDEX_DISK_WEB_BASE = "https://disk.yandex.ru/client/disk"
@@ -235,6 +237,148 @@ def archive_project_disk_folder(project, actor=None, force=False):
     project.yandex_disk_error = ""
     project.save(update_fields=["yandex_disk_path", "yandex_disk_web_url", "yandex_disk_archived_at", "yandex_disk_error", "updated_at"])
     return {"ok": True, "path": destination_path, "web_url": web_url, "archived": True}
+
+
+def sync_measurement_drawings_to_yandex(sheet):
+    project = sheet.project
+    settings = get_yandex_disk_settings(project.workspace)
+    if not settings.enabled:
+        return {"ok": False, "skipped": True, "message": "Yandex Disk integration is disabled."}
+    if not settings.oauth_token:
+        return {"ok": False, "skipped": True, "message": "Yandex Disk OAuth token is not configured."}
+
+    if not project.yandex_disk_path:
+        created = ensure_project_disk_folder(project, actor=sheet.created_by, force=True)
+        project.refresh_from_db()
+        if not created.get("ok"):
+            return created
+
+    drawings_path = join_disk_path(project.yandex_disk_path, "Чертежи")
+    data = sheet.data if isinstance(sheet.data, dict) else {}
+    rooms = data.get("rooms") if isinstance(data.get("rooms"), list) else []
+    if not rooms:
+        rooms = [{"name": "Комната 1", "diagram": data.get("diagram") or {}}]
+
+    try:
+        create_folder(settings.oauth_token, drawings_path)
+        upload_bytes(
+            settings.oauth_token,
+            join_disk_path(drawings_path, "Данные замера.json"),
+            json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"),
+            "application/json; charset=utf-8",
+        )
+        for index, room in enumerate(rooms, start=1):
+            filename = f"Замер - лист {index:02d}.svg"
+            upload_bytes(
+                settings.oauth_token,
+                join_disk_path(drawings_path, filename),
+                render_measurement_room_svg(room, index).encode("utf-8"),
+                "image/svg+xml; charset=utf-8",
+            )
+    except (TypeError, ValueError, YandexDiskError) as exc:
+        _save_disk_error(project, str(exc))
+        return {"ok": False, "error": str(exc), "path": drawings_path}
+
+    if project.yandex_disk_error:
+        project.yandex_disk_error = ""
+        project.save(update_fields=["yandex_disk_error", "updated_at"])
+    return {"ok": True, "path": drawings_path, "files": len(rooms) + 1}
+
+
+def render_measurement_room_svg(room, sheet_number=1):
+    room = room if isinstance(room, dict) else {}
+    diagram = room.get("diagram") if isinstance(room.get("diagram"), dict) else {}
+    wall = diagram.get("wall") if isinstance(diagram.get("wall"), dict) else {}
+    width = max(_safe_number(wall.get("width"), 2000), 100)
+    height = max(_safe_number(wall.get("height"), 2600), 100)
+    margin = max(min(width, height) * 0.06, 80)
+    name = escape(str(room.get("name") or f"Комната {sheet_number}"))
+    elements = diagram.get("elements") if isinstance(diagram.get("elements"), list) else []
+
+    def sx(value):
+        return _safe_number(value)
+
+    def sy(value):
+        return height - _safe_number(value)
+
+    drawing = []
+    points = wall.get("points") if isinstance(wall.get("points"), list) else []
+    if len(points) >= 2:
+        polygon = " ".join(f"{sx(point.get('x')):.2f},{sy(point.get('y')):.2f}" for point in points if isinstance(point, dict))
+        drawing.append(f'<polygon points="{polygon}" class="wall"/>')
+    else:
+        drawing.append(f'<rect x="0" y="0" width="{width:.2f}" height="{height:.2f}" class="wall"/>')
+
+    for element in elements:
+        if not isinstance(element, dict) or element.get("side", "wall") != "wall":
+            continue
+        element_type = str(element.get("type") or "")
+        label = escape(str(element.get("label") or "Элемент"))
+        if element_type == "dimension":
+            x1, y1 = sx(element.get("x1")), sy(element.get("y1"))
+            x2, y2 = sx(element.get("x2")), sy(element.get("y2"))
+            value = escape(str(element.get("value") or round(((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5)))
+            mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+            drawing.append(f'<line x1="{x1:.2f}" y1="{y1:.2f}" x2="{x2:.2f}" y2="{y2:.2f}" class="dimension" marker-start="url(#arrow)" marker-end="url(#arrow)"/>')
+            drawing.append(f'<text x="{mx:.2f}" y="{my - 18:.2f}" class="dimension-text">{value} мм</text>')
+            continue
+
+        x, y = sx(element.get("x")), sy(element.get("y"))
+        element_width = max(_safe_number(element.get("width"), 60), 20)
+        element_height = max(_safe_number(element.get("height"), 60), 20)
+        if element_type == "cut_circle" or element_type.startswith("socket"):
+            diameter = max(_safe_number(element.get("diameter"), element_height), 20)
+            count = max(int(_safe_number(element.get("count"), 1)), 1)
+            spacing = max(_safe_number(element.get("spacing"), 71), diameter)
+            for item_index in range(count):
+                cx = x - spacing * (count - 1) / 2 + item_index * spacing
+                drawing.append(f'<circle cx="{cx:.2f}" cy="{y:.2f}" r="{diameter / 2:.2f}" class="object"/>')
+        elif element_type == "light":
+            drawing.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="{max(element_width, element_height) / 2:.2f}" class="light"/>')
+        elif element_type == "power":
+            drawing.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="{max(element_width, element_height) / 2:.2f}" class="power"/>')
+        else:
+            drawing.append(f'<rect x="{x - element_width / 2:.2f}" y="{y - element_height / 2:.2f}" width="{element_width:.2f}" height="{element_height:.2f}" class="object"/>')
+        drawing.append(f'<text x="{x:.2f}" y="{y + element_height / 2 + 32:.2f}" class="object-text">{label}</text>')
+
+    view_width = width + margin * 2
+    view_height = height + margin * 2
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="{-margin:.2f} {-margin:.2f} {view_width:.2f} {view_height:.2f}">
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#0284c7"/></marker></defs>
+  <style>.wall{{fill:#fffdf6;stroke:#0f172a;stroke-width:4;vector-effect:non-scaling-stroke}}.dimension{{stroke:#0284c7;stroke-width:2.5;vector-effect:non-scaling-stroke}}.dimension-text,.object-text{{font-family:Arial,sans-serif;font-size:28px;font-weight:700;text-anchor:middle;fill:#0f172a}}.object{{fill:#fff;stroke:#0f172a;stroke-width:3;vector-effect:non-scaling-stroke}}.light{{fill:#fef3c7;stroke:#0f172a;stroke-width:3;vector-effect:non-scaling-stroke}}.power{{fill:#e0f2fe;stroke:#0369a1;stroke-width:3;vector-effect:non-scaling-stroke}}.title{{font-family:Arial,sans-serif;font-size:34px;font-weight:700;fill:#0f172a}}</style>
+  <rect x="{-margin:.2f}" y="{-margin:.2f}" width="{view_width:.2f}" height="{view_height:.2f}" fill="#ffffff"/>
+  <text x="0" y="{-margin / 2:.2f}" class="title">Лист {sheet_number}. {name}</text>
+  {''.join(drawing)}
+</svg>'''
+
+
+def upload_bytes(token, disk_path, content, content_type="application/octet-stream"):
+    query = parse.urlencode({"path": normalize_disk_path(disk_path), "overwrite": "true"})
+    link_request = urllib_request.Request(f"{YANDEX_DISK_UPLOAD_API}?{query}", method="GET", headers={"Authorization": f"OAuth {token}"})
+    try:
+        with urllib_request.urlopen(link_request, timeout=12) as response:
+            upload_url = json.loads(response.read().decode("utf-8")).get("href")
+        if not upload_url:
+            raise YandexDiskError("Яндекс.Диск не вернул адрес загрузки файла.")
+        upload_request = urllib_request.Request(upload_url, data=content, method="PUT", headers={"Content-Type": content_type})
+        with urllib_request.urlopen(upload_request, timeout=20) as response:
+            return response.status in (200, 201, 202)
+    except urllib_error.HTTPError as exc:
+        try:
+            payload = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            payload = {}
+        message = payload.get("message") or payload.get("description") or f"Yandex Disk API error {exc.code}"
+        raise YandexDiskError(message) from exc
+    except urllib_error.URLError as exc:
+        raise YandexDiskError(f"Yandex Disk connection error: {exc.reason}") from exc
+
+
+def _safe_number(value, fallback=0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
 
 
 def is_archive_project_status(project):
