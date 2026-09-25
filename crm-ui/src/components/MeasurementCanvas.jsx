@@ -4,7 +4,9 @@ import {
   ArrowUp,
   Cable,
   CircleDot,
+  Hand,
   LampWallUp,
+  Maximize2,
   Minus,
   MousePointer2,
   Mic,
@@ -17,8 +19,11 @@ import {
   Undo2,
   Unplug,
   Wrench,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { mergeMeasurementSpecifications, packageMeasurementTranscript } from "../utils/measurementTranscript.js";
+import { MEASUREMENT_VIEWPORT, panMeasurementViewport, zoomMeasurementViewport } from "../utils/measurementViewport.js";
 
 const CANVAS = { x: 54, y: 42, width: 892, height: 596 };
 const VIEW_LABELS = { wall: "Стена" };
@@ -35,6 +40,7 @@ const ELEMENT_TYPES = {
 
 const TOOLS = [
   { id: "select", label: "Выбор", icon: MousePointer2 },
+  { id: "pan", label: "Двигать лист", icon: Hand },
   { id: "line", label: "Линия с размером", icon: Minus },
   { id: "socket_single", label: "Розетка", icon: Unplug },
   { id: "socket_double", label: "2 розетки", icon: Unplug },
@@ -115,9 +121,13 @@ export default function MeasurementCanvas({ value, onChange }) {
   const [future, setFuture] = useState([]);
   const [draftLine, setDraftLine] = useState(null);
   const [snapTarget, setSnapTarget] = useState(null);
+  const [viewport, setViewport] = useState(MEASUREMENT_VIEWPORT);
   const svgRef = useRef(null);
   const dragRef = useRef(null);
   const drawRef = useRef(null);
+  const panRef = useRef(null);
+  const pinchRef = useRef(null);
+  const activePointersRef = useRef(new Map());
   const dimensionInputRef = useRef(null);
   const autoFocusDimensionIdRef = useRef(null);
 
@@ -160,12 +170,77 @@ export default function MeasurementCanvas({ value, onChange }) {
 
   function fromPointer(event) {
     const rect = svgRef.current.getBoundingClientRect();
-    const svgX = ((event.clientX - rect.left) / rect.width) * 1000;
-    const svgY = ((event.clientY - rect.top) / rect.height) * 700;
+    const svgX = viewport.x + ((event.clientX - rect.left) / rect.width) * viewport.width;
+    const svgY = viewport.y + ((event.clientY - rect.top) / rect.height) * viewport.height;
     return {
       x: snap(clamp(((svgX - CANVAS.x) / CANVAS.width) * wallWidth, 0, wallWidth)),
       y: snap(clamp(((CANVAS.y + CANVAS.height - svgY) / CANVAS.height) * wallHeight, 0, wallHeight)),
     };
+  }
+
+  function cancelCanvasInteraction() {
+    drawRef.current = null;
+    dragRef.current = null;
+    panRef.current = null;
+    setDraftLine(null);
+    setSnapTarget(null);
+  }
+
+  function beginPan(event) {
+    event.stopPropagation();
+    activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    svgRef.current?.setPointerCapture?.(event.pointerId);
+    if (activePointersRef.current.size >= 2 && beginPinch()) return;
+    panRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, viewport };
+  }
+
+  function beginPinch() {
+    const points = [...activePointersRef.current.values()];
+    if (points.length < 2 || !svgRef.current) return false;
+    const [first, second] = points;
+    const rect = svgRef.current.getBoundingClientRect();
+    const center = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+    const normalizedCenter = { x: (center.x - rect.left) / rect.width, y: (center.y - rect.top) / rect.height };
+    cancelCanvasInteraction();
+    pinchRef.current = {
+      distance: Math.max(Math.hypot(second.x - first.x, second.y - first.y), 1),
+      viewport,
+      anchor: {
+        x: viewport.x + normalizedCenter.x * viewport.width,
+        y: viewport.y + normalizedCenter.y * viewport.height,
+      },
+    };
+    return true;
+  }
+
+  function updatePinch() {
+    const points = [...activePointersRef.current.values()];
+    if (!pinchRef.current || points.length < 2 || !svgRef.current) return false;
+    const [first, second] = points;
+    const rect = svgRef.current.getBoundingClientRect();
+    const center = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+    const normalizedCenter = { x: (center.x - rect.left) / rect.width, y: (center.y - rect.top) / rect.height };
+    const distance = Math.max(Math.hypot(second.x - first.x, second.y - first.y), 1);
+    const nextWidth = pinchRef.current.viewport.width / (distance / pinchRef.current.distance);
+    const nextHeight = nextWidth * 0.7;
+    setViewport(panMeasurementViewport({
+      x: pinchRef.current.anchor.x - normalizedCenter.x * nextWidth,
+      y: pinchRef.current.anchor.y - normalizedCenter.y * nextHeight,
+      width: nextWidth,
+      height: nextHeight,
+    }, 0, 0));
+    return true;
+  }
+
+  function zoomAt(factor, clientPoint = null) {
+    setViewport((current) => {
+      if (!clientPoint || !svgRef.current) return zoomMeasurementViewport(current, factor);
+      const rect = svgRef.current.getBoundingClientRect();
+      return zoomMeasurementViewport(current, factor, {
+        x: clamp((clientPoint.x - rect.left) / rect.width, 0, 1),
+        y: clamp((clientPoint.y - rect.top) / rect.height, 0, 1),
+      });
+    });
   }
 
   function snapToLineEndpoint(point, excludeId = null) {
@@ -187,6 +262,13 @@ export default function MeasurementCanvas({ value, onChange }) {
   }
 
   function handleCanvasPointerDown(event) {
+    activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    if (activePointersRef.current.size >= 2 && beginPinch()) return;
+    if (tool === "pan") {
+      beginPan(event);
+      return;
+    }
     if (event.target !== event.currentTarget && event.target.dataset.canvas !== "surface") return;
     const rawPoint = fromPointer(event);
     if (tool === "line") {
@@ -231,7 +313,14 @@ export default function MeasurementCanvas({ value, onChange }) {
   }
 
   function startDrag(event, element) {
+    if (tool === "pan") {
+      beginPan(event);
+      return;
+    }
     event.stopPropagation();
+    activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    svgRef.current?.setPointerCapture?.(event.pointerId);
+    if (activePointersRef.current.size >= 2 && beginPinch()) return;
     setSelectedId(element.id);
     if (tool !== "select") setTool("select");
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -241,7 +330,14 @@ export default function MeasurementCanvas({ value, onChange }) {
   }
 
   function startEndpointDrag(event, element, endpoint) {
+    if (tool === "pan") {
+      beginPan(event);
+      return;
+    }
     event.stopPropagation();
+    activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    svgRef.current?.setPointerCapture?.(event.pointerId);
+    if (activePointersRef.current.size >= 2 && beginPinch()) return;
     if (tool !== "select") setTool("select");
     setSelectedId(element.id);
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -249,6 +345,20 @@ export default function MeasurementCanvas({ value, onChange }) {
   }
 
   function handlePointerMove(event) {
+    if (activePointersRef.current.has(event.pointerId)) {
+      activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    }
+    if (updatePinch()) return;
+    if (panRef.current?.pointerId === event.pointerId && svgRef.current) {
+      const rect = svgRef.current.getBoundingClientRect();
+      const pan = panRef.current;
+      setViewport(panMeasurementViewport(
+        pan.viewport,
+        ((pan.x - event.clientX) / rect.width) * pan.viewport.width,
+        ((pan.y - event.clientY) / rect.height) * pan.viewport.height,
+      ));
+      return;
+    }
     if (drawRef.current) {
       const rawPoint = fromPointer(event);
       const point = snapToLineEndpoint(rawPoint);
@@ -302,6 +412,16 @@ export default function MeasurementCanvas({ value, onChange }) {
   }
 
   function endPointer(event) {
+    const wasPinching = Boolean(pinchRef.current);
+    activePointersRef.current.delete(event.pointerId);
+    if (wasPinching) {
+      if (activePointersRef.current.size < 2) pinchRef.current = null;
+      return;
+    }
+    if (panRef.current?.pointerId === event.pointerId) {
+      panRef.current = null;
+      return;
+    }
     if (drawRef.current) {
       if (event.type === "pointercancel") {
         drawRef.current = null;
@@ -370,6 +490,7 @@ export default function MeasurementCanvas({ value, onChange }) {
   const wallPoints = (diagram.wall.points || []).map(toSvg);
   const wallPolygon = wallPoints.length >= 2 ? wallPoints.map((point) => `${point.x},${point.y}`).join(" ") : "";
   const visibleElements = diagram.elements.filter((element) => element.side === view);
+  const zoomPercent = Math.round((MEASUREMENT_VIEWPORT.width / viewport.width) * 100);
   return (
     <section className="overflow-hidden rounded-[26px] border border-slate-200 bg-slate-950 text-white shadow-xl">
       <div className="border-b border-white/10 bg-slate-900 px-4 py-4 sm:px-5">
@@ -395,8 +516,14 @@ export default function MeasurementCanvas({ value, onChange }) {
       {tool === "line" ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100"><span className="font-bold">Проведите линию пальцем или мышью.</span> Конец примагнитится к ближайшему концу другой линии.</div> : null}
       {tool === "cut_circle" || tool.startsWith("socket") ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100">Коснитесь центра выреза. После добавления укажите точный диаметр и координаты.</div> : null}
 
-      <div className="bg-[#dce8ea] p-2 sm:p-4">
-        <svg ref={svgRef} viewBox="0 0 1000 700" role="img" aria-label={`Схема: ${VIEW_LABELS[view]}`} className="block aspect-[10/7] w-full touch-none rounded-2xl bg-[#f7f4eb] shadow-inner" onPointerDown={handleCanvasPointerDown} onPointerMove={handlePointerMove} onPointerUp={endPointer} onPointerCancel={endPointer}>
+      <div className="relative bg-[#dce8ea] p-2 sm:p-4">
+        <div className="absolute right-4 top-4 z-10 flex items-center gap-1 rounded-2xl border border-slate-200 bg-white/95 p-1.5 text-slate-900 shadow-lg backdrop-blur sm:right-6 sm:top-6">
+          <button type="button" onClick={() => zoomAt(1 / 1.4)} disabled={zoomPercent <= 100} aria-label="Уменьшить" className="flex h-10 w-10 items-center justify-center rounded-xl transition hover:bg-slate-100 disabled:opacity-30"><ZoomOut size={19} /></button>
+          <span className="min-w-12 text-center text-xs font-black tabular-nums">{zoomPercent}%</span>
+          <button type="button" onClick={() => zoomAt(1.4)} disabled={zoomPercent >= 600} aria-label="Увеличить" className="flex h-10 w-10 items-center justify-center rounded-xl transition hover:bg-slate-100 disabled:opacity-30"><ZoomIn size={19} /></button>
+          <button type="button" onClick={() => setViewport(MEASUREMENT_VIEWPORT)} disabled={zoomPercent <= 100} aria-label="Показать весь лист" className="flex h-10 w-10 items-center justify-center rounded-xl transition hover:bg-slate-100 disabled:opacity-30"><Maximize2 size={18} /></button>
+        </div>
+        <svg ref={svgRef} viewBox={`${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}`} role="img" aria-label={`Схема: ${VIEW_LABELS[view]}`} className={`block aspect-[10/7] w-full touch-none rounded-2xl bg-[#f7f4eb] shadow-inner ${tool === "pan" ? "cursor-grab active:cursor-grabbing" : ""}`} onPointerDown={handleCanvasPointerDown} onPointerMove={handlePointerMove} onPointerUp={endPointer} onPointerCancel={endPointer} onWheel={(event) => { event.preventDefault(); zoomAt(event.deltaY < 0 ? 1.2 : 1 / 1.2, { x: event.clientX, y: event.clientY }); }}>
           <defs>
             <pattern id="minor-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#cbd5d1" strokeWidth="1" /></pattern>
             <pattern id="major-grid" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#minor-grid)" /><path d="M 100 0 L 0 0 0 100" fill="none" stroke="#9fb3b4" strokeWidth="1.5" /></pattern>
