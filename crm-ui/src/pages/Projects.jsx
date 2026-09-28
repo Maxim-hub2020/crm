@@ -75,6 +75,7 @@ import {
 } from "../components/ui.jsx";
 import ClientAddressFields from "../components/ClientAddressFields.jsx";
 import MeasurementSheet from "../components/MeasurementSheet.jsx";
+import { maxNativeUrl, openAppLink } from "../utils/appLinks.js";
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits, phoneSearchDigits } from "../utils/phone.js";
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
@@ -336,7 +337,16 @@ function maxMessengerHref(project, form) {
     text: messageParts.join("\n"),
   });
 
-  return maxPhone ? `https://web.max.ru/chat?${params.toString()}` : "";
+  return maxPhone ? `https://max.ru/chat?${params.toString()}` : "";
+}
+
+function openMaxApp(event, webUrl) {
+  event.preventDefault();
+  openAppLink({
+    webUrl,
+    nativeUrl: maxNativeUrl(webUrl),
+    androidPackage: "ru.oneme.app",
+  });
 }
 
 function formatClientLookupInput(value) {
@@ -3641,6 +3651,7 @@ export default function Projects() {
                         <a
                           className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
                           href={maxMessageUrl}
+                          onClick={(event) => openMaxApp(event, maxMessageUrl)}
                           title="Написать клиенту в MAX"
                           aria-label="Написать клиенту в MAX"
                         >
@@ -3957,7 +3968,7 @@ export default function Projects() {
                         type="button"
                         variant="secondary"
                         className="justify-center px-3"
-                        onClick={() => window.open(activeProject.yandex_disk_web_url, "_blank", "noopener,noreferrer")}
+                        onClick={() => openAppLink({ webUrl: activeProject.yandex_disk_web_url, androidPackage: "ru.yandex.disk" })}
                       >
                         <FolderOpen size={16} />
                         Открыть папку
@@ -4660,6 +4671,7 @@ export default function Projects() {
                   <a
                     className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-slate-950 text-white ring-1 ring-slate-950 transition hover:bg-slate-800"
                     href={projectClientMaxUrl}
+                    onClick={(event) => openMaxApp(event, projectClientMaxUrl)}
                     title="Написать в MAX"
                     aria-label="Написать в MAX"
                   >
