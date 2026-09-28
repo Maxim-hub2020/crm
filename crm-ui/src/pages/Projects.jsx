@@ -186,26 +186,35 @@ function buildProjectUpdatePayload(form) {
 function normalizeCustomFieldValues(values = {}) {
   if (!values || typeof values !== "object") return {};
 
+  const normalizeFileValue = (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+
+    const cleanValue = {
+      name: String(value.name || value.original_name || value.originalName || "").trim(),
+      original_name: String(value.original_name || value.originalName || value.name || "").trim(),
+      url: String(value.url || "").trim(),
+      path: String(value.path || "").trim(),
+      content_type: String(value.content_type || value.contentType || "").trim(),
+      size: Number(value.size || 0) || 0,
+    };
+
+    return cleanValue.name || cleanValue.original_name || cleanValue.url || cleanValue.path ? cleanValue : null;
+  };
+
   return Object.fromEntries(
     Object.entries(values)
       .map(([key, value]) => {
-        if (value && typeof value === "object" && !Array.isArray(value)) {
-          const cleanValue = {
-            name: String(value.name || value.original_name || "").trim(),
-            original_name: String(value.original_name || value.name || "").trim(),
-            url: String(value.url || "").trim(),
-            path: String(value.path || "").trim(),
-            content_type: String(value.content_type || "").trim(),
-            size: Number(value.size || 0) || 0,
-          };
-          return [String(key), cleanValue];
+        if (Array.isArray(value)) {
+          return [String(key), value.map(normalizeFileValue).filter(Boolean)];
+        }
+        if (value && typeof value === "object") {
+          return [String(key), normalizeFileValue(value)];
         }
         return [String(key), String(value ?? "").trim()];
       })
       .filter(([, value]) => {
-        if (value && typeof value === "object") {
-          return Boolean(value.name || value.original_name || value.url || value.path);
-        }
+        if (Array.isArray(value)) return value.length > 0;
+        if (value && typeof value === "object") return true;
         return Boolean(value);
       })
   );
@@ -1988,11 +1997,12 @@ export default function Projects() {
           custom_fields: normalizeCustomFieldValues(updatedProject.custom_fields || {}),
         }));
       } else if (result.value) {
+        const normalizedValue = normalizeCustomFieldValues({ [fieldKey]: result.value })[fieldKey];
         setDetailForm((prev) => ({
           ...prev,
           custom_fields: {
             ...(prev.custom_fields || {}),
-            [fieldKey]: result.value,
+            [fieldKey]: normalizedValue,
           },
         }));
       }
