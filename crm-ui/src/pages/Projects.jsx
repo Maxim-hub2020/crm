@@ -2,7 +2,6 @@ import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "r
 import {
   AlertTriangle,
   Calendar,
-  ClipboardList,
   Check,
   Link,
   Copy,
@@ -74,7 +73,6 @@ import {
   Select,
 } from "../components/ui.jsx";
 import ClientAddressFields from "../components/ClientAddressFields.jsx";
-import MeasurementSheet from "../components/MeasurementSheet.jsx";
 import { maxNativeUrl, openAppLink } from "../utils/appLinks.js";
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits, phoneSearchDigits } from "../utils/phone.js";
 
@@ -4053,18 +4051,6 @@ export default function Projects() {
               <button
                 type="button"
                 className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-bold transition ${
-                  detailTab === "measurement"
-                    ? "border-blue-600 text-blue-600"
-                    : "border-transparent text-slate-400 hover:text-slate-700"
-                }`}
-                onClick={() => setDetailTab("measurement")}
-              >
-                <ClipboardList size={16} />
-                Замер
-              </button>
-              <button
-                type="button"
-                className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-bold transition ${
                   detailTab === "comments"
                     ? "border-blue-600 text-blue-600"
                     : "border-transparent text-slate-400 hover:text-slate-700"
@@ -4112,9 +4098,7 @@ export default function Projects() {
               </button>
             </div>
 
-            {detailTab === "measurement" ? (
-              <MeasurementSheet project={activeProject} />
-            ) : detailTab === "comments" ? (
+            {detailTab === "comments" ? (
               <Card className="overflow-hidden border border-slate-200 shadow-none ring-0">
                 <CardBody className="space-y-4 p-4 sm:p-5">
                   <div className="space-y-3">
