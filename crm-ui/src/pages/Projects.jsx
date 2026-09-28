@@ -4459,7 +4459,7 @@ export default function Projects() {
                               <th className="pb-3 font-black uppercase tracking-[0.18em]">Сумма</th>
                               {hasMultipleAccounts ? <th className="pb-3 font-black uppercase tracking-[0.18em]">Счет</th> : null}
                               <th className="pb-3 font-black uppercase tracking-[0.18em]">Комментарий</th>
-                              <th className="pb-3 text-right font-black uppercase tracking-[0.18em]">Действие</th>
+                              <th className="min-w-[250px] pb-3 text-right font-black uppercase tracking-[0.18em]">Действия</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -4478,25 +4478,27 @@ export default function Projects() {
                                   </td>
                                   {hasMultipleAccounts ? <td className="py-4 text-slate-500">{payment.account_name || "—"}</td> : null}
                                   <td className="py-4 text-slate-500">{payment.comment || "—"}</td>
-                                  <td className="py-4 text-right">
+                                  <td className="min-w-[250px] py-4 text-right">
                                     <div className="flex justify-end gap-2">
                                       <button
                                         type="button"
-                                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-600 transition hover:bg-blue-100"
+                                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
                                         onClick={() => startPaymentEdit(payment)}
                                         title="Редактировать"
                                         aria-label="Редактировать операцию"
                                       >
                                         <Pencil size={16} />
+                                        <span>Редактировать</span>
                                       </button>
                                       <button
                                         type="button"
-                                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-600 transition hover:bg-red-100"
+                                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-red-700"
                                         onClick={() => requestDeletePayment(payment.id)}
                                         title="Удалить"
                                         aria-label="Удалить операцию"
                                       >
                                         <Trash2 size={16} />
+                                        <span>Удалить</span>
                                       </button>
                                     </div>
                                   </td>
@@ -4519,9 +4521,9 @@ export default function Projects() {
                               <div className="text-xs font-semibold text-slate-400">{formatDateTime(payment.paid_at)}</div>
                             </div>
                             {payment.comment ? <div className="mt-3 text-sm text-slate-500">{payment.comment}</div> : null}
-                            <div className="mt-3 flex justify-end gap-2 border-t border-slate-200 pt-3">
-                              <button type="button" onClick={() => startPaymentEdit(payment)} aria-label="Редактировать операцию" className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-blue-100 bg-blue-50 text-blue-600"><Pencil size={16} /></button>
-                              <button type="button" onClick={() => requestDeletePayment(payment.id)} aria-label="Удалить операцию" className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-600"><Trash2 size={16} /></button>
+                            <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-200 pt-3">
+                              <button type="button" onClick={() => startPaymentEdit(payment)} aria-label="Редактировать операцию" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 text-sm font-bold text-white"><Pencil size={16} /><span>Изменить</span></button>
+                              <button type="button" onClick={() => requestDeletePayment(payment.id)} aria-label="Удалить операцию" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-red-600 px-3 text-sm font-bold text-white"><Trash2 size={16} /><span>Удалить</span></button>
                             </div>
                           </div>;
                         })}
