@@ -5,6 +5,7 @@ from urllib import error as urllib_error
 from urllib import parse, request as urllib_request
 
 from django.core import signing
+from django.core.files.storage import default_storage
 from django.utils import timezone
 
 from .models import ProjectStatus, Workspace, YandexDiskSettings
@@ -283,6 +284,61 @@ def sync_measurement_drawings_to_yandex(sheet):
         project.yandex_disk_error = ""
         project.save(update_fields=["yandex_disk_error", "updated_at"])
     return {"ok": True, "path": drawings_path, "files": len(rooms) + 1}
+
+
+def sync_project_measurement_files_to_yandex(project, field, file_values, actor=None):
+    field_name = str(getattr(field, "name", "") or "").strip()
+    if "замер" not in field_name.casefold():
+        return {"ok": False, "skipped": True, "message": "The custom field is not a measurement field."}
+
+    settings = get_yandex_disk_settings(project.workspace)
+    if not settings.enabled:
+        return {"ok": False, "skipped": True, "message": "Yandex Disk integration is disabled."}
+    if not settings.oauth_token:
+        return {"ok": False, "skipped": True, "message": "Yandex Disk OAuth token is not configured."}
+    if is_application_project_status(project):
+        return {"ok": False, "skipped": True, "message": "Measurement files are not synced for application projects."}
+
+    if not project.yandex_disk_path:
+        created = ensure_project_disk_folder(project, actor=actor, force=True)
+        project.refresh_from_db()
+        if not created.get("ok"):
+            return created
+
+    measurement_path = join_disk_path(project.yandex_disk_path, "Замер")
+    uploaded_paths = []
+    try:
+        create_folder(settings.oauth_token, measurement_path)
+        for index, file_value in enumerate(file_values, start=1):
+            if not isinstance(file_value, dict):
+                continue
+            storage_path = str(file_value.get("path") or "").strip()
+            if not storage_path or not default_storage.exists(storage_path):
+                continue
+            original_name = str(file_value.get("original_name") or file_value.get("name") or "файл").strip()
+            filename = f"Лист {index:02d} - {original_name}"
+            disk_file_path = join_disk_path(measurement_path, filename)
+            with default_storage.open(storage_path, "rb") as stored_file:
+                upload_bytes(
+                    settings.oauth_token,
+                    disk_file_path,
+                    stored_file.read(),
+                    str(file_value.get("content_type") or "application/octet-stream"),
+                )
+            uploaded_paths.append(disk_file_path)
+    except (OSError, YandexDiskError) as exc:
+        _save_disk_error(project, str(exc))
+        return {"ok": False, "error": str(exc), "path": measurement_path}
+
+    if project.yandex_disk_error:
+        project.yandex_disk_error = ""
+        project.save(update_fields=["yandex_disk_error", "updated_at"])
+    return {
+        "ok": True,
+        "path": measurement_path,
+        "web_url": yandex_disk_web_url(measurement_path),
+        "files": uploaded_paths,
+    }
 
 
 def render_measurement_room_svg(room, sheet_number=1):

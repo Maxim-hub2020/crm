@@ -745,6 +745,47 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
             self.assertTrue(os.path.exists(os.path.join(media_root, stored_value[0]["path"])))
             self.assertTrue(os.path.exists(os.path.join(media_root, stored_value[1]["path"])))
 
+    @patch("crm_app.yandex_disk.upload_bytes")
+    @patch("crm_app.yandex_disk.create_folder")
+    def test_measurement_custom_field_files_are_synced_to_project_yandex_disk(self, create_folder_mock, upload_bytes_mock):
+        client = self.auth_client_for(self.manager)
+        YandexDiskSettings.objects.update_or_create(
+            workspace=self.manager.workspace,
+            defaults={"enabled": True, "oauth_token": "test-token"},
+        )
+        self.manager_project.yandex_disk_path = "disk:/CRM/Проекты/№0001 · Душевая"
+        self.manager_project.yandex_disk_web_url = "https://disk.yandex.ru/client/disk/CRM/Проекты/project"
+        self.manager_project.save(update_fields=["yandex_disk_path", "yandex_disk_web_url", "updated_at"])
+        custom_field = ProjectCustomField.objects.create(
+            workspace=self.manager.workspace,
+            name="Замер",
+            field_type=ProjectCustomField.FieldType.FILE,
+            sort_order=20,
+        )
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            first_upload = SimpleUploadedFile("page-1.jpg", b"first-page", content_type="image/jpeg")
+            second_upload = SimpleUploadedFile("page-2.jpg", b"second-page", content_type="image/jpeg")
+            response = client.post(
+                f"/api/projects/{self.manager_project.id}/custom-field-files/",
+                {"field_id": str(custom_field.id), "files": [first_upload, second_upload]},
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        measurement_path = "disk:/CRM/Проекты/№0001 · Душевая/Замер"
+        create_folder_mock.assert_called_once_with("test-token", measurement_path)
+        self.assertEqual(
+            [call.args[1] for call in upload_bytes_mock.call_args_list],
+            [
+                f"{measurement_path}/Лист 01 - page-1.jpg",
+                f"{measurement_path}/Лист 02 - page-2.jpg",
+            ],
+        )
+        self.assertEqual(upload_bytes_mock.call_args_list[0].args[2], b"first-page")
+        self.assertEqual(response.data["yandex_disk"]["path"], measurement_path)
+        self.assertEqual(len(response.data["yandex_disk"]["files"]), 2)
+
     def test_project_promo_code_debits_referrer_without_crediting_project_client(self):
         api_client = self.auth_client_for(self.manager)
         referrer = Client.objects.create(

@@ -102,6 +102,7 @@ from .yandex_disk import (
     is_archive_project_status,
     list_disk_folders,
     sync_measurement_drawings_to_yandex,
+    sync_project_measurement_files_to_yandex,
     yandex_disk_oauth_configured,
     yandex_disk_redirect_uri,
 )
@@ -1178,12 +1179,19 @@ class ProjectViewSet(viewsets.ModelViewSet):
         custom_fields[str(field.id)] = existing_files + file_values
         project.custom_fields = custom_fields
         project.save(update_fields=["custom_fields", "updated_at"])
+        yandex_disk_result = sync_project_measurement_files_to_yandex(
+            project,
+            field,
+            custom_fields[str(field.id)],
+            actor=request.user,
+        )
 
         return Response(
             {
                 "field_id": str(field.id),
                 "value": custom_fields[str(field.id)],
                 "uploaded": file_values,
+                "yandex_disk": yandex_disk_result,
                 "project": self.get_serializer(project).data,
             }
         )
