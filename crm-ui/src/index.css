@@ -129,3 +129,14 @@ input[type="number"]::-webkit-inner-spin-button {
     font-size: 16px !important;
   }
 }
+/* Keep a usable drawing area beside the inspector on a landscape phone. */
+@media (max-height: 500px) and (pointer: coarse) {
+  .measurement-editor.fixed .measurement-header { padding-top: max(0px, env(safe-area-inset-top)); padding-bottom: 0; }
+  .measurement-editor.fixed .measurement-toolbar { padding-top: 2px; padding-bottom: 2px; }
+  .measurement-editor.fixed .measurement-hint { display: none; }
+  .measurement-editor.fixed .measurement-workspace { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .measurement-editor.fixed .measurement-workspace:has(.measurement-inspector) { grid-template-columns: minmax(0, 1fr) 280px; gap: 4px; }
+  .measurement-editor.fixed .measurement-workspace > svg { grid-column: 1; grid-row: 1; height: 100%; }
+  .measurement-editor.fixed .measurement-inspector { grid-column: 2; grid-row: 1; max-height: 100%; margin-top: 0; }
+  .measurement-editor.fixed .measurement-zoom { position: absolute; top: 4px; left: 4px; z-index: 10; padding: 0; }
+}

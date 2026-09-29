@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowDown,
   ArrowUp,
@@ -130,6 +131,13 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
   const [moreOpen, setMoreOpen] = useState(false);
   const [contextEditorOpen, setContextEditorOpen] = useState(false);
   const [magnifier, setMagnifier] = useState(null);
+  const [mobile, setMobile] = useState(() => window.matchMedia("(max-width: 767px), (pointer: coarse)").matches);
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 767px), (pointer: coarse)");
+    const update = () => setMobile(query.matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
   const sectionRef = useRef(null);
   const svgRef = useRef(null);
   const dragRef = useRef(null);
@@ -145,14 +153,14 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
   const selected = diagram.elements.find((element) => element.id === selectedId) || null;
 
   useEffect(() => {
-    if (selected?.type !== "dimension" || autoFocusDimensionIdRef.current !== selectedId) return;
+    if (mobile || selected?.type !== "dimension" || autoFocusDimensionIdRef.current !== selectedId) return;
     const frame = requestAnimationFrame(() => {
       dimensionInputRef.current?.focus();
       dimensionInputRef.current?.select();
       autoFocusDimensionIdRef.current = null;
     });
     return () => cancelAnimationFrame(frame);
-  }, [selectedId, selected?.type]);
+  }, [selectedId, selected?.type, mobile]);
 
   useEffect(() => {
     setContextEditorOpen(false);
@@ -164,6 +172,23 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = previousOverflow; };
   }, [drawingFullscreen]);
+
+  useEffect(() => {
+    if (!drawingFullscreen || !mobile || !window.visualViewport) return;
+    const visual = window.visualViewport;
+    const resize = () => {
+      if (!sectionRef.current) return;
+      sectionRef.current.style.height = `${visual.height}px`;
+      sectionRef.current.style.top = `${visual.offsetTop}px`;
+    };
+    resize();
+    visual.addEventListener("resize", resize);
+    visual.addEventListener("scroll", resize);
+    return () => {
+      visual.removeEventListener("resize", resize);
+      visual.removeEventListener("scroll", resize);
+    };
+  }, [drawingFullscreen, mobile]);
 
   useEffect(() => {
     function handleFullscreenChange() {
@@ -187,6 +212,7 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
 
   async function openDrawingFullscreen() {
     setDrawingFullscreen(true);
+    if (mobile) return;
     try {
       await sectionRef.current?.requestFullscreen?.({ navigationUI: "hide" });
       await globalThis.screen?.orientation?.lock?.("landscape");
@@ -361,6 +387,9 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
 
   function handleLineClick(event) {
     event.stopPropagation();
+    activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    svgRef.current?.setPointerCapture?.(event.pointerId);
+    if (activePointersRef.current.size >= 2 && beginPinch()) return;
     const rawPoint = fromPointer(event);
     if (drawRef.current) {
       if (event.pointerType === "touch") {
@@ -387,6 +416,7 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
 
   function handleCanvasPointerDown(event) {
     activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    svgRef.current?.setPointerCapture?.(event.pointerId);
     if (activePointersRef.current.size >= 2 && beginPinch()) return;
     if (tool === "pan") {
       beginPan(event);
@@ -400,6 +430,7 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     }
     if (tool === "select") {
       setSelectedId(null);
+      if (event.pointerType === "touch") beginPan(event);
       return;
     }
     const template = ELEMENT_TYPES[tool];
@@ -623,9 +654,9 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
   const selectedMenuAbove = selectedAnchor ? ((selectedAnchor.y - viewport.y) / viewport.height) > 0.55 : false;
   const isTouchDevice = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
   const magnifierOnRight = magnifier?.focus.x < viewport.x + viewport.width / 2;
-  return (
-    <section ref={sectionRef} className={`overflow-hidden bg-slate-950 text-white shadow-xl ${drawingFullscreen ? "fixed inset-0 z-[100] flex h-[100dvh] w-screen flex-col rounded-none border-0" : "rounded-[26px] border border-slate-200"}`}>
-      <div className={`shrink-0 border-b border-white/10 bg-slate-900 px-4 sm:px-5 ${drawingFullscreen ? "pb-2 pt-[max(0.5rem,env(safe-area-inset-top))]" : "py-4"}`}>
+  const editor = (
+    <section ref={sectionRef} className={`measurement-editor overflow-hidden bg-slate-950 text-white shadow-xl ${drawingFullscreen ? "fixed inset-0 z-[200] flex h-[100dvh] w-full flex-col rounded-none border-0 pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]" : "rounded-[26px] border border-slate-200"}`}>
+      <div className={`measurement-header shrink-0 border-b border-white/10 bg-slate-900 px-4 sm:px-5 ${drawingFullscreen ? "pb-2 pt-[max(0.5rem,env(safe-area-inset-top))]" : "py-4"}`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 text-sm font-black"><Ruler size={18} className="text-sky-400" />{drawingFullscreen ? "Чертёжный лист" : "Интерактивный замер"}</div>
@@ -649,23 +680,25 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
         </div> : null}
       </div>
 
-      <div className={`flex shrink-0 gap-2 overflow-x-auto border-b border-white/10 bg-slate-900/80 px-3 [scrollbar-width:none] sm:px-5 ${drawingFullscreen ? "py-2" : "py-3 sm:flex-wrap"}`}>
+      {mobile && !drawingFullscreen ? <button type="button" onClick={openDrawingFullscreen} className="mx-3 my-2 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-sky-400 px-3 font-bold text-slate-950"><Expand size={20} />Открыть лист на весь экран</button> : null}
+      <div className={`measurement-toolbar flex shrink-0 gap-2 overflow-x-auto border-b border-white/10 bg-slate-900/80 px-3 [scrollbar-width:none] sm:px-5 ${drawingFullscreen ? "py-2" : "py-3 sm:flex-wrap"}`}>
         {TOOLS.map(({ id, label, icon: Icon }) => (
-          <button key={id} type="button" onClick={() => { setTool(id); setSelectedId(null); setDraftLine(null); drawRef.current = null; }} className={`flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold transition ${tool === id ? "border-sky-400 bg-sky-400 text-slate-950" : "border-white/10 bg-white/5 text-slate-300"}`}><Icon size={15} />{label}</button>
+          <button key={id} type="button" aria-pressed={tool === id} onClick={() => { cancelCanvasInteraction(); setTool(id); setSelectedId(null); }} className={`flex min-h-11 shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold transition ${tool === id ? "border-sky-400 bg-sky-400 text-slate-950" : "border-white/10 bg-white/5 text-slate-300"}`}><Icon size={18} />{label}</button>
         ))}
       </div>
 
       {!drawingFullscreen && tool === "line" ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100"><span className="font-bold">Коснитесь начала линии, затем её конца.</span> Горизонталь, вертикаль и концы других линий примагнитятся автоматически.</div> : null}
       {!drawingFullscreen && (tool === "cut_circle" || tool.startsWith("socket")) ? <div className="bg-sky-400/10 px-4 py-3 text-xs text-sky-100">Коснитесь центра выреза. После добавления укажите точный диаметр и координаты.</div> : null}
 
-      <div className={`relative min-h-0 bg-[#dce8ea] ${drawingFullscreen ? "flex-1 p-1" : "p-2 sm:p-4"}`}>
-        <div className="absolute right-4 top-4 z-10 flex items-center gap-1 rounded-2xl border border-slate-200 bg-white/95 p-1.5 text-slate-900 shadow-lg backdrop-blur sm:right-6 sm:top-6">
+      {mobile ? <div className="measurement-hint flex shrink-0 items-center justify-between gap-2 px-3 py-1 text-xs text-slate-300"><span>{tool === "line" ? (draftLine ? "Укажите конец линии" : "Коснитесь начала линии") : "Два пальца: масштаб и движение"}</span>{draftLine ? <button type="button" onClick={cancelCanvasInteraction} className="min-h-11 px-3 font-bold text-sky-300">Отмена линии</button> : null}</div> : null}
+      <div className={`measurement-workspace relative min-h-0 bg-[#dce8ea] ${drawingFullscreen ? "flex flex-1 flex-col p-1" : "p-2 sm:p-4"}`}>
+        <div className={`measurement-zoom ${mobile ? "flex shrink-0 justify-center" : "absolute right-4 top-4 z-10"} items-center gap-1 rounded-2xl border border-slate-200 bg-white/95 p-1.5 text-slate-900 shadow-lg backdrop-blur`}>
           <button type="button" onClick={() => zoomAt(1 / 1.4)} disabled={zoomPercent <= 100} aria-label="Уменьшить" className="flex h-10 w-10 items-center justify-center rounded-xl transition hover:bg-slate-100 disabled:opacity-30"><ZoomOut size={19} /></button>
           <span className="min-w-12 text-center text-xs font-black tabular-nums">{zoomPercent}%</span>
           <button type="button" onClick={() => zoomAt(1.4)} disabled={zoomPercent >= 600} aria-label="Увеличить" className="flex h-10 w-10 items-center justify-center rounded-xl transition hover:bg-slate-100 disabled:opacity-30"><ZoomIn size={19} /></button>
           <button type="button" onClick={() => setViewport(MEASUREMENT_VIEWPORT)} disabled={zoomPercent <= 100} aria-label="Показать весь лист" className="flex h-10 w-10 items-center justify-center rounded-xl transition hover:bg-slate-100 disabled:opacity-30"><Maximize2 size={18} /></button>
         </div>
-        <svg ref={svgRef} viewBox={`${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}`} role="img" aria-label={`Схема: ${VIEW_LABELS[view]}`} className={`block w-full touch-none bg-[#f7f4eb] shadow-inner ${drawingFullscreen ? "h-full rounded-lg" : "aspect-[10/7] rounded-2xl"} ${tool === "pan" ? "cursor-grab active:cursor-grabbing" : ""}`} onPointerDown={handleCanvasPointerDown} onPointerMove={handlePointerMove} onPointerUp={endPointer} onPointerCancel={endPointer} onWheel={(event) => { event.preventDefault(); zoomAt(event.deltaY < 0 ? 1.2 : 1 / 1.2, { x: event.clientX, y: event.clientY }); }}>
+        <svg ref={svgRef} viewBox={`${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}`} role="img" aria-label={`Схема: ${VIEW_LABELS[view]}`} className={`block w-full touch-none bg-[#f7f4eb] shadow-inner ${drawingFullscreen ? "min-h-0 flex-1 rounded-lg" : "aspect-[10/7] rounded-2xl"} ${tool === "pan" ? "cursor-grab active:cursor-grabbing" : ""}`} onPointerDown={handleCanvasPointerDown} onPointerMove={handlePointerMove} onPointerUp={endPointer} onPointerCancel={endPointer} onWheel={(event) => { event.preventDefault(); zoomAt(event.deltaY < 0 ? 1.2 : 1 / 1.2, { x: event.clientX, y: event.clientY }); }}>
           <defs>
             <pattern id="minor-grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#cbd5d1" strokeWidth="1" /></pattern>
             <pattern id="major-grid" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#minor-grid)" /><path d="M 100 0 L 0 0 0 100" fill="none" stroke="#9fb3b4" strokeWidth="1.5" /></pattern>
@@ -678,7 +711,7 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
           {wallPoints.map((point, index) => <circle key={`${point.x}-${point.y}-${index}`} cx={point.x} cy={point.y} r="8" fill="#38bdf8" stroke="#0f172a" strokeWidth="3" pointerEvents="none" />)}
 
           {visibleElements.map((element) => element.type === "dimension"
-            ? <MeasurementLine key={element.id} element={element} selected={element.id === selectedId} toSvg={toSvg} onPointerDown={(event) => startDrag(event, element)} onEndpointPointerDown={(event, endpoint) => startEndpointDrag(event, element, endpoint)} inputRef={dimensionInputRef} onValueChange={(nextValue) => updateElement(element.id, { value: optionalPositiveNumber(nextValue) })} />
+            ? <MeasurementLine key={element.id} element={element} selected={element.id === selectedId} toSvg={toSvg} onPointerDown={(event) => startDrag(event, element)} onEndpointPointerDown={(event, endpoint) => startEndpointDrag(event, element, endpoint)} mobile={mobile} inputRef={dimensionInputRef} onValueChange={(nextValue) => updateElement(element.id, { value: optionalPositiveNumber(nextValue) })} />
             : <DiagramElement key={element.id} element={element} selected={element.id === selectedId} toSvg={toSvg} wallWidth={wallWidth} wallHeight={wallHeight} onPointerDown={(event) => startDrag(event, element)} />)}
           {orthogonalGuide ? (() => {
             const start = toSvg(orthogonalGuide.start);
@@ -705,8 +738,10 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
           </svg>
           <div className={`absolute inset-x-0 bottom-0 py-1.5 text-center text-[10px] font-black uppercase tracking-wide text-white ${magnifier.snapped ? "bg-emerald-600" : "bg-sky-600"}`}>{magnifier.snapped ? "Состыковано" : "Точка под пальцем"}</div>
         </div> : null}
-        {selected && selectedMenuPosition ? <div style={selectedMenuPosition} className={`absolute z-20 -translate-x-1/2 ${selectedMenuAbove ? "-translate-y-full -mt-5" : "translate-y-5"}`} onPointerDown={(event) => event.stopPropagation()}>
-          <div className="flex items-center gap-1 rounded-2xl border border-slate-200 bg-white/95 p-1.5 text-slate-900 shadow-xl backdrop-blur">
+        {selected && selectedMenuPosition ? <div style={mobile ? undefined : selectedMenuPosition} className={mobile ? "measurement-inspector z-20 mt-1 max-h-[35dvh] shrink-0 overflow-y-auto overscroll-contain" : `absolute z-20 -translate-x-1/2 ${selectedMenuAbove ? "-translate-y-full -mt-5" : "translate-y-5"}`} onPointerDown={(event) => event.stopPropagation()}>
+          <div className="flex flex-wrap items-center gap-1 rounded-2xl border border-slate-200 bg-white/95 p-1.5 text-slate-900 shadow-xl backdrop-blur">
+            {mobile && selected.type === "dimension" ? <label className="flex min-w-0 flex-1 items-center gap-2 px-2 text-sm font-bold">Размер, мм<input type="text" inputMode="decimal" aria-label="Размер линии в миллиметрах" value={selected.value ?? ""} onChange={(event) => updateElement(selected.id, { value: optionalPositiveNumber(event.target.value) })} className="h-11 w-28 min-w-0 rounded-xl border border-sky-400 px-2 text-base text-slate-900" placeholder="Введите" /></label> : null}
+            {mobile ? <button type="button" onClick={() => { setSelectedId(null); document.activeElement?.blur?.(); }} className="min-h-11 rounded-xl px-3 font-bold text-sky-700">Готово</button> : null}
             {selected.type !== "dimension" ? <span className="max-w-32 truncate px-2 text-xs font-black">{selected.label}</span> : null}
             {(selected.type === "cut_circle" || selected.type === "cut_rect" || selected.type?.startsWith("socket")) ? <>
               <button type="button" onClick={() => updateElement(selected.id, { horizontal_reference: selected.horizontal_reference === "right" ? "left" : "right" })} className="rounded-xl px-2 py-2 text-[11px] font-bold hover:bg-slate-100">{selected.horizontal_reference === "right" ? "Справа" : "Слева"}</button>
@@ -715,7 +750,7 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
             {selected.type !== "dimension" ? <button type="button" onClick={() => setContextEditorOpen((open) => !open)} aria-label="Параметры выбранного элемента" className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200"><SlidersHorizontal size={16} /></button> : null}
             <button type="button" onClick={removeSelected} aria-label="Удалить выбранное" className="flex h-9 w-9 items-center justify-center rounded-xl bg-red-50 text-red-600 hover:bg-red-100"><Trash2 size={16} /></button>
           </div>
-          {contextEditorOpen && selected.type !== "dimension" ? <div className="mt-2 w-72 space-y-2 rounded-2xl border border-slate-200 bg-white/95 p-3 text-slate-900 shadow-xl backdrop-blur">
+          {contextEditorOpen && selected.type !== "dimension" ? <div className={`${mobile ? "w-full" : "w-72"} mt-2 space-y-2 rounded-2xl border border-slate-200 bg-white/95 p-3 text-slate-900 shadow-xl backdrop-blur`}>
             <ContextInput label="Название" value={selected.label} onChange={(nextValue) => updateElement(selected.id, { label: nextValue })} />
             <div className="grid grid-cols-2 gap-2">
               {(selected.type === "cut_circle" || selected.type?.startsWith("socket"))
@@ -742,6 +777,7 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
 
     </section>
   );
+  return drawingFullscreen ? createPortal(editor, document.body) : editor;
 }
 
 function DiagramElement({ element, selected, toSvg, wallWidth, wallHeight, onPointerDown }) {
@@ -797,7 +833,7 @@ function CutoutReferenceDimensions({ element, center }) {
   </g>;
 }
 
-function MeasurementLine({ element, selected, toSvg, onPointerDown, onEndpointPointerDown, inputRef, onValueChange, draft = false }) {
+function MeasurementLine({ element, selected, toSvg, onPointerDown, onEndpointPointerDown, inputRef, onValueChange, mobile = false, draft = false }) {
   const start = toSvg({ x: numberValue(element.x1), y: numberValue(element.y1) });
   const end = toSvg({ x: numberValue(element.x2), y: numberValue(element.y2) });
   const dx = end.x - start.x;
@@ -818,6 +854,7 @@ function MeasurementLine({ element, selected, toSvg, onPointerDown, onEndpointPo
   const dimensionLabel = dimensionValue > 0 ? `${Math.round(dimensionValue)} мм` : "Введите размер";
   const labelWidth = dimensionValue > 0 ? 84 : 116;
   return <g onPointerDown={onPointerDown} className={draft ? undefined : "cursor-grab active:cursor-grabbing"}>
+    {!draft ? <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="transparent" strokeWidth={mobile ? 28 : 14} vectorEffect="non-scaling-stroke" /> : null}
     <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={color} strokeWidth={selected ? 6 : 4} strokeLinecap="round" />
     <line x1={start.x} y1={start.y} x2={dimensionStart.x} y2={dimensionStart.y} stroke="#64748b" strokeWidth="2" />
     <line x1={end.x} y1={end.y} x2={dimensionEnd.x} y2={dimensionEnd.y} stroke="#64748b" strokeWidth="2" />
@@ -826,7 +863,7 @@ function MeasurementLine({ element, selected, toSvg, onPointerDown, onEndpointPo
     <line x1={dimensionEnd.x - tickX} y1={dimensionEnd.y - tickY} x2={dimensionEnd.x + tickX} y2={dimensionEnd.y + tickY} stroke="#475569" strokeWidth="2.5" />
     <g transform={`rotate(${readableAngle} ${labelX} ${labelY})`}>
       <rect x={labelX - labelWidth / 2} y={labelY - 15} width={labelWidth} height="22" rx="7" fill="#fffdf6" stroke={selected ? "#38bdf8" : "#94a3b8"} />
-      {selected && !draft ? <foreignObject x={labelX - 58} y={labelY - 19} width="116" height="32" transform={`rotate(${-readableAngle} ${labelX} ${labelY})`}>
+      {selected && !draft && !mobile ? <foreignObject x={labelX - 58} y={labelY - 19} width="116" height="32" transform={`rotate(${-readableAngle} ${labelX} ${labelY})`}>
         <input ref={inputRef} type="number" inputMode="decimal" value={element.value ?? ""} placeholder="Введите размер" aria-label="Размер линии в миллиметрах" onPointerDown={(event) => event.stopPropagation()} onChange={(event) => onValueChange?.(event.target.value)} className="h-8 w-full rounded-lg border-2 border-sky-400 bg-white px-2 text-center text-sm font-black text-slate-900 outline-none" />
       </foreignObject> : <text x={labelX} y={labelY + 1} textAnchor="middle" fontSize="14" fontWeight="900" fill={color}>{dimensionLabel}</text>}
     </g>
@@ -851,11 +888,11 @@ function MountSymbol({ center, width, height, stroke }) {
 }
 
 function ContextInput({ label, value, onChange, type = "text" }) {
-  return <label className={type === "text" ? "block" : "block min-w-0"}><span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-500">{label}</span><input type={type} inputMode={type === "number" ? "decimal" : undefined} value={value ?? ""} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-900 outline-none focus:border-sky-400" /></label>;
+  return <label className={type === "text" ? "block" : "block min-w-0"}><span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-500">{label}</span><input type={type} inputMode={type === "number" ? "decimal" : undefined} value={value ?? ""} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-base font-bold text-slate-900 outline-none focus:border-sky-400" /></label>;
 }
 
 function IconButton({ label, children, danger = false, ...props }) {
-  return <button type="button" title={label} aria-label={label} className={`rounded-full p-2 transition disabled:opacity-30 ${danger ? "bg-red-500/10 text-red-300 hover:bg-red-500/20" : "bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"}`} {...props}>{children}</button>;
+  return <button type="button" title={label} aria-label={label} className={`inline-flex h-11 w-11 items-center justify-center rounded-full p-2 transition disabled:opacity-30 ${danger ? "bg-red-500/10 text-red-300 hover:bg-red-500/20" : "bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"}`} {...props}>{children}</button>;
 }
 
 function VoiceSpecification({ view, items, onChange }) {

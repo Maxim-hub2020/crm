@@ -73,6 +73,7 @@ import {
   Select,
 } from "../components/ui.jsx";
 import ClientAddressFields from "../components/ClientAddressFields.jsx";
+const MeasurementSheet = React.lazy(() => import("../components/MeasurementSheet.jsx"));
 import { maxNativeUrl, openAppLink } from "../utils/appLinks.js";
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits, phoneSearchDigits } from "../utils/phone.js";
 
@@ -4048,6 +4049,7 @@ export default function Projects() {
             ) : null}
 
             <div className="no-scrollbar flex gap-2 overflow-x-auto border-b border-slate-200">
+              <button type="button" onClick={() => setDetailTab("measurement")} className={`shrink-0 border-b-2 px-4 py-3 text-sm font-bold ${detailTab === "measurement" ? "border-blue-600 text-blue-600" : "border-transparent text-slate-400"}`}>Замер</button>
               <button
                 type="button"
                 className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-bold transition ${
@@ -4098,7 +4100,9 @@ export default function Projects() {
               </button>
             </div>
 
-            {detailTab === "comments" ? (
+            {detailTab === "measurement" ? (
+              <React.Suspense fallback={<div className="p-4 text-slate-500">Загружаем замер...</div>}><MeasurementSheet project={activeProject} /></React.Suspense>
+            ) : detailTab === "comments" ? (
               <Card className="overflow-hidden border border-slate-200 shadow-none ring-0">
                 <CardBody className="space-y-4 p-4 sm:p-5">
                   <div className="space-y-3">
