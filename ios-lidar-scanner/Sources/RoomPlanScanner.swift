@@ -35,6 +35,7 @@ struct RoomPlanScanner: UIViewRepresentable {
         uiView.captureSession.stop()
     }
 
+    @objc(CEHRoomCaptureCoordinator)
     final class Coordinator: NSObject, RoomCaptureViewDelegate, RoomCaptureSessionDelegate {
         let onFinished: (CapturedRoom) -> Void
         let onFailed: (Error) -> Void
@@ -43,6 +44,11 @@ struct RoomPlanScanner: UIViewRepresentable {
             self.onFinished = onFinished
             self.onFailed = onFailed
         }
+
+        // Runtime callbacks cannot be restored from a UIKit archive.
+        required init?(coder: NSCoder) { return nil }
+
+        func encode(with coder: NSCoder) {}
 
         func captureView(shouldPresent roomDataForProcessing: CapturedRoomData, error: Error?) -> Bool {
             if let error { onFailed(error); return false }
@@ -73,4 +79,3 @@ enum RoomPlanConverter {
         ], confidence: 0.92)
     }
 }
-
