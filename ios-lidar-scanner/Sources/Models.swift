@@ -18,7 +18,8 @@ struct ScanRequest: Equatable {
               UUID(uuidString: sessionID) != nil,
               let uploadURL = URL(string: values["upload_url"] ?? ""),
               CRMOrigin.allows(uploadURL), uploadURL.query == nil, uploadURL.fragment == nil,
-              uploadURL.path == "/api/measurement-scan-sessions/\(sessionID)/complete/" else { return nil }
+              URLComponents(url: uploadURL, resolvingAgainstBaseURL: false)?.percentEncodedPath
+                == "/api/measurement-scan-sessions/\(sessionID)/complete/" else { return nil }
         self.sessionID = sessionID
         self.token = token
         self.uploadURL = uploadURL

@@ -28,6 +28,12 @@ final class ScanRequestTests: XCTestCase {
         }
     }
 
+    func testRejectsDifferentSessionAndQuery() {
+        let base = "https://cehcrm.ru/api/measurement-scan-sessions/"
+        XCTAssertNil(ScanRequest(url: link(upload: base + "aaaaaaaa-89ab-cdef-0123-456789abcdef/complete/")))
+        XCTAssertNil(ScanRequest(url: link(upload: base + session + "/complete/?redirect=other")))
+    }
+
     func testResultRoundTrip() throws {
         let element = ScannedElement(type: "socket_single", x: 0.5, y: 0.5, confidence: 0.5, label: "Test")
         let data = try JSONEncoder().encode(element)
