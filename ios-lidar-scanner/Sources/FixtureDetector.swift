@@ -5,15 +5,7 @@ enum FixtureDetector {
     static func detect(in image: UIImage) async throws -> [ScannedElement] {
         guard let cgImage = image.cgImage else { return [] }
         return try await withCheckedThrowingContinuation { continuation in
-            let rectangles = VNDetectRectanglesRequest { request, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                let observations = (request.results as? [VNRectangleObservation]) ?? []
-                let elements = observations.compactMap(classifyRectangle)
-                continuation.resume(returning: elements)
-            }
+            let rectangles = VNDetectRectanglesRequest()
             rectangles.maximumObservations = 24
             rectangles.minimumConfidence = 0.45
             rectangles.minimumSize = 0.025
@@ -21,7 +13,11 @@ enum FixtureDetector {
             rectangles.maximumAspectRatio = 1.0
             let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up)
             DispatchQueue.global(qos: .userInitiated).async {
-                do { try handler.perform([rectangles]) }
+                do {
+                    try handler.perform([rectangles])
+                    let elements = (rectangles.results ?? []).compactMap(classifyRectangle)
+                    continuation.resume(returning: elements)
+                }
                 catch { continuation.resume(throwing: error) }
             }
         }
@@ -60,4 +56,3 @@ enum FixtureDetector {
         )
     }
 }
-

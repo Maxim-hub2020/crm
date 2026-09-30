@@ -1,0 +1,36 @@
+import XCTest
+@testable import CEHCRM
+
+final class ScanRequestTests: XCTestCase {
+    let session = "01234567-89ab-cdef-0123-456789abcdef"
+
+    private func link(upload: String? = nil, extra: [URLQueryItem] = []) -> URL {
+        var url = URLComponents(string: "cehcrm-lidar://scan")!
+        url.queryItems = [
+            URLQueryItem(name: "session", value: session),
+            URLQueryItem(name: "token", value: "test-token"),
+            URLQueryItem(name: "upload_url", value: upload ?? "https://cehcrm.ru/api/measurement-scan-sessions/\(session)/complete/")
+        ] + extra
+        return url.url!
+    }
+
+    func testValidRequest() {
+        XCTAssertEqual(ScanRequest(url: link())?.sessionID, session)
+    }
+
+    func testRejectsDuplicateKeys() {
+        XCTAssertNil(ScanRequest(url: link(extra: [URLQueryItem(name: "token", value: "duplicate")])))
+    }
+
+    func testRejectsUntrustedDestinations() {
+        for url in ["https://example.com/upload", "http://cehcrm.ru/upload", "https://cehcrm.ru:8443/upload", "https://cehcrm.ru/api/other/"] {
+            XCTAssertNil(ScanRequest(url: link(upload: url)))
+        }
+    }
+
+    func testResultRoundTrip() throws {
+        let element = ScannedElement(type: "socket_single", x: 0.5, y: 0.5, confidence: 0.5, label: "Test")
+        let data = try JSONEncoder().encode(element)
+        XCTAssertEqual(try JSONDecoder().decode(ScannedElement.self, from: data).type, "socket_single")
+    }
+}

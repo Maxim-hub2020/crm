@@ -322,7 +322,7 @@ export default function MeasurementSheet({ project }) {
 
   async function startLidarScan() {
     if (!activeRoom) return;
-    if (!lidarScannerDistributed) {
+    if (!lidarScannerDistributed && !/CEHCRM-iOS\//.test(navigator.userAgent)) {
       setLidarSetupOpen(true);
       return;
     }

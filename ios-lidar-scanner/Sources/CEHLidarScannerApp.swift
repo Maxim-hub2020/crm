@@ -1,6 +1,7 @@
 import RoomPlan
 import SwiftUI
 import UIKit
+import AVFoundation
 
 @main
 struct CEHLidarScannerApp: App {
@@ -8,27 +9,54 @@ struct CEHLidarScannerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ScannerRootView(request: request)
+            CRMAppView(request: $request)
                 .onOpenURL { request = ScanRequest(url: $0) }
         }
     }
 }
 
-struct ScannerRootView: View {
-    let request: ScanRequest?
+struct CRMAppView: View {
+    @Binding var request: ScanRequest?
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var cameraAllowed = false
+    @State private var permissionChecked = false
 
     var body: some View {
-        NavigationStack {
-            if let request {
-                ScannerFlowView(request: request)
-            } else {
-                ContentUnavailableView(
-                    "Откройте сканер из CRM",
-                    systemImage: "viewfinder",
-                    description: Text("В карточке проекта выберите комнату и нажмите «Сканировать стену LiDAR».")
-                )
+        CRMWebView { request = $0 }
+            .sheet(isPresented: Binding(get: { request != nil }, set: { if !$0 { request = nil } })) {
+                NavigationStack {
+                    Group {
+                        if !RoomCaptureSession.isSupported {
+                            ContentUnavailableView("LiDAR недоступен", systemImage: "viewfinder", description: Text("Для сканирования нужен iPhone с LiDAR. Ручной замер доступен в CRM."))
+                        } else if cameraAllowed, let request {
+                            ScannerFlowView(request: request)
+                        } else if permissionChecked {
+                            VStack {
+                                Text("Разрешите доступ к камере в настройках iPhone.")
+                                Button("Открыть настройки") {
+                                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                                }
+                            }.padding()
+                        } else { ProgressView() }
+                    }
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Вернуться в CRM") { request = nil }
+                        }
+                    }
+                    .task {
+                        guard RoomCaptureSession.isSupported else { return }
+                        permissionChecked = false
+                        cameraAllowed = await AVCaptureDevice.requestAccess(for: .video)
+                        permissionChecked = true
+                    }
+                    .onChange(of: scenePhase) { _, phase in
+                        if phase == .active {
+                            cameraAllowed = AVCaptureDevice.authorizationStatus(for: .video) == .authorized
+                        }
+                    }
+                }
             }
-        }
     }
 }
 

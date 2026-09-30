@@ -10,10 +10,15 @@ struct ScanRequest: Equatable {
         guard url.scheme == "cehcrm-lidar",
               url.host == "scan",
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
-        let values = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        let items = components.queryItems ?? []
+        guard Set(items.map(\.name)).count == items.count else { return nil }
+        let values = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
         guard let sessionID = values["session"], !sessionID.isEmpty,
               let token = values["token"], !token.isEmpty,
-              let uploadURL = URL(string: values["upload_url"] ?? "") else { return nil }
+              UUID(uuidString: sessionID) != nil,
+              let uploadURL = URL(string: values["upload_url"] ?? ""),
+              CRMOrigin.allows(uploadURL), uploadURL.query == nil, uploadURL.fragment == nil,
+              uploadURL.path == "/api/measurement-scan-sessions/\(sessionID)/complete/" else { return nil }
         self.sessionID = sessionID
         self.token = token
         self.uploadURL = uploadURL
@@ -32,7 +37,7 @@ struct ScannedWall: Codable {
 }
 
 struct ScannedElement: Codable, Identifiable {
-    let id: UUID
+    let id = UUID()
     let type: String
     let x: Double
     let y: Double
@@ -47,7 +52,6 @@ struct ScannedElement: Codable, Identifiable {
     }
 
     init(type: String, x: Double, y: Double, width: Double? = nil, height: Double? = nil, diameter: Double? = nil, confidence: Double, label: String) {
-        self.id = UUID()
         self.type = type
         self.x = x
         self.y = y
@@ -68,4 +72,3 @@ struct ScanResult: Codable {
 struct ScanUploadEnvelope: Codable {
     let result: ScanResult
 }
-

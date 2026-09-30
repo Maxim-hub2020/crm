@@ -26,6 +26,11 @@ dist/
 *.local
 
 # OS
+ios-lidar-scanner/build/
+ios-lidar-scanner/*.xcodeproj/
+*.xcarchive/
+*.ipa
+*.xcresult/
 .DS_Store
 Thumbs.db
 
