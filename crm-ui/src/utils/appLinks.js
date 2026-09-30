@@ -1,3 +1,5 @@
+import { sendNativeAction } from "./nativeApp.js";
+
 const ANDROID_USER_AGENT = /Android/i;
 
 export function buildAndroidIntentUrl(webUrl, packageName) {
@@ -9,6 +11,7 @@ export function buildAndroidIntentUrl(webUrl, packageName) {
 
 export function openAppLink({ webUrl, nativeUrl = "", androidPackage = "" }) {
   if (!webUrl || typeof window === "undefined") return;
+  if (sendNativeAction("openExternal", webUrl)) return;
 
   if (androidPackage && ANDROID_USER_AGENT.test(window.navigator.userAgent)) {
     window.location.assign(buildAndroidIntentUrl(webUrl, androidPackage));

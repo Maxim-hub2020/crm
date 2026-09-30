@@ -3915,7 +3915,7 @@ export default function Projects() {
                 ) : null}
               </div>
 
-              <div className={`grid gap-4 ${customFields.length ? "xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.9fr)]" : ""}`}>
+              <div className={`grid min-w-0 grid-cols-1 gap-4 ${customFields.length ? "xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]" : ""}`}>
                 <ProjectCustomFieldsGrid
                   fields={customFields}
                   values={detailForm.custom_fields}
@@ -3934,9 +3934,9 @@ export default function Projects() {
                   }
                 />
 
-                <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4">
-                  <div className="flex items-center gap-2 text-sm font-black text-slate-900">
-                    <FolderOpen size={17} className="text-blue-600" />
+                <div data-testid="project-documents" className="min-w-0 max-w-full rounded-[24px] border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
+                  <div className="flex min-w-0 items-center gap-2 text-sm font-black text-slate-900">
+                    <FolderOpen size={17} className="shrink-0 text-blue-600" />
                     Яндекс.Диск и документы
                   </div>
                   <div className="mt-1 flex items-center gap-3">
@@ -3955,11 +3955,11 @@ export default function Projects() {
                     ) : null}
                   </div>
                   {activeProject.yandex_disk_error ? (
-                    <div className="mt-3 rounded-2xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                    <div className="mt-3 break-words rounded-2xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 [overflow-wrap:anywhere]">
                       {activeProject.yandex_disk_error}
                     </div>
                   ) : null}
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="mt-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 [&>button]:min-w-0 [&>button]:max-w-full [&>button]:whitespace-normal [&>button]:break-words [&>button]:[overflow-wrap:anywhere] [&>button>svg]:shrink-0">
                     {activeProject.calculator_quote_info?.url ? (
                       <Button
                         type="button"

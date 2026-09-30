@@ -57,6 +57,8 @@ function scanStorageKey(projectId) {
   return `crm.measurement-lidar-scan.v1.${projectId}`;
 }
 
+import { nativeAppAvailable, sendNativeAction } from "../utils/nativeApp.js";
+
 const lidarScannerDistributed = import.meta.env.VITE_LIDAR_SCANNER_DISTRIBUTED === "true";
 const lidarScannerInstallUrl = String(import.meta.env.VITE_LIDAR_SCANNER_INSTALL_URL || "").trim();
 
@@ -322,7 +324,7 @@ export default function MeasurementSheet({ project }) {
 
   async function startLidarScan() {
     if (!activeRoom) return;
-    if (!lidarScannerDistributed && !/CEHCRM-iOS\//.test(navigator.userAgent)) {
+    if (!lidarScannerDistributed && !nativeAppAvailable() && !/CEHCRM-iOS\//.test(navigator.userAgent)) {
       setLidarSetupOpen(true);
       return;
     }
@@ -335,7 +337,7 @@ export default function MeasurementSheet({ project }) {
       });
       localStorage.setItem(scanStorageKey(project.id), JSON.stringify(created));
       setScanSession(created);
-      window.location.assign(created.launch_url);
+      if (!sendNativeAction("scan", created.launch_url)) window.location.assign(created.launch_url);
     } catch (requestError) {
       setScanMessage(extractApiErrorMessage(requestError, "Не удалось запустить LiDAR-сканер."));
     }
