@@ -1,4 +1,5 @@
 import XCTest
+import WebKit
 @testable import CEHCRM
 
 final class ScanRequestTests: XCTestCase {
@@ -38,5 +39,19 @@ final class ScanRequestTests: XCTestCase {
         let element = ScannedElement(type: "socket_single", x: 0.5, y: 0.5, confidence: 0.5, label: "Test")
         let data = try JSONEncoder().encode(element)
         XCTAssertEqual(try JSONDecoder().decode(ScannedElement.self, from: data).type, "socket_single")
+    }
+}
+
+@MainActor
+final class NativeBridgeTests: XCTestCase {
+    func testMobileConfigurationAnnouncesNativeBridgeBeforePageScripts() {
+        let configuration = CRMWebView.configuration()
+        XCTAssertEqual(configuration.defaultWebpagePreferences.preferredContentMode, .mobile)
+        XCTAssertTrue(configuration.applicationNameForUserAgent?.contains("CEHCRM-iOS/") == true)
+        let script = configuration.userContentController.userScripts.first
+        XCTAssertEqual(script?.injectionTime, .atDocumentStart)
+        XCTAssertEqual(script?.isForMainFrameOnly, true)
+        XCTAssertTrue(script?.source.contains("CEHCRMNative") == true)
+        XCTAssertTrue(script?.source.contains("location.origin !== info.origin") == true)
     }
 }

@@ -81,7 +81,7 @@ export function Modal({
     <div className={`crm-modal-overlay fixed inset-0 z-50 flex justify-center overflow-y-auto px-2 sm:px-4 ${overlayClassName} ${positionClassName}`}>
       <div className="absolute inset-0" onClick={onClose} />
       <div
-        className={`crm-modal-panel relative z-10 flex w-full flex-col overflow-hidden rounded-3xl bg-white shadow-2xl sm:rounded-[32px] ${widthClassName}`}
+        className={`crm-modal-panel relative z-10 flex min-w-0 w-full flex-col overflow-hidden rounded-3xl bg-white shadow-2xl sm:rounded-[32px] ${widthClassName}`}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-2.5 sm:px-7 sm:py-3.5">
           {headerContent || (
@@ -95,7 +95,7 @@ export function Modal({
             <X size={18} />
           </button>
         </div>
-        <div className={`flex-1 overflow-y-auto px-4 py-3 sm:px-7 sm:py-4 ${bodyClassName}`}>{children}</div>
+        <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-3 sm:px-7 sm:py-4 ${bodyClassName}`}>{children}</div>
       </div>
     </div>
   );

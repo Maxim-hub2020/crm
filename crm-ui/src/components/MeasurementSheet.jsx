@@ -57,7 +57,7 @@ function scanStorageKey(projectId) {
   return `crm.measurement-lidar-scan.v1.${projectId}`;
 }
 
-import { nativeAppAvailable, sendNativeAction } from "../utils/nativeApp.js";
+import { nativeAppVersion, nativeScannerAvailable, sendNativeAction } from "../utils/nativeApp.js";
 
 const lidarScannerDistributed = import.meta.env.VITE_LIDAR_SCANNER_DISTRIBUTED === "true";
 const lidarScannerInstallUrl = String(import.meta.env.VITE_LIDAR_SCANNER_INSTALL_URL || "").trim();
@@ -324,7 +324,7 @@ export default function MeasurementSheet({ project }) {
 
   async function startLidarScan() {
     if (!activeRoom) return;
-    if (!lidarScannerDistributed && !nativeAppAvailable() && !/CEHCRM-iOS\//.test(navigator.userAgent)) {
+    if (!nativeScannerAvailable(lidarScannerDistributed)) {
       setLidarSetupOpen(true);
       return;
     }
@@ -418,6 +418,7 @@ export default function MeasurementSheet({ project }) {
         </div>
       </section>
       {activeRoom ? <MeasurementCanvas key={activeRoom.id} value={activeRoom.diagram} onChange={(diagram) => updateActiveRoom({ diagram })} onStartLidar={startLidarScan} lidarStatus={scanMessage} /> : null}
+      {nativeAppVersion() ? <p className="text-xs text-slate-400">Приложение CEH CRM {nativeAppVersion()} · встроенный сканер</p> : null}
       {hasFrame ? <Section title="Рамка"><div className="grid gap-3 sm:grid-cols-3"><Field label="Материал"><Input value={form.frame_material} onChange={(e)=>change("frame_material",e.target.value)} /></Field><Field label="Профиль"><Input value={form.frame_profile} onChange={(e)=>change("frame_profile",e.target.value)} /></Field><Field label="Цвет"><Input value={form.frame_color} onChange={(e)=>change("frame_color",e.target.value)} /></Field></div></Section> : null}
       {hasLight ? <Section title="Подсветка и электрика"><div className="grid gap-3 sm:grid-cols-3"><Field label="Тип"><Select value={form.light_type} onChange={(e)=>change("light_type",e.target.value)}><option value="rear">Задняя</option><option value="front">Лицевая</option></Select></Field><Field label="Отступ световой линии"><Input inputMode="decimal" value={form.light_offset} onChange={(e)=>change("light_offset",e.target.value)} /></Field><Field label="Температура"><Select value={form.light_temperature} onChange={(e)=>change("light_temperature",e.target.value)}><option value="3000">3000 K</option><option value="4000">4000 K</option><option value="6000">6000 K</option></Select></Field><Field label="Вывод питания X"><Input inputMode="decimal" value={form.power_x} onChange={(e)=>change("power_x",e.target.value)} /></Field><Field label="Вывод питания Y"><Input inputMode="decimal" value={form.power_y} onChange={(e)=>change("power_y",e.target.value)} /></Field><Field label="Управление"><Select value={form.power_control} onChange={(e)=>change("power_control",e.target.value)}><option value="switch">Выключатель</option><option value="sensor">Датчик</option><option value="dimmer">Диммер</option></Select></Field></div></Section> : null}
       <Section title="Фотографии"><div className="flex flex-wrap gap-2">{sheet?.photos?.map((photo)=><a key={photo.id} href={photo.url} target="_blank" rel="noreferrer" className="rounded-full bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">{photo.original_name}</a>)}{pendingPhotos.map((photo)=><span key={photo.id} className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">{photo.name}<button type="button" onClick={()=>removePendingPhoto(photo.id)}><Trash2 size={13}/></button></span>)}</div><div className="mt-3 flex flex-wrap gap-2"><label className="btn-hover inline-flex cursor-pointer items-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white"><Camera size={16}/>Снять или выбрать фото<input type="file" accept="image/*" capture="environment" multiple className="hidden" onChange={addPhotos}/></label><label className="btn-hover inline-flex cursor-pointer items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold"><Paperclip size={16}/>Добавить файлы<input type="file" multiple className="hidden" onChange={addPhotos}/></label></div></Section>
@@ -425,10 +426,10 @@ export default function MeasurementSheet({ project }) {
       {validationIssues.length ? <div className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-900"><div className="font-black">До завершения замера:</div><ul className="mt-1 list-disc pl-5">{validationIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div> : null}
       {error ? <div className="rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800">{error}</div> : null}
       <Button type="button" className="w-full sm:w-auto" disabled={validationIssues.length > 0} onClick={() => { setCompleteRequested(true); syncNow(form, true); }}><CheckCircle2 size={17}/>{sheet?.is_complete || completeRequested ? "Замер завершён" : "Завершить замер"}</Button>
-      <Modal open={lidarSetupOpen} title="Приложение CEH LiDAR не установлено" onClose={() => setLidarSetupOpen(false)} widthClassName="max-w-lg">
+      <Modal open={lidarSetupOpen} title="Откройте замер в приложении CEH CRM" onClose={() => setLidarSetupOpen(false)} widthClassName="max-w-lg">
         <div className="space-y-4 text-sm leading-relaxed text-slate-600">
-          <p>Safari не умеет работать с RoomPlan и LiDAR напрямую. Для сканирования на iPhone 15 Pro нужно отдельное приложение CEH LiDAR, установленное через TestFlight или Xcode.</p>
-          <p className="rounded-2xl bg-amber-50 px-4 py-3 font-semibold text-amber-900">Сканер пока не опубликован для установки, поэтому CRM больше не открывает недействительный адрес в Safari.</p>
+          <p>Этот экран не обнаружил встроенный сканер. Значок сайта на главном экране и приложение CEH CRM из AltStore — разные приложения. LiDAR доступен в CEH CRM на совместимом iPhone.</p>
+          <p className="rounded-2xl bg-amber-50 px-4 py-3 font-semibold text-amber-900">Если вы уже в CEH CRM, откройте меню приложения сверху: проверьте номер сборки и выберите «Обновить экран».</p>
           {lidarScannerInstallUrl ? <a href={lidarScannerInstallUrl} target="_blank" rel="noreferrer" className="inline-flex rounded-full bg-slate-900 px-4 py-2.5 font-bold text-white">Установить CEH LiDAR</a> : null}
           <div><Button type="button" variant="secondary" onClick={() => setLidarSetupOpen(false)}>Понятно</Button></div>
         </div>

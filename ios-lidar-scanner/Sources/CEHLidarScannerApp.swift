@@ -20,9 +20,25 @@ struct CRMAppView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var cameraAllowed = false
     @State private var permissionChecked = false
+    @State private var reloadID = 0
 
     var body: some View {
-        CRMWebView { request = $0 }
+        VStack(spacing: 0) {
+            HStack {
+                Text("CEH CRM").font(.subheadline.bold())
+                Spacer()
+                Menu {
+                    Text("Версия \(CRMWebView.versionLabel)")
+                    Button("Вернуться в CRM / обновить экран", systemImage: "arrow.clockwise") { reloadID += 1 }
+                } label: {
+                    Image(systemName: "ellipsis.circle").font(.title3).frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Меню приложения")
+            }
+            .padding(.horizontal, 16)
+            .background(Color(uiColor: .systemBackground))
+            CRMWebView(reloadID: reloadID) { request = $0 }
+        }
             .sheet(isPresented: Binding(get: { request != nil }, set: { if !$0 { request = nil } })) {
                 NavigationStack {
                     Group {

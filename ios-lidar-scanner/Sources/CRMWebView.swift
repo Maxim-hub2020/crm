@@ -10,24 +10,58 @@ enum CRMOrigin {
 }
 
 struct CRMWebView: UIViewRepresentable {
+    var reloadID = 0
     let onScan: (ScanRequest) -> Void
+
+    static var versionLabel: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        return "\(version) (\(build))"
+    }
+
+    static func configuration() -> WKWebViewConfiguration {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .default()
+        configuration.defaultWebpagePreferences.preferredContentMode = .mobile
+        configuration.applicationNameForUserAgent = "CEHCRM-iOS/\(versionLabel)"
+        let info: [String: String] = ["version": versionLabel, "origin": CRMOrigin.home.absoluteString]
+        let json = String(data: try! JSONSerialization.data(withJSONObject: info), encoding: .utf8)!
+        // Announce the native capabilities before the CRM's first render.
+        let script = """
+        (() => {
+          const info = \(json);
+          if (location.origin !== info.origin) return;
+          window.CEHCRMNative = Object.freeze({
+            version: info.version,
+            postMessage: (message) => window.webkit.messageHandlers.cehCRM.postMessage(message)
+          });
+          document.addEventListener('DOMContentLoaded', () => {
+            document.documentElement.dataset.cehNative = info.version;
+          }, {once: true});
+        })();
+        """
+        configuration.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        return configuration
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(onScan: onScan) }
 
     func makeUIView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
-        configuration.applicationNameForUserAgent = "CEHCRM-iOS/1.0"
+        let configuration = Self.configuration()
         configuration.userContentController.add(context.coordinator, name: "cehCRM")
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.uiDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = true
-        view.load(URLRequest(url: CRMOrigin.home))
+        view.load(URLRequest(url: CRMOrigin.home, cachePolicy: .reloadRevalidatingCacheData))
         return view
     }
 
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        guard context.coordinator.reloadID != reloadID else { return }
+        context.coordinator.reloadID = reloadID
+        uiView.load(URLRequest(url: CRMOrigin.home, cachePolicy: .reloadRevalidatingCacheData))
+    }
 
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "cehCRM")
@@ -35,6 +69,7 @@ struct CRMWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         let onScan: (ScanRequest) -> Void
+        var reloadID = 0
         init(onScan: @escaping (ScanRequest) -> Void) { self.onScan = onScan }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {

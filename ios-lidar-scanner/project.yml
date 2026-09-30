@@ -20,7 +20,7 @@ targets:
         PRODUCT_MODULE_NAME: CEHCRM
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: "2"
+        CURRENT_PROJECT_VERSION: "3"
         CODE_SIGN_STYLE: Automatic
         INFOPLIST_KEY_CFBundleDisplayName: CEH CRM
         INFOPLIST_KEY_NSCameraUsageDescription: Камера и LiDAR используются для построения контура стены и поиска розеток, вырезов и выводов проводов.

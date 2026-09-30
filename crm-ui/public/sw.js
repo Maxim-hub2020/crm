@@ -1,4 +1,4 @@
-const CACHE_NAME = "crm-shell-v4";
+const CACHE_NAME = "crm-shell-v5";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -13,12 +13,15 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, event.request.mode === "navigate" ? { cache: "no-cache" } : {})
       .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        }
         return response;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match("/")))
+      .catch(() => caches.match(event.request).then((cached) => cached ||
+        (event.request.mode === "navigate" ? caches.match("/") : Response.error())))
   );
 });

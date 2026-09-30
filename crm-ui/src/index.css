@@ -42,6 +42,15 @@
   #root {
     min-height: -webkit-fill-available;
   }
+
+  @media (max-width: 639px) {
+    /* Prevent iOS focus zoom without disabling the user's pinch zoom. */
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
+  }
 }
 
 @layer components {

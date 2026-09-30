@@ -916,8 +916,8 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
   if (!fields.length) return null;
 
   return (
-    <div className="rounded-[24px] border border-slate-100 bg-slate-50/70 p-4">
-      <div className="grid gap-4 md:grid-cols-2">
+    <div className="min-w-0 max-w-full rounded-[24px] border border-slate-100 bg-slate-50/70 p-4">
+      <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-[repeat(2,minmax(0,1fr))]">
         {fields.map((field) => {
           const fieldKey = String(field.id);
           const isFileField = field.field_type === "file";
@@ -935,7 +935,7 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
             };
 
             return (
-              <div key={field.id} className="space-y-2 md:col-span-2">
+              <div key={field.id} className="min-w-0 space-y-2 md:col-span-2">
                 <Label>{field.name}</Label>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
                   {fileValues.length ? (
@@ -3934,10 +3934,10 @@ export default function Projects() {
                   }
                 />
 
-                <div data-testid="project-documents" className="min-w-0 max-w-full rounded-[24px] border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
+                <div data-testid="project-documents" className="min-w-0 w-full max-w-full self-start overflow-hidden rounded-[24px] border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
                   <div className="flex min-w-0 items-center gap-2 text-sm font-black text-slate-900">
                     <FolderOpen size={17} className="shrink-0 text-blue-600" />
-                    Яндекс.Диск и документы
+                    <span className="min-w-0 break-words">Яндекс.Диск и документы</span>
                   </div>
                   <div className="mt-1 flex items-center gap-3">
                     <div className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-400">
@@ -3969,7 +3969,7 @@ export default function Projects() {
                         title="Открыть связанное коммерческое предложение в калькуляторе"
                       >
                         <Link size={16} />
-                        КП №{activeProject.calculator_quote_info.number}
+                        <span className="min-w-0 break-words [overflow-wrap:anywhere]">КП №{activeProject.calculator_quote_info.number}</span>
                       </Button>
                     ) : null}
                     {activeProject.yandex_disk_web_url ? (
@@ -3980,7 +3980,7 @@ export default function Projects() {
                         onClick={() => openAppLink({ webUrl: activeProject.yandex_disk_web_url, androidPackage: "ru.yandex.disk" })}
                       >
                         <FolderOpen size={16} />
-                        Открыть папку
+                        <span className="min-w-0">Открыть папку</span>
                       </Button>
                     ) : (
                       <Button
@@ -3991,7 +3991,7 @@ export default function Projects() {
                         disabled={yandexDiskCreating}
                       >
                         <FolderOpen size={16} />
-                        {yandexDiskCreating ? "Создаём..." : "Создать папку"}
+                        <span className="min-w-0">{yandexDiskCreating ? "Создаём..." : "Создать папку"}</span>
                       </Button>
                     )}
                     {detailForm.works_with_contract ? (
@@ -4004,7 +4004,7 @@ export default function Projects() {
                           disabled={documentLoading}
                         >
                           <FileText size={16} />
-                          {documentLoading ? "Формируем..." : "Договор"}
+                          <span className="min-w-0">{documentLoading ? "Формируем..." : "Договор"}</span>
                         </Button>
                         <Button
                           type="button"
@@ -4014,7 +4014,7 @@ export default function Projects() {
                           disabled={documentLoading}
                         >
                           <FileText size={16} />
-                          {documentLoading ? "Формируем..." : "Акт"}
+                          <span className="min-w-0">{documentLoading ? "Формируем..." : "Акт"}</span>
                         </Button>
                       </>
                     ) : null}
