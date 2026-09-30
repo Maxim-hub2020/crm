@@ -11,6 +11,35 @@ on:
 permissions:
   contents: read
 jobs:
+  device:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Xcode project
+        working-directory: ios-lidar-scanner
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Build unsigned iPhone application
+        working-directory: ios-lidar-scanner
+        run: >-
+          xcodebuild -project CEHLidarScanner.xcodeproj -scheme CEHLidarScanner
+          -configuration Release -sdk iphoneos -destination 'generic/platform=iOS'
+          -derivedDataPath device-build CODE_SIGNING_ALLOWED=NO build
+      - name: Package IPA for local signing
+        working-directory: ios-lidar-scanner
+        run: |
+          mkdir -p package/Payload
+          ditto "device-build/Build/Products/Release-iphoneos/CEH CRM.app" "package/Payload/CEH CRM.app"
+          lipo -verify_arch arm64 "package/Payload/CEH CRM.app/CEH CRM"
+          cd package
+          ditto -c -k --keepParent Payload ../CEH-CRM-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CEH-CRM-unsigned-iphone
+          path: ios-lidar-scanner/CEH-CRM-unsigned.ipa
+          retention-days: 14
   simulator:
     runs-on: macos-15
     timeout-minutes: 20

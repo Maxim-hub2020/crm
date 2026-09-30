@@ -27,6 +27,8 @@ dist/
 
 # OS
 ios-lidar-scanner/build/
+ios-lidar-scanner/device-build/
+ios-lidar-scanner/package/
 ios-lidar-scanner/*.xcodeproj/
 *.xcarchive/
 *.ipa
