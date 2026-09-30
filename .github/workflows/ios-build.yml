@@ -32,7 +32,7 @@ jobs:
         run: |
           mkdir -p package/Payload
           ditto "device-build/Build/Products/Release-iphoneos/CEH CRM.app" "package/Payload/CEH CRM.app"
-          lipo -verify_arch arm64 "package/Payload/CEH CRM.app/CEH CRM"
+          lipo "package/Payload/CEH CRM.app/CEH CRM" -verify_arch arm64
           cd package
           ditto -c -k --keepParent Payload ../CEH-CRM-unsigned.ipa
       - uses: actions/upload-artifact@v4
