@@ -49,6 +49,8 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: ru.cehcrm.lidar.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/CEH CRM.app/CEH CRM"
+        BUNDLE_LOADER: "$(TEST_HOST)"
 schemes:
   CEHLidarScanner:
     build:
