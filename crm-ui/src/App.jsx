@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { fetchMe, getToken, getUser, initApiAuth, isAdminUser } from "./api";
 import Layout from "./components/Layout";
@@ -17,7 +17,8 @@ initApiAuth();
 
 function Private({ children }) {
   const token = getToken();
-  if (!token) return <Navigate to="/login" replace />;
+  const location = useLocation();
+  if (!token) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   return children;
 }
 

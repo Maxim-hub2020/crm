@@ -41,6 +41,8 @@ struct YandexRouteLink {
 
 struct CRMWebView: UIViewRepresentable {
     var reloadID = 0
+    var visitProjectID: Int?
+    var visitOpenSequence = 0
     let onScan: (ScanRequest) -> Void
 
     static var versionLabel: String {
@@ -63,7 +65,7 @@ struct CRMWebView: UIViewRepresentable {
           if (location.origin !== info.origin) return;
           window.CEHCRMNative = Object.freeze({
             version: info.version,
-            capabilities: Object.freeze({route: true}),
+            capabilities: Object.freeze({route: true, visitAlerts: true}),
             postMessage: (message) => window.webkit.messageHandlers.cehCRM.postMessage(message)
           });
           document.addEventListener('DOMContentLoaded', () => {
@@ -89,6 +91,13 @@ struct CRMWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
+        if let visitProjectID, context.coordinator.visitOpenSequence != visitOpenSequence {
+            context.coordinator.visitOpenSequence = visitOpenSequence
+            var url = URLComponents(url: CRMOrigin.home.appendingPathComponent("projects"), resolvingAgainstBaseURL: false)!
+            url.queryItems = [URLQueryItem(name: "visit", value: String(visitProjectID))]
+            if let target = url.url { uiView.load(URLRequest(url: target)) }
+            return
+        }
         guard context.coordinator.reloadID != reloadID else { return }
         context.coordinator.reloadID = reloadID
         uiView.load(URLRequest(url: CRMOrigin.home, cachePolicy: .reloadRevalidatingCacheData))
@@ -101,6 +110,7 @@ struct CRMWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         let onScan: (ScanRequest) -> Void
         var reloadID = 0
+        var visitOpenSequence = 0
         init(onScan: @escaping (ScanRequest) -> Void) { self.onScan = onScan }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -108,9 +118,19 @@ struct CRMWebView: UIViewRepresentable {
             guard message.frameInfo.isMainFrame,
                   origin.host == CRMOrigin.home.host, origin.`protocol` == "https",
                   origin.port == 0 || origin.port == 443,
-                  let body = message.body as? [String: String],
-                  let rawURL = body["url"], let url = URL(string: rawURL),
+                  let body = message.body as? [String: Any],
                   let webView = message.webView else { return }
+            if body["action"] as? String == "syncVisitLocations",
+               let projects = body["projects"] as? [[String: Any]] {
+                VisitProximityManager.shared.sync(projects)
+                return
+            }
+            if body["action"] as? String == "clearVisitLocations" {
+                VisitProximityManager.shared.clear()
+                return
+            }
+            guard let body = body as? [String: String],
+                  let rawURL = body["url"], let url = URL(string: rawURL) else { return }
             if body["action"] == "scan", let scan = ScanRequest(url: url) { onScan(scan) }
             if body["action"] == "openRoute" {
                 if let route = YandexRouteLink(message: body) {

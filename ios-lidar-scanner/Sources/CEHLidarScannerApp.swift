@@ -21,6 +21,7 @@ struct CRMAppView: View {
     @State private var cameraAllowed = false
     @State private var permissionChecked = false
     @State private var reloadID = 0
+    @StateObject private var visitAlerts = VisitProximityManager.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,6 +31,17 @@ struct CRMAppView: View {
                 Menu {
                     Text("Версия \(CRMWebView.versionLabel)")
                     Button("Вернуться в CRM / обновить экран", systemImage: "arrow.clockwise") { reloadID += 1 }
+                    Button(visitAlerts.isEnabled ? "Выключить уведомления у объектов" : "Уведомлять рядом с объектом",
+                           systemImage: visitAlerts.isEnabled ? "location.slash" : "location") {
+                        visitAlerts.setEnabled(!visitAlerts.isEnabled)
+                    }
+                    if visitAlerts.isEnabled {
+                        Button("Проверить разрешения геолокации", systemImage: "gearshape") {
+                            if let settings = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(settings)
+                            }
+                        }
+                    }
                 } label: {
                     Image(systemName: "ellipsis.circle").font(.title3).frame(width: 44, height: 44)
                 }
@@ -37,7 +49,8 @@ struct CRMAppView: View {
             }
             .padding(.horizontal, 16)
             .background(Color(uiColor: .systemBackground))
-            CRMWebView(reloadID: reloadID) { request = $0 }
+            CRMWebView(reloadID: reloadID, visitProjectID: visitAlerts.pendingProjectID,
+                       visitOpenSequence: visitAlerts.visitOpenSequence) { request = $0 }
         }
             .sheet(isPresented: Binding(get: { request != nil }, set: { if !$0 { request = nil } })) {
                 NavigationStack {

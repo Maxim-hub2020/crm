@@ -1,16 +1,22 @@
-import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { extractApiErrorMessage, fetchMe, login } from "../api";
 import { BrandLogo } from "../components/BrandLogo.jsx";
 import { Input } from "../components/ui.jsx";
+import { clearNativeVisitLocations } from "../utils/visitLocations.js";
 
 export default function Login() {
   const nav = useNavigate();
+  const location = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    clearNativeVisitLocations();
+  }, []);
 
   async function onSubmit(event) {
     event.preventDefault();
@@ -20,7 +26,7 @@ export default function Login() {
     try {
       await login(username, password);
       await fetchMe();
-      nav("/");
+      nav(location.state?.from || "/", { replace: true });
     } catch (error) {
       setErr(extractApiErrorMessage(error, "Неверный логин или пароль"));
     } finally {

@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Briefcase, FolderKanban, Home, ListTodo, LogOut, Menu, MessageCircle, Search, Settings, ShieldQuestion, Users, Wallet, X } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
-import { clearToken, fetchGlobalSearch, fetchMe, getUser, isAdminUser } from "../api";
+import { clearToken, fetchGlobalSearch, fetchMe, fetchProjects, getUser, isAdminUser } from "../api";
 import { BrandMark } from "./BrandLogo.jsx";
+import { clearNativeVisitLocations, syncNativeVisitLocations } from "../utils/visitLocations.js";
 
 const ROUTE_META = {
   "/": { title: "Дашборд", icon: Home },
@@ -109,7 +110,31 @@ export default function Layout({ children }) {
     localStorage.setItem("crm_last_screen", location.pathname);
   }, [location.pathname]);
 
+  useEffect(() => {
+    if (!window.CEHCRMNative?.capabilities?.visitAlerts) return undefined;
+    let active = true;
+    const sync = () => {
+      if (document.visibilityState === "hidden") return;
+      void fetchProjects().then((projects) => {
+        if (active) syncNativeVisitLocations(projects);
+      }).catch((error) => {
+        if (active && error?.response?.status === 401) {
+          clearNativeVisitLocations();
+        }
+      });
+    };
+    sync();
+    const interval = window.setInterval(sync, 5 * 60 * 1000);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, []);
+
   function logout() {
+    clearNativeVisitLocations();
     clearToken();
     navigate("/login");
   }
