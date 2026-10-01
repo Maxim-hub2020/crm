@@ -72,7 +72,7 @@ final class NativeBridgeTests: XCTestCase {
             "navigatorUrl": "yandexnavi://build_route_on_map?lat_to=47.23&lon_to=39.71",
         ]
         XCTAssertEqual(URL(string: message["url"]!)?.host, "yandex.ru")
-        XCTAssertEqual(URL(string: message["url"]!)?.path, "/maps/")
+        XCTAssertTrue(["/maps", "/maps/"].contains(URL(string: message["url"]!)?.path ?? ""))
         XCTAssertEqual(URLComponents(string: message["url"]!)?.queryItems?.first(where: { $0.name == "mode" })?.value, "routes")
         XCTAssertEqual(URL(string: message["mapsUrl"]!)?.scheme, "yandexmaps")
         XCTAssertNotNil(YandexRouteLink(message: message))

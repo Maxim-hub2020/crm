@@ -17,7 +17,7 @@ struct YandexRouteLink {
     init?(message: [String: String]) {
         guard message["action"] == "openRoute",
               let webRaw = message["url"], let webURL = URL(string: webRaw),
-              webURL.scheme == "https", webURL.host == "yandex.ru", webURL.path == "/maps/",
+              webURL.scheme == "https", webURL.host == "yandex.ru", ["/maps", "/maps/"].contains(webURL.path),
               webURL.port == nil, webURL.user == nil, webURL.password == nil,
               let webQuery = URLComponents(url: webURL, resolvingAgainstBaseURL: false)?.queryItems,
               webQuery.contains(where: { $0.name == "mode" && $0.value == "routes" }),
@@ -113,7 +113,7 @@ struct CRMWebView: UIViewRepresentable {
             if body["action"] == "openRoute" {
                 if let route = YandexRouteLink(message: body) {
                     openRoute(route, from: webView)
-                } else if url.scheme == "https", url.host == "yandex.ru", url.path == "/maps/" {
+                } else if url.scheme == "https", url.host == "yandex.ru", ["/maps", "/maps/"].contains(url.path) {
                     openExternal(url, from: webView)
                 }
             }
