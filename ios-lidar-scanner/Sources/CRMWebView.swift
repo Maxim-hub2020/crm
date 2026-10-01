@@ -9,6 +9,38 @@ enum CRMOrigin {
     }
 }
 
+struct YandexRouteLink {
+    let webURL: URL
+    let mapsURL: URL
+    let navigatorURL: URL?
+
+    init?(message: [String: String]) {
+        guard message["action"] == "openRoute",
+              let webRaw = message["url"], let webURL = URL(string: webRaw),
+              webURL.scheme == "https", webURL.host == "yandex.ru", webURL.path == "/maps/",
+              webURL.port == nil, webURL.user == nil, webURL.password == nil,
+              let webQuery = URLComponents(url: webURL, resolvingAgainstBaseURL: false)?.queryItems,
+              webQuery.contains(where: { $0.name == "mode" && $0.value == "routes" }),
+              webQuery.contains(where: { $0.name == "rtext" && !($0.value ?? "").isEmpty }),
+              let mapsRaw = message["mapsUrl"], let mapsURL = URL(string: mapsRaw),
+              mapsURL.scheme == "yandexmaps",
+              ["build_route_on_map", "maps.yandex.ru"].contains(mapsURL.host ?? ""),
+              let mapsQuery = URLComponents(url: mapsURL, resolvingAgainstBaseURL: false)?.queryItems,
+              (mapsURL.host == "build_route_on_map"
+                ? mapsQuery.contains(where: { $0.name == "lat_to" }) && mapsQuery.contains(where: { $0.name == "lon_to" })
+                : mapsQuery.contains(where: { $0.name == "mode" && $0.value == "routes" })) else { return nil }
+        if let navigatorRaw = message["navigatorUrl"], !navigatorRaw.isEmpty {
+            guard let navigatorURL = URL(string: navigatorRaw), navigatorURL.scheme == "yandexnavi",
+                  navigatorURL.host == "build_route_on_map" else { return nil }
+            self.navigatorURL = navigatorURL
+        } else {
+            navigatorURL = nil
+        }
+        self.webURL = webURL
+        self.mapsURL = mapsURL
+    }
+}
+
 struct CRMWebView: UIViewRepresentable {
     var reloadID = 0
     let onScan: (ScanRequest) -> Void
@@ -33,6 +65,7 @@ struct CRMWebView: UIViewRepresentable {
           if (location.origin !== info.origin) return;
           window.CEHCRMNative = Object.freeze({
             version: info.version,
+            capabilities: Object.freeze({route: true}),
             postMessage: (message) => window.webkit.messageHandlers.cehCRM.postMessage(message)
           });
           document.addEventListener('DOMContentLoaded', () => {
@@ -79,8 +112,30 @@ struct CRMWebView: UIViewRepresentable {
                   let rawURL = body["url"], let url = URL(string: rawURL),
                   let webView = message.webView else { return }
             if body["action"] == "scan", let scan = ScanRequest(url: url) { onScan(scan) }
+            if body["action"] == "openRoute", let route = YandexRouteLink(message: body) {
+                openRoute(route, from: webView)
+            }
             if body["action"] == "openExternal", url.scheme == "https", url.user == nil, url.password == nil {
                 openExternal(url, from: webView)
+            }
+        }
+
+        private func openRoute(_ route: YandexRouteLink, from webView: WKWebView) {
+            let candidates = [route.mapsURL, route.navigatorURL].compactMap { $0 }
+            openRouteCandidate(candidates, index: 0, fallback: route.webURL, from: webView)
+        }
+
+        private func openRouteCandidate(_ candidates: [URL], index: Int, fallback: URL, from webView: WKWebView) {
+            guard index < candidates.count else {
+                openExternal(fallback, from: webView)
+                return
+            }
+            UIApplication.shared.open(candidates[index]) { opened in
+                if !opened {
+                    DispatchQueue.main.async {
+                        self.openRouteCandidate(candidates, index: index + 1, fallback: fallback, from: webView)
+                    }
+                }
             }
         }
 

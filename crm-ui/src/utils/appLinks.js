@@ -1,4 +1,4 @@
-import { sendNativeAction } from "./nativeApp.js";
+import { nativeAppAvailable, sendNativeAction } from "./nativeApp.js";
 
 const ANDROID_USER_AGENT = /Android/i;
 
@@ -44,4 +44,10 @@ export function openAppLink({ webUrl, nativeUrl = "", androidPackage = "" }) {
 
 export function maxNativeUrl(webUrl) {
   return String(webUrl || "").replace(/^https:\/\//i, "max://");
+}
+
+export function openNativeYandexRoute({ webUrl, mapsUrl, navigatorUrl = "" }) {
+  if (!webUrl || !nativeAppAvailable()) return false;
+  if (!window.CEHCRMNative?.capabilities?.route) return sendNativeAction("openExternal", webUrl);
+  return sendNativeAction("openRoute", webUrl, { mapsUrl, navigatorUrl });
 }

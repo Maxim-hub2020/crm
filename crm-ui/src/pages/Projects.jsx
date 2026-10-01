@@ -74,7 +74,7 @@ import {
 } from "../components/ui.jsx";
 import ClientAddressFields from "../components/ClientAddressFields.jsx";
 const MeasurementSheet = React.lazy(() => import("../components/MeasurementSheet.jsx"));
-import { maxNativeUrl, openAppLink } from "../utils/appLinks.js";
+import { maxNativeUrl, openAppLink, openNativeYandexRoute } from "../utils/appLinks.js";
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits, phoneSearchDigits } from "../utils/phone.js";
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
@@ -395,7 +395,9 @@ function yandexRouteLinks(address, lat = "", lon = "") {
   const cleanLon = String(lon || "").trim();
   const latNumber = Number(cleanLat);
   const lonNumber = Number(cleanLon);
-  const hasCoordinates = Number.isFinite(latNumber) && Number.isFinite(lonNumber);
+  const hasCoordinates = cleanLat !== "" && cleanLon !== "" &&
+    Number.isFinite(latNumber) && Number.isFinite(lonNumber) &&
+    latNumber >= -90 && latNumber <= 90 && lonNumber >= -180 && lonNumber <= 180;
   const destination = hasCoordinates ? `${cleanLat},${cleanLon}` : cleanAddress;
   if (!destination) return { webUrl: "", appUrls: [], hasCoordinates: false };
 
@@ -415,6 +417,11 @@ function yandexRouteLinks(address, lat = "", lon = "") {
 
   const appUrls = [];
   appUrls.push(`yandexmaps://maps.yandex.ru/?${params.toString()}`);
+  const mapsRouteParams = new URLSearchParams();
+  if (hasCoordinates) {
+    mapsRouteParams.set("lat_to", cleanLat);
+    mapsRouteParams.set("lon_to", cleanLon);
+  }
   if (hasCoordinates) {
     const navigatorParams = new URLSearchParams({
       lat_to: cleanLat,
@@ -429,6 +436,7 @@ function yandexRouteLinks(address, lat = "", lon = "") {
   return {
     webUrl: `https://yandex.ru/maps/?${params.toString()}`,
     appUrls,
+    nativeMapsUrl: hasCoordinates ? `yandexmaps://build_route_on_map/?${mapsRouteParams.toString()}` : appUrls[0],
     hasCoordinates,
     destination,
     cleanAddress,
@@ -455,6 +463,13 @@ function yandexRouteLinksWithOrigin(links, origin) {
   }
 
   const appUrls = [`yandexmaps://maps.yandex.ru/?${params.toString()}`];
+  const mapsRouteParams = new URLSearchParams();
+  if (links.hasCoordinates && links.lat && links.lon) {
+    mapsRouteParams.set("lat_from", origin.lat);
+    mapsRouteParams.set("lon_from", origin.lon);
+    mapsRouteParams.set("lat_to", links.lat);
+    mapsRouteParams.set("lon_to", links.lon);
+  }
   if (links.hasCoordinates && links.lat && links.lon) {
     const navigatorParams = new URLSearchParams({
       lat_to: links.lat,
@@ -467,6 +482,7 @@ function yandexRouteLinksWithOrigin(links, origin) {
     ...links,
     webUrl: `https://yandex.ru/maps/?${params.toString()}`,
     appUrls,
+    nativeMapsUrl: mapsRouteParams.size ? `yandexmaps://build_route_on_map/?${mapsRouteParams.toString()}` : appUrls[0],
   };
 }
 
@@ -503,6 +519,7 @@ function openYandexRouteLinks(links) {
 
 function openPreparedYandexRouteLinks(links) {
   const appUrls = Array.isArray(links.appUrls) ? links.appUrls.filter(Boolean) : [];
+  if (openNativeYandexRoute({ webUrl: links.webUrl, mapsUrl: links.nativeMapsUrl || appUrls[0], navigatorUrl: appUrls[1] || "" })) return;
   const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
   if (!isMobile || appUrls.length === 0) {
     window.open(links.webUrl, "_blank", "noopener,noreferrer");
@@ -3623,7 +3640,7 @@ export default function Projects() {
         widthClassName="max-w-6xl"
         bodyClassName="min-h-0 overflow-x-hidden bg-white"
         positionClassName="items-start"
-        overlayClassName="bg-slate-950/25 backdrop-blur-sm backdrop-saturate-75"
+        overlayClassName="crm-project-modal-overlay bg-slate-950/25 backdrop-blur-sm backdrop-saturate-75"
       >
         {activeProject && (
           <div className="space-y-5">

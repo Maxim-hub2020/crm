@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { nativeAppAvailable, nativeAppVersion, nativeScannerAvailable, sendNativeAction } from "./nativeApp.js";
-import { openAppLink } from "./appLinks.js";
+import { openAppLink, openNativeYandexRoute } from "./appLinks.js";
 
 test("browser without native handler uses the original link", () => {
   let url;
@@ -50,5 +50,28 @@ test("native bridge forwards scan and external links without browser navigation"
     { action: "scan", url: "cehcrm-lidar://scan" },
     { action: "openExternal", url: "https://disk.yandex.ru/client/disk/test" },
   ]);
+  delete globalThis.window;
+});
+
+test("new iOS build sends the complete route to its native Yandex Maps handler", () => {
+  const messages = [];
+  globalThis.window = {
+    CEHCRMNative: { capabilities: { route: true }, postMessage(message) { messages.push(message); } },
+  };
+  assert.equal(openNativeYandexRoute({
+    webUrl: "https://yandex.ru/maps/?mode=routes&rtext=~47.23,39.71",
+    mapsUrl: "yandexmaps://build_route_on_map/?lat_to=47.23&lon_to=39.71",
+    navigatorUrl: "yandexnavi://build_route_on_map?lat_to=47.23&lon_to=39.71",
+  }), true);
+  assert.equal(messages[0].action, "openRoute");
+  assert.match(messages[0].mapsUrl, /lat_to=47\.23/);
+  delete globalThis.window;
+});
+
+test("older iOS build opens the route URL instead of dropping the action", () => {
+  const messages = [];
+  globalThis.window = { CEHCRMNative: { postMessage(message) { messages.push(message); } } };
+  assert.equal(openNativeYandexRoute({ webUrl: "https://yandex.ru/maps/?mode=routes&rtext=~47.23,39.71" }), true);
+  assert.deepEqual(messages, [{ action: "openExternal", url: "https://yandex.ru/maps/?mode=routes&rtext=~47.23,39.71" }]);
   delete globalThis.window;
 });

@@ -49,7 +49,7 @@ final class NativeBridgeTests: XCTestCase {
     func testAppDeclaresCameraPermission() {
         let description = Bundle.main.object(forInfoDictionaryKey: "NSCameraUsageDescription") as? String
         XCTAssertFalse(description?.isEmpty ?? true)
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "5")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "6")
     }
 
     func testMobileConfigurationAnnouncesNativeBridgeBeforePageScripts() {
@@ -60,6 +60,26 @@ final class NativeBridgeTests: XCTestCase {
         XCTAssertEqual(script?.injectionTime, .atDocumentStart)
         XCTAssertEqual(script?.isForMainFrameOnly, true)
         XCTAssertTrue(script?.source.contains("CEHCRMNative") == true)
+        XCTAssertTrue(script?.source.contains("route: true") == true)
         XCTAssertTrue(script?.source.contains("location.origin !== info.origin") == true)
+    }
+
+    func testYandexRouteBridgeAcceptsOnlyExpectedDestinationAndSchemes() {
+        let message = [
+            "action": "openRoute",
+            "url": "https://yandex.ru/maps/?mode=routes&rtext=~47.23,39.71&rtt=auto",
+            "mapsUrl": "yandexmaps://build_route_on_map/?lat_to=47.23&lon_to=39.71",
+            "navigatorUrl": "yandexnavi://build_route_on_map?lat_to=47.23&lon_to=39.71",
+        ]
+        XCTAssertNotNil(YandexRouteLink(message: message))
+        var changed = message
+        changed["url"] = "https://example.com/maps/?mode=routes&rtext=~test"
+        XCTAssertNil(YandexRouteLink(message: changed))
+        changed = message
+        changed["mapsUrl"] = "yandexmaps://other-host/"
+        XCTAssertNil(YandexRouteLink(message: changed))
+        changed = message
+        changed["mapsUrl"] = "yandexmaps://maps.yandex.ru/?text=address"
+        XCTAssertNil(YandexRouteLink(message: changed))
     }
 }

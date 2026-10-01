@@ -14,13 +14,13 @@ export function nativeScannerAvailable(distributed = false) {
   return distributed || nativeAppAvailable() || Boolean(nativeAppVersion());
 }
 
-export function sendNativeAction(action, url) {
+export function sendNativeAction(action, url, details = {}) {
   if (!nativeAppAvailable()) return false;
   try {
     if (typeof window.CEHCRMNative?.postMessage === "function") {
-      window.CEHCRMNative.postMessage({ action, url });
+      window.CEHCRMNative.postMessage({ action, url, ...details });
     } else {
-      window.webkit.messageHandlers.cehCRM.postMessage({ action, url });
+      window.webkit.messageHandlers.cehCRM.postMessage({ action, url, ...details });
     }
   } catch {
     return false;
