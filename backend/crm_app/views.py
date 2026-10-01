@@ -101,6 +101,7 @@ from .yandex_disk import (
     is_application_project_status,
     is_archive_project_status,
     list_disk_folders,
+    set_project_folder_public,
     sync_measurement_drawings_to_yandex,
     sync_project_measurement_files_to_yandex,
     yandex_disk_oauth_configured,
@@ -1084,6 +1085,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
         )
 
     def perform_destroy(self, instance):
+        if instance.yandex_disk_public_url:
+            try:
+                set_project_folder_public(instance, publish=False)
+            except YandexDiskError as exc:
+                raise ValidationError({"detail": f"Сначала закройте доступ к папке Яндекс.Диска: {exc}"}) from exc
         before = snapshot_model(instance, ["id", "title", "client_name", "client_phone", "object_address", "total_amount", "status"])
         calculator_quote = CalculatorQuote.objects.filter(project=instance).first()
         if calculator_quote:
@@ -1121,6 +1127,17 @@ class ProjectViewSet(viewsets.ModelViewSet):
         result = ensure_project_disk_folder(project, actor=request.user, force=True)
         project.refresh_from_db()
         return Response({"result": result, "project": self.get_serializer(project).data})
+
+    @action(detail=True, methods=["post"], url_path="yandex-disk-public-link")
+    def yandex_disk_public_link(self, request, pk=None):
+        project = self.get_object()
+        if not isinstance(request.data.get("publish"), bool):
+            return Response({"detail": "Укажите publish: true или false."}, status=drf_status.HTTP_400_BAD_REQUEST)
+        try:
+            public_url = set_project_folder_public(project, publish=request.data["publish"])
+        except YandexDiskError as exc:
+            return Response({"detail": str(exc)}, status=drf_status.HTTP_400_BAD_REQUEST)
+        return Response({"public_url": public_url, "project": self.get_serializer(project).data})
 
     @action(detail=True, methods=["post"], url_path="custom-field-files", parser_classes=[MultiPartParser, FormParser])
     def upload_custom_field_file(self, request, pk=None):

@@ -33,6 +33,7 @@ import {
   createProject,
   createProjectComment,
   createProjectYandexDiskFolder,
+  setProjectYandexDiskPublicLink,
   createTask,
   deletePayment,
   deleteProject,
@@ -75,6 +76,7 @@ import {
 import ClientAddressFields from "../components/ClientAddressFields.jsx";
 const MeasurementSheet = React.lazy(() => import("../components/MeasurementSheet.jsx"));
 import { openAppLink, openNativeYandexRoute } from "../utils/appLinks.js";
+import { nativeAppAvailable } from "../utils/nativeApp.js";
 import { maxShareUrl, validMaxChatUrl } from "../utils/maxLinks.js";
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits, phoneSearchDigits } from "../utils/phone.js";
 
@@ -344,7 +346,10 @@ function maxMessengerHref(project, form, clientChatUrl = "") {
     greeting,
     `Пишу по проекту${projectLabel ? ` ${projectLabel}` : ""}.`,
   ].filter(Boolean);
-  return maxPhone ? maxShareUrl(messageParts.join("\n")) : "";
+  if (!maxPhone) return "";
+  if (nativeAppAvailable()) return maxShareUrl(messageParts.join("\n"));
+  const params = new URLSearchParams({ phone: maxPhone, text: messageParts.join("\n") });
+  return `https://max.ru/chat?${params.toString()}`;
 }
 
 function openMaxApp(event, webUrl) {
@@ -1155,6 +1160,7 @@ export default function Projects() {
   const [documentIdentitySaving, setDocumentIdentitySaving] = useState(false);
   const [documentIdentityError, setDocumentIdentityError] = useState("");
   const [yandexDiskCreating, setYandexDiskCreating] = useState(false);
+  const [yandexDiskPublishing, setYandexDiskPublishing] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [customFieldUploads, setCustomFieldUploads] = useState({});
   const [customFieldPreview, setCustomFieldPreview] = useState(null);
@@ -2864,6 +2870,45 @@ export default function Projects() {
     }
   }
 
+  async function handleYandexDiskFolderOpen() {
+    if (!activeProject?.id || yandexDiskPublishing) return;
+    if (activeProject.yandex_disk_public_url) {
+      openAppLink({ webUrl: activeProject.yandex_disk_public_url, androidPackage: "ru.yandex.disk" });
+      return;
+    }
+    if (!nativeAppAvailable()) {
+      openAppLink({ webUrl: activeProject.yandex_disk_web_url, androidPackage: "ru.yandex.disk" });
+      return;
+    }
+    if (!window.confirm("Открыть папку в приложении Диска? CRM создаст публичную ссылку: любой, у кого она окажется, сможет просматривать файлы в этой папке, включая новые. Доступ можно отключить здесь же.")) return;
+    setYandexDiskPublishing(true);
+    setDetailError("");
+    try {
+      const result = await setProjectYandexDiskPublicLink(activeProject.id, true);
+      if (result.project) applyUpdatedProject(result.project);
+      if (result.public_url) openAppLink({ webUrl: result.public_url, androidPackage: "ru.yandex.disk" });
+    } catch (error) {
+      setDetailError(extractApiErrorMessage(error, "Не удалось открыть доступ к папке на Яндекс.Диске."));
+    } finally {
+      setYandexDiskPublishing(false);
+    }
+  }
+
+  async function handleYandexDiskFolderUnpublish() {
+    if (!activeProject?.id || yandexDiskPublishing) return;
+    if (!window.confirm("Отключить публичную ссылку на папку проекта?")) return;
+    setYandexDiskPublishing(true);
+    setDetailError("");
+    try {
+      const result = await setProjectYandexDiskPublicLink(activeProject.id, false);
+      if (result.project) applyUpdatedProject(result.project);
+    } catch (error) {
+      setDetailError(extractApiErrorMessage(error, "Не удалось закрыть доступ к папке."));
+    } finally {
+      setYandexDiskPublishing(false);
+    }
+  }
+
   function clearProjectDragHoldTimer(drag = pointerDragRef.current) {
     if (drag?.holdTimerId) {
       window.clearTimeout(drag.holdTimerId);
@@ -3933,10 +3978,11 @@ export default function Projects() {
                         type="button"
                         variant="secondary"
                         className="justify-center px-3"
-                        onClick={() => openAppLink({ webUrl: activeProject.yandex_disk_web_url, androidPackage: "ru.yandex.disk" })}
+                        onClick={handleYandexDiskFolderOpen}
+                        disabled={yandexDiskPublishing}
                       >
                         <FolderOpen size={16} />
-                        <span className="min-w-0">Открыть папку</span>
+                        <span className="min-w-0">{yandexDiskPublishing ? "Подключаем..." : "Открыть папку"}</span>
                       </Button>
                     ) : (
                       <Button
@@ -3950,6 +3996,11 @@ export default function Projects() {
                         <span className="min-w-0">{yandexDiskCreating ? "Создаём..." : "Создать папку"}</span>
                       </Button>
                     )}
+                    {activeProject.yandex_disk_public_url ? (
+                      <Button type="button" variant="secondary" className="justify-center px-3" onClick={handleYandexDiskFolderUnpublish} disabled={yandexDiskPublishing}>
+                        <span className="min-w-0">Закрыть доступ по ссылке</span>
+                      </Button>
+                    ) : null}
                     {detailForm.works_with_contract ? (
                       <>
                         <Button

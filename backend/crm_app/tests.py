@@ -2698,6 +2698,41 @@ class TestProjectStatusesApi(AuthenticatedApiMixin, APITestCase):
         self.assertTrue(ProjectStatus.objects.filter(id=self.active_status.id).exists())
 
 
+class TestYandexDiskPublicLinkApi(AuthenticatedApiMixin, APITestCase):
+    def setUp(self):
+        self.user = self.create_user("admin.yandex.public", role=User.Role.ADMIN)
+        self.project = Project.objects.create(
+            workspace=self.user.workspace,
+            manager=self.user,
+            title="Публичная папка",
+            yandex_disk_path="disk:/CRM/Проекты/Публичная папка",
+        )
+        self.client = self.auth_client_for(self.user)
+
+    def test_publish_and_revoke_are_explicit_actions(self):
+        url = f"/api/projects/{self.project.id}/yandex-disk-public-link/"
+        def set_public_link(project, publish):
+            project.yandex_disk_public_url = "https://disk.yandex.ru/d/test" if publish else ""
+            return project.yandex_disk_public_url
+
+        with patch("crm_app.views.set_project_folder_public") as set_public:
+            set_public.side_effect = set_public_link
+            response = self.client.post(url, {"publish": True}, format="json")
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(response.data["public_url"], "https://disk.yandex.ru/d/test")
+            self.assertEqual(response.data["project"]["yandex_disk_public_url"], "https://disk.yandex.ru/d/test")
+            response = self.client.post(url, {"publish": False}, format="json")
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(response.data["public_url"], "")
+            self.assertEqual(set_public.call_count, 2)
+
+    def test_publish_rejects_invalid_request(self):
+        response = self.client.post(
+            f"/api/projects/{self.project.id}/yandex-disk-public-link/", {"publish": "yes"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
 class TestYandexDiskArchiveApi(AuthenticatedApiMixin, APITestCase):
     def setUp(self):
         self.active_status, _ = ProjectStatus.objects.get_or_create(

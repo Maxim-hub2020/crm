@@ -508,6 +508,12 @@ export async function createProjectYandexDiskFolder(projectId) {
   return data;
 }
 
+export async function setProjectYandexDiskPublicLink(projectId, publish) {
+  initApiAuth();
+  const { data } = await api.post(`/api/projects/${projectId}/yandex-disk-public-link/`, { publish });
+  return data;
+}
+
 export async function fetchProjectActivity(projectId) {
   initApiAuth();
   const { data } = await api.get(`/api/projects/${projectId}/activity/`);

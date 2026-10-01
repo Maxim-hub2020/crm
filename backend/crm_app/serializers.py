@@ -403,6 +403,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             "bonus_accrued_at",
             "yandex_disk_path",
             "yandex_disk_web_url",
+            "yandex_disk_public_url",
             "yandex_disk_created_at",
             "yandex_disk_archived_at",
             "yandex_disk_error",

@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from html import escape
 from urllib import error as urllib_error
 from urllib import parse, request as urllib_request
@@ -166,6 +167,49 @@ def yandex_disk_web_url(disk_path):
     return f"{YANDEX_DISK_WEB_BASE}/{'/'.join(encoded_segments)}" if encoded_segments else YANDEX_DISK_WEB_BASE
 
 
+def set_project_folder_public(project, *, publish):
+    settings = get_yandex_disk_settings(project.workspace)
+    if not settings.enabled or not settings.oauth_token or not project.yandex_disk_path:
+        raise YandexDiskError("Папка проекта или подключение Яндекс.Диска недоступны.")
+
+    path = normalize_disk_path(project.yandex_disk_path)
+    action = "publish" if publish else "unpublish"
+    url = f"{YANDEX_DISK_API_BASE}/{action}?{parse.urlencode({'path': path})}"
+    request = urllib_request.Request(url, method="PUT", headers={"Authorization": f"OAuth {settings.oauth_token}"})
+    try:
+        with urllib_request.urlopen(request, timeout=15):
+            pass
+        public_url = ""
+        if publish:
+            metadata_url = f"{YANDEX_DISK_API_BASE}?{parse.urlencode({'path': path, 'fields': 'public_url'})}"
+            metadata_request = urllib_request.Request(metadata_url, headers={"Authorization": f"OAuth {settings.oauth_token}"})
+            for attempt in range(3):
+                with urllib_request.urlopen(metadata_request, timeout=15) as response:
+                    public_url = json.loads(response.read().decode("utf-8")).get("public_url") or ""
+                if public_url:
+                    break
+                if attempt < 2:
+                    time.sleep(0.5)
+            if not public_url:
+                revoke_url = f"{YANDEX_DISK_API_BASE}/unpublish?{parse.urlencode({'path': path})}"
+                revoke_request = urllib_request.Request(revoke_url, method="PUT", headers={"Authorization": f"OAuth {settings.oauth_token}"})
+                with urllib_request.urlopen(revoke_request, timeout=15):
+                    pass
+                raise YandexDiskError("Яндекс.Диск пока не вернул публичную ссылку. Повторите попытку.")
+    except urllib_error.HTTPError as exc:
+        try:
+            payload = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            payload = {}
+        raise YandexDiskError(payload.get("message") or f"Ошибка Яндекс.Диска ({exc.code})") from exc
+    except urllib_error.URLError as exc:
+        raise YandexDiskError(f"Нет связи с Яндекс.Диском: {exc.reason}") from exc
+
+    project.yandex_disk_public_url = public_url
+    project.save(update_fields=["yandex_disk_public_url", "updated_at"])
+    return public_url
+
+
 def ensure_project_disk_folder(project, actor=None, force=False):
     settings = get_yandex_disk_settings(project.workspace)
     if not settings.enabled or (not settings.auto_create_project_folders and not force):
@@ -225,6 +269,8 @@ def archive_project_disk_folder(project, actor=None, force=False):
         return {"ok": True, "path": project.yandex_disk_path, "web_url": project.yandex_disk_web_url, "already_archived": True}
 
     try:
+        if project.yandex_disk_public_url:
+            set_project_folder_public(project, publish=False)
         ensure_folder_tree(settings.oauth_token, archive_path)
         move_resource(settings.oauth_token, project.yandex_disk_path, destination_path)
     except YandexDiskError as exc:

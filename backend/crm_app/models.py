@@ -174,6 +174,7 @@ class Project(models.Model):
     bonus_accrued_at = models.DateTimeField(blank=True, null=True)
     yandex_disk_path = models.CharField(max_length=600, blank=True, default="")
     yandex_disk_web_url = models.URLField(max_length=1000, blank=True, default="")
+    yandex_disk_public_url = models.URLField(max_length=1000, blank=True, default="")
     yandex_disk_created_at = models.DateTimeField(blank=True, null=True)
     yandex_disk_archived_at = models.DateTimeField(blank=True, null=True)
     yandex_disk_error = models.TextField(blank=True, default="")
