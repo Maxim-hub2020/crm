@@ -24,14 +24,12 @@ struct YandexRouteLink {
               webQuery.contains(where: { $0.name == "rtext" && !($0.value ?? "").isEmpty }),
               let mapsRaw = message["mapsUrl"], let mapsURL = URL(string: mapsRaw),
               mapsURL.scheme == "yandexmaps",
-              ["build_route_on_map", "maps.yandex.ru"].contains(mapsURL.host ?? ""),
-              let mapsQuery = URLComponents(url: mapsURL, resolvingAgainstBaseURL: false)?.queryItems,
-              (mapsURL.host == "build_route_on_map"
-                ? mapsQuery.contains(where: { $0.name == "lat_to" }) && mapsQuery.contains(where: { $0.name == "lon_to" })
-                : mapsQuery.contains(where: { $0.name == "mode" && $0.value == "routes" })) else { return nil }
+              (mapsRaw.hasPrefix("yandexmaps://build_route_on_map/?") &&
+                mapsRaw.contains("lat_to=") && mapsRaw.contains("lon_to=") ||
+                mapsRaw.hasPrefix("yandexmaps://maps.yandex.ru/?") && mapsRaw.contains("mode=routes")) else { return nil }
         if let navigatorRaw = message["navigatorUrl"], !navigatorRaw.isEmpty {
             guard let navigatorURL = URL(string: navigatorRaw), navigatorURL.scheme == "yandexnavi",
-                  navigatorURL.host == "build_route_on_map" else { return nil }
+                  navigatorRaw.hasPrefix("yandexnavi://build_route_on_map?") else { return nil }
             self.navigatorURL = navigatorURL
         } else {
             navigatorURL = nil
