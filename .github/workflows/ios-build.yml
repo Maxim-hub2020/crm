@@ -32,7 +32,7 @@ jobs:
         run: |
           APP_INFO="device-build/Build/Products/Release-iphoneos/CEH CRM.app/Info.plist"
           test -n "$(plutil -extract NSCameraUsageDescription raw -o - "$APP_INFO")"
-          test "$(plutil -extract CFBundleVersion raw -o - "$APP_INFO")" = "7"
+          test "$(plutil -extract CFBundleVersion raw -o - "$APP_INFO")" = "8"
           mkdir -p package/Payload
           ditto "device-build/Build/Products/Release-iphoneos/CEH CRM.app" "package/Payload/CEH CRM.app"
           lipo "package/Payload/CEH CRM.app/CEH CRM" -verify_arch arm64

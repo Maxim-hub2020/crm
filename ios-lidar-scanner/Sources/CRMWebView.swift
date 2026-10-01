@@ -104,8 +104,10 @@ struct CRMWebView: UIViewRepresentable {
         init(onScan: @escaping (ScanRequest) -> Void) { self.onScan = onScan }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            let origin = message.frameInfo.securityOrigin
             guard message.frameInfo.isMainFrame,
-                  let source = message.frameInfo.request.url, CRMOrigin.allows(source),
+                  origin.host == CRMOrigin.home.host, origin.`protocol` == "https",
+                  origin.port == 0 || origin.port == 443,
                   let body = message.body as? [String: String],
                   let rawURL = body["url"], let url = URL(string: rawURL),
                   let webView = message.webView else { return }

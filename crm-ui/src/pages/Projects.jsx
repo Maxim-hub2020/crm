@@ -445,75 +445,8 @@ function yandexRouteLinks(address, lat = "", lon = "") {
   };
 }
 
-function yandexRouteLinksWithOrigin(links, origin) {
-  if (!links?.destination || !origin?.lat || !origin?.lon) return links;
-
-  const routeText = `${origin.lat},${origin.lon}~${links.destination}`;
-  const params = new URLSearchParams({
-    mode: "routes",
-    rtext: routeText,
-    rtt: "auto",
-  });
-  if (links.hasCoordinates && links.lat && links.lon) {
-    params.set("ll", `${links.lon},${links.lat}`);
-    params.set("z", "16");
-  }
-  if (links.cleanAddress) {
-    params.set("text", links.cleanAddress);
-  }
-
-  const appUrls = [`yandexmaps://maps.yandex.ru/?${params.toString()}`];
-  const mapsRouteParams = new URLSearchParams();
-  if (links.hasCoordinates && links.lat && links.lon) {
-    mapsRouteParams.set("lat_from", origin.lat);
-    mapsRouteParams.set("lon_from", origin.lon);
-    mapsRouteParams.set("lat_to", links.lat);
-    mapsRouteParams.set("lon_to", links.lon);
-  }
-  if (links.hasCoordinates && links.lat && links.lon) {
-    const navigatorParams = new URLSearchParams({
-      lat_to: links.lat,
-      lon_to: links.lon,
-    });
-    appUrls.push(`yandexnavi://build_route_on_map?${navigatorParams.toString()}`);
-  }
-
-  return {
-    ...links,
-    webUrl: `https://yandex.ru/maps/?${params.toString()}`,
-    appUrls,
-    nativeMapsUrl: mapsRouteParams.size ? `yandexmaps://build_route_on_map/?${mapsRouteParams.toString()}` : appUrls[0],
-  };
-}
-
-function getCurrentRouteOrigin() {
-  if (!navigator.geolocation) return Promise.resolve(null);
-
-  return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        resolve({
-          lat: String(position.coords.latitude),
-          lon: String(position.coords.longitude),
-        });
-      },
-      () => resolve(null),
-      { enableHighAccuracy: false, maximumAge: 60000, timeout: 2500 }
-    );
-  });
-}
-
 function openYandexRouteLinks(links) {
   if (!links?.webUrl) return;
-
-  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
-  if (isMobile && links.hasCoordinates) {
-    getCurrentRouteOrigin().then((origin) => {
-      openPreparedYandexRouteLinks(origin ? yandexRouteLinksWithOrigin(links, origin) : links);
-    });
-    return;
-  }
-
   openPreparedYandexRouteLinks(links);
 }
 
@@ -1607,10 +1540,18 @@ export default function Projects() {
     [activeProject, activeProjectPayments]
   );
 
-  const routeLinks = useMemo(
-    () => yandexRouteLinks(detailForm.object_address, detailForm.object_lat, detailForm.object_lon),
-    [detailForm.object_address, detailForm.object_lat, detailForm.object_lon]
-  );
+  const routeLinks = useMemo(() => {
+    const hasProjectAddress = Boolean(String(detailForm.object_address || "").trim());
+    return yandexRouteLinks(
+      hasProjectAddress ? detailForm.object_address : projectClientForm.address || activeProjectClient?.address || "",
+      hasProjectAddress ? detailForm.object_lat : projectClientForm.address_lat || activeProjectClient?.address_lat || "",
+      hasProjectAddress ? detailForm.object_lon : projectClientForm.address_lon || activeProjectClient?.address_lon || ""
+    );
+  }, [
+    detailForm.object_address, detailForm.object_lat, detailForm.object_lon,
+    projectClientForm.address, projectClientForm.address_lat, projectClientForm.address_lon,
+    activeProjectClient?.address, activeProjectClient?.address_lat, activeProjectClient?.address_lon,
+  ]);
   const maxMessageUrl = useMemo(
     () => maxMessengerHref(activeProject, detailForm),
     [activeProject, detailForm.client_name, detailForm.client_phone, detailForm.title]
@@ -3726,29 +3667,28 @@ export default function Projects() {
                   ) : null}
                 </div>
 
-                <button
-                  type="button"
-                  className="group min-w-0 p-4 text-left transition hover:bg-white"
-                  onClick={() => setAddressDetailsOpen(true)}
-                >
+                <div className="group flex min-w-0 items-center p-4 transition hover:bg-white">
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 text-left"
+                    onClick={() => setAddressDetailsOpen(true)}
+                  >
                   <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Адрес</div>
-                  <div className="mt-2 flex items-center gap-3">
-                    <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-700">
-                      {detailForm.object_address || "Укажите адрес объекта"}
-                    </div>
-                    <span
-                      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition group-hover:bg-blue-50"
-                      onClick={(event) => {
-                        if (!routeLinks.webUrl) return;
-                        event.stopPropagation();
-                        openYandexRouteLinks(routeLinks);
-                      }}
-                      title="Построить маршрут"
-                    >
-                      <MapPin size={17} />
-                    </span>
+                  <div className="mt-2 truncate text-sm font-semibold text-slate-700">
+                      {detailForm.object_address || projectClientForm.address || activeProjectClient?.address || "Укажите адрес объекта"}
                   </div>
-                </button>
+                  </button>
+                  <button
+                    type="button"
+                    className="ml-3 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-slate-300"
+                    disabled={!routeLinks.webUrl}
+                    onClick={() => openYandexRouteLinks(routeLinks)}
+                    title="Построить маршрут"
+                    aria-label="Построить маршрут"
+                  >
+                    <MapPin size={17} />
+                  </button>
+                </div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
