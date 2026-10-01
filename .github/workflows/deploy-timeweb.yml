@@ -39,7 +39,12 @@ jobs:
 
             for attempt in 1 2 3; do
               echo "Docker build attempt ${attempt}/3 for ${image}..."
-              if docker build -t "$image" "$@"; then
+              build_args=()
+              if [ "$attempt" -gt 1 ] && [ "$image" != "$NOTIFIER_IMAGE" ]; then
+                echo "Retrying with the official Docker Hub image registry."
+                build_args=(--build-arg LIBRARY_REGISTRY=docker.io/library)
+              fi
+              if docker build "${build_args[@]}" -t "$image" "$@"; then
                 return 0
               fi
 

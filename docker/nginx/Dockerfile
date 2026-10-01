@@ -1,4 +1,5 @@
-FROM public.ecr.aws/docker/library/node:20-alpine AS frontend-build
+ARG LIBRARY_REGISTRY=public.ecr.aws/docker/library
+FROM ${LIBRARY_REGISTRY}/node:20-alpine AS frontend-build
 
 WORKDIR /frontend
 
@@ -17,7 +18,7 @@ ENV VITE_LIDAR_SCANNER_INSTALL_URL=$VITE_LIDAR_SCANNER_INSTALL_URL
 
 RUN npm run build
 
-FROM public.ecr.aws/docker/library/nginx:1.27-alpine
+FROM ${LIBRARY_REGISTRY}/nginx:1.27-alpine
 
 COPY docker/nginx/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=frontend-build /frontend/dist /usr/share/nginx/html
