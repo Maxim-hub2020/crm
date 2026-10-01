@@ -35,6 +35,15 @@ struct NormalizedPoint: Codable {
 struct ScannedWall: Codable {
     let contour: [NormalizedPoint]
     let confidence: Double
+    let width_mm: Int?
+    let height_mm: Int?
+
+    init(contour: [NormalizedPoint], confidence: Double, width_mm: Int? = nil, height_mm: Int? = nil) {
+        self.contour = contour
+        self.confidence = confidence
+        self.width_mm = width_mm
+        self.height_mm = height_mm
+    }
 }
 
 struct ScannedElement: Codable, Identifiable {

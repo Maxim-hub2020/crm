@@ -1625,6 +1625,16 @@ def _scan_confidence(value):
         return 0.0
 
 
+def _scan_wall_size_mm(value, field_name):
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValidationError({"result": f"Поле {field_name} должно быть числом."})
+    if not number.is_finite() or number < 100 or number > 20000:
+        raise ValidationError({"result": f"Поле {field_name} должно быть от 100 до 20000 мм."})
+    return int(number.to_integral_value())
+
+
 def _validated_measurement_scan_result(value):
     if not isinstance(value, dict):
         raise ValidationError({"result": "Результат сканирования должен быть объектом."})
@@ -1665,9 +1675,14 @@ def _validated_measurement_scan_result(value):
             normalized["label"] = str(element["label"])[:120]
         elements.append(normalized)
 
+    normalized_wall = {"contour": contour, "confidence": _scan_confidence(wall.get("confidence"))}
+    for key in ("width_mm", "height_mm"):
+        if wall.get(key) is not None:
+            normalized_wall[key] = _scan_wall_size_mm(wall[key], key)
+
     return {
         "schema_version": 1,
-        "wall": {"contour": contour, "confidence": _scan_confidence(wall.get("confidence"))},
+        "wall": normalized_wall,
         "elements": elements,
         "warnings": [str(item)[:300] for item in (value.get("warnings") or []) if str(item).strip()][:50],
     }

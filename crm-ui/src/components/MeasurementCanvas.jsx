@@ -29,7 +29,7 @@ import {
 import { mergeMeasurementSpecifications, packageMeasurementTranscript } from "../utils/measurementTranscript.js";
 import { snapOrthogonalPoint } from "../utils/measurementGeometry.js";
 import { MEASUREMENT_VIEWPORT, measurementViewportFraction, measurementViewportRenderBox, panMeasurementViewport, zoomMeasurementViewport } from "../utils/measurementViewport.js";
-import { resizeMeasurementWall } from "../utils/measurementScanGeometry.js";
+import { constrainFixtureCenter, resizeMeasurementWall } from "../utils/measurementScanGeometry.js";
 
 const CANVAS = { x: 54, y: 42, width: 892, height: 596 };
 const VIEW_LABELS = { wall: "Стена" };
@@ -452,7 +452,7 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     }
     const template = ELEMENT_TYPES[tool];
     if (!template) return;
-    const point = rawPoint;
+    const point = constrainFixtureCenter(rawPoint, template, diagram);
     const element = {
       id: globalThis.crypto?.randomUUID?.() || `element-${Date.now()}`,
       type: tool,
@@ -597,9 +597,20 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     setOrthogonalGuide(null);
     const width = numberValue(movingElement?.width, 0);
     const height = numberValue(movingElement?.height, 0);
-    const x = snap(clamp(drag.x + point.x - drag.start.x, 0, Math.max(wallWidth - width / 2, 0)));
-    const y = snap(clamp(drag.y + point.y - drag.start.y, 0, Math.max(wallHeight - height / 2, 0)));
-    updateElement(drag.id, { x, y }, false);
+    const center = constrainFixtureCenter({
+      x: drag.x + point.x - drag.start.x,
+      y: drag.y + point.y - drag.start.y,
+    }, { width, height }, diagram);
+    const x = center.x;
+    const y = center.y;
+    const hasReferences = movingElement?.horizontal_distance != null;
+    updateElement(drag.id, {
+      x, y,
+      ...(hasReferences ? {
+        horizontal_distance: movingElement.horizontal_reference === "right" ? wallWidth - x : x,
+        vertical_distance: movingElement.vertical_reference === "top" ? wallHeight - y : y,
+      } : {}),
+    }, false);
   }
 
   function endPointer(event) {
@@ -657,7 +668,8 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
     setContextEditorOpen(false);
   }
 
-  const wallPoints = (diagram.wall.points || []).map(toSvg);
+  const scanLines = diagram.elements.filter((element) => element.type === "dimension" && element.source_scan_session);
+  const wallPoints = (scanLines.length ? scanLines.map((line) => ({ x: line.x1, y: line.y1 })) : diagram.wall.points || []).map(toSvg);
   const wallPolygon = wallPoints.length >= 2 ? wallPoints.map((point) => `${point.x},${point.y}`).join(" ") : "";
   const visibleElements = diagram.elements.filter((element) => element.side === view);
   const zoomPercent = Math.round((MEASUREMENT_VIEWPORT.width / viewport.width) * 100);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { editableScanContourLines, resizeMeasurementWall } from "./measurementScanGeometry.js";
+import { constrainFixtureCenter, editableScanContourLines, resizeMeasurementWall } from "./measurementScanGeometry.js";
 
 test("LiDAR contour becomes editable dimension lines without a duplicate closing point", () => {
   const contour = [
@@ -36,4 +36,13 @@ test("invalid dimensions do not modify the diagram", () => {
   const diagram = { wall: { width: 2000, height: 3000 }, elements: [] };
   assert.equal(resizeMeasurementWall(diagram, 0, 3000), diagram);
   assert.equal(resizeMeasurementWall(diagram, 2000, 21000), diagram);
+});
+
+test("socket center stays inside the scanned wall, including its physical size", () => {
+  const elements = editableScanContourLines([
+    { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 },
+  ], 2000, 3000, "scan-1");
+  const diagram = { wall: { width: 2000, height: 3000, points: [] }, elements };
+  assert.deepEqual(constrainFixtureCenter({ x: 10, y: 20 }, { width: 68, height: 68 }, diagram), { x: 234, y: 334 });
+  assert.deepEqual(constrainFixtureCenter({ x: 1990, y: 2990 }, { width: 68, height: 68 }, diagram), { x: 1766, y: 2666 });
 });

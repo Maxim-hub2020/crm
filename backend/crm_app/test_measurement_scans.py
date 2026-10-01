@@ -43,6 +43,8 @@ class TestMeasurementScanSessions(APITestCase):
             "wall": {
                 "contour": [{"x": 0.05, "y": 0.1}, {"x": 0.95, "y": 0.1}, {"x": 0.95, "y": 0.9}, {"x": 0.05, "y": 0.9}],
                 "confidence": 0.98,
+                "width_mm": 2200,
+                "height_mm": 2600,
             },
             "elements": [
                 {"type": "socket_double", "x": 0.4, "y": 0.7, "width": 0.12, "height": 0.06, "confidence": 0.88},
@@ -63,6 +65,7 @@ class TestMeasurementScanSessions(APITestCase):
         retrieve_response = self.client.get(f"/api/measurement-scan-sessions/{session_id}/")
         self.assertEqual(retrieve_response.status_code, status.HTTP_200_OK)
         self.assertEqual(retrieve_response.data["result"]["elements"][0]["type"], "socket_double")
+        self.assertEqual(retrieve_response.data["result"]["wall"]["width_mm"], 2200)
 
         applied_response = self.client.post(f"/api/measurement-scan-sessions/{session_id}/applied/", {}, format="json")
         self.assertEqual(applied_response.status_code, status.HTTP_200_OK)

@@ -49,7 +49,7 @@ final class NativeBridgeTests: XCTestCase {
     func testAppDeclaresCameraPermission() {
         let description = Bundle.main.object(forInfoDictionaryKey: "NSCameraUsageDescription") as? String
         XCTAssertFalse(description?.isEmpty ?? true)
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "6")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "7")
     }
 
     func testMobileConfigurationAnnouncesNativeBridgeBeforePageScripts() {
@@ -85,5 +85,13 @@ final class NativeBridgeTests: XCTestCase {
         changed = message
         changed["mapsUrl"] = "yandexmaps://maps.yandex.ru/?text=address"
         XCTAssertNil(YandexRouteLink(message: changed))
+    }
+
+    func testFixturePositionUsesWallCoordinatesAndRejectsOutsideMarks() {
+        let dimensions = SIMD3<Float>(2, 3, 0.1)
+        let center = RoomPlanConverter.normalizedFixture(local: SIMD3<Float>(0, 0, 0.05), dimensions: dimensions)
+        XCTAssertEqual(center?.x, 0.5)
+        XCTAssertEqual(center?.y, 0.5)
+        XCTAssertNil(RoomPlanConverter.normalizedFixture(local: SIMD3<Float>(2, 0, 0), dimensions: dimensions))
     }
 }

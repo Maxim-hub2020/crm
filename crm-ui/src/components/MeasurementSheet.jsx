@@ -58,7 +58,7 @@ function scanStorageKey(projectId) {
 }
 
 import { nativeAppVersion, nativeScannerAvailable, sendNativeAction } from "../utils/nativeApp.js";
-import { editableScanContourLines } from "../utils/measurementScanGeometry.js";
+import { constrainFixtureCenter, editableScanContourLines } from "../utils/measurementScanGeometry.js";
 
 const lidarScannerDistributed = import.meta.env.VITE_LIDAR_SCANNER_DISTRIBUTED === "true";
 const lidarScannerInstallUrl = String(import.meta.env.VITE_LIDAR_SCANNER_INSTALL_URL || "").trim();
@@ -78,8 +78,8 @@ const SCAN_ELEMENT_DEFAULTS = {
 
 function diagramFromScan(diagram, scanSession) {
   const source = scanSession.result || {};
-  const wallWidth = Math.max(Number(diagram?.wall?.width || 2000), 100);
-  const wallHeight = Math.max(Number(diagram?.wall?.height || 2600), 100);
+  const wallWidth = Math.max(Number(source.wall?.width_mm || diagram?.wall?.width || 2000), 100);
+  const wallHeight = Math.max(Number(source.wall?.height_mm || diagram?.wall?.height || 2600), 100);
   const contour = Array.isArray(source.wall?.contour) ? source.wall.contour.map((point) => ({
     x: Math.round(Number(point.x || 0) * wallWidth),
     y: Math.round((1 - Number(point.y || 0)) * wallHeight),
@@ -88,15 +88,18 @@ function diagramFromScan(diagram, scanSession) {
     ? diagram.elements.filter((element) => !element.source_scan_session)
     : [];
   const scanLines = editableScanContourLines(source.wall?.contour, wallWidth, wallHeight, scanSession.id);
+  const scannedWall = { width: wallWidth, height: wallHeight, points: contour };
+  const scannedGeometry = { wall: scannedWall, elements: scanLines };
   const scannedElements = (Array.isArray(source.elements) ? source.elements : []).map((element, index) => {
     const template = SCAN_ELEMENT_DEFAULTS[element.type] || SCAN_ELEMENT_DEFAULTS.cut_rect;
-    const x = Math.round(Number(element.x || 0) * wallWidth);
-    const y = Math.round((1 - Number(element.y || 0)) * wallHeight);
+    const rawX = Math.round(Number(element.x || 0) * wallWidth);
+    const rawY = Math.round((1 - Number(element.y || 0)) * wallHeight);
     const width = element.width ? Math.max(Math.round(Number(element.width) * wallWidth), 20) : template.width;
     const height = element.height ? Math.max(Math.round(Number(element.height) * wallHeight), 20) : template.height;
     const diameter = element.diameter
       ? Math.max(Math.round(Number(element.diameter) * Math.min(wallWidth, wallHeight)), 20)
       : template.diameter;
+    const { x, y } = constrainFixtureCenter({ x: rawX, y: rawY }, { width, height }, scannedGeometry);
     return {
       ...template,
       id: `lidar-${scanSession.id}-${index}`,
@@ -115,14 +118,14 @@ function diagramFromScan(diagram, scanSession) {
       confidence: Number(element.confidence || 0),
       needs_review: Number(element.confidence || 0) < 0.8,
       source_scan_session: scanSession.id,
-      note: Number(element.confidence || 0) < 0.8 ? "Проверьте положение и тип объекта по фото" : "Отмечено на фото стены",
+      note: Number(element.confidence || 0) < 0.8 ? "Проверьте положение и тип объекта на стене" : "Отмечено при сканировании стены",
     };
   });
   return {
     ...createDefaultDiagram(),
     ...(diagram || {}),
     active_view: "wall",
-    wall: { ...createDefaultDiagram().wall, ...(diagram?.wall || {}), ...(scanLines.length ? { points: [] } : contour.length >= 3 ? { points: contour } : {}) },
+    wall: { ...createDefaultDiagram().wall, ...(diagram?.wall || {}), ...scannedWall },
     elements: [...previousElements, ...scanLines, ...scannedElements],
   };
 }
