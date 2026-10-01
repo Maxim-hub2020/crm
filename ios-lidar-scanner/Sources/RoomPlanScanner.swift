@@ -26,7 +26,7 @@ final class RoomPlanController: ObservableObject {
         let targets: [ARRaycastQuery.Target] = [.existingPlaneGeometry, .estimatedPlane]
         var hit: ARRaycastResult?
         for target in targets {
-            guard let query = frame.raycastQuery(from: center, allowing: target, alignment: .vertical) else { continue }
+            let query = frame.raycastQuery(from: center, allowing: target, alignment: .vertical)
             hit = session.raycast(query).first
             if hit != nil { break }
         }
