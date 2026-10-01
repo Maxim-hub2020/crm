@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Цех CRM">
+  <defs>
+    <linearGradient id="tile" x1="92" y1="48" x2="430" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#020617"/>
+      <stop offset="0.62" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#1e40af"/>
+    </linearGradient>
+    <radialGradient id="blueGlow" cx="0" cy="0" r="1" gradientTransform="translate(148 112) rotate(51) scale(256)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38bdf8" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="cyanGlow" cx="0" cy="0" r="1" gradientTransform="translate(414 404) rotate(144) scale(260)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22d3ee" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#tile)"/>
+  <rect width="512" height="512" rx="116" fill="url(#blueGlow)"/>
+  <rect width="512" height="512" rx="116" fill="url(#cyanGlow)"/>
+  <circle cx="132" cy="116" r="13" fill="#fff" opacity="0.72"/>
+  <circle cx="176" cy="116" r="13" fill="#fff" opacity="0.34"/>
+  <path d="M168 138h158v56H224v116c0 46 28 74 75 74h41v-94h58v150H296c-84 0-154-57-154-144V170c0-18 10-32 26-32Z" fill="#fff"/>
+  <path d="M354 206h30v46h-30z" rx="15" fill="#93c5fd"/>
+  <path d="M400 184h30v68h-30z" rx="15" fill="#fff"/>
+  <path d="M446 220h30v52h-30z" rx="15" fill="#67e8f9"/>
+</svg>
