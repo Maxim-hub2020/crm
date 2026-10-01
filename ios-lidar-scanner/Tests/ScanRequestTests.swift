@@ -44,6 +44,12 @@ final class ScanRequestTests: XCTestCase {
 
 @MainActor
 final class NativeBridgeTests: XCTestCase {
+    func testAppDeclaresCameraPermission() {
+        let description = Bundle.main.object(forInfoDictionaryKey: "NSCameraUsageDescription") as? String
+        XCTAssertFalse(description?.isEmpty ?? true)
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "4")
+    }
+
     func testMobileConfigurationAnnouncesNativeBridgeBeforePageScripts() {
         let configuration = CRMWebView.configuration()
         XCTAssertEqual(configuration.defaultWebpagePreferences.preferredContentMode, .mobile)
