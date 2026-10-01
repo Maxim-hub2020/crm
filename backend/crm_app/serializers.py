@@ -2,7 +2,7 @@ import json
 import logging
 import secrets
 from datetime import timedelta
-from urllib.parse import quote as url_quote, urlencode
+from urllib.parse import quote as url_quote, urlencode, urlsplit
 
 from django.conf import settings
 from django.db import transaction
@@ -95,6 +95,7 @@ class ClientSerializer(serializers.ModelSerializer):
             "name",
             "contract_full_name",
             "phone",
+            "max_chat_url",
             "email",
             "address",
             "address_lat",
@@ -112,6 +113,7 @@ class ClientSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             "contract_full_name": {"required": False, "allow_blank": True},
             "phone": {"required": False, "allow_blank": True},
+            "max_chat_url": {"required": False, "allow_blank": True},
             "email": {"required": False, "allow_blank": True, "allow_null": True},
             "address": {"required": False, "allow_blank": True, "allow_null": True},
             "address_lat": {"required": False, "allow_blank": True, "allow_null": True},
@@ -129,6 +131,16 @@ class ClientSerializer(serializers.ModelSerializer):
 
     def validate_phone(self, value):
         return normalize_client_phone(value)
+
+    def validate_max_chat_url(self, value):
+        if not value:
+            return ""
+        parsed = urlsplit(value.strip())
+        if (parsed.scheme != "https" or parsed.hostname not in {"max.ru", "max.page.link"}
+                or parsed.username or parsed.password or parsed.port
+                or not parsed.path.strip("/") or parsed.path.startswith("/chat")):
+            raise serializers.ValidationError("Вставьте ссылку на профиль клиента из MAX, а не номер телефона.")
+        return value.strip()
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

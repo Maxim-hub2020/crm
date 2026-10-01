@@ -74,7 +74,8 @@ import {
 } from "../components/ui.jsx";
 import ClientAddressFields from "../components/ClientAddressFields.jsx";
 const MeasurementSheet = React.lazy(() => import("../components/MeasurementSheet.jsx"));
-import { maxNativeUrl, openAppLink, openNativeYandexRoute } from "../utils/appLinks.js";
+import { openAppLink, openNativeYandexRoute } from "../utils/appLinks.js";
+import { maxShareUrl, validMaxChatUrl } from "../utils/maxLinks.js";
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits, phoneSearchDigits } from "../utils/phone.js";
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
@@ -151,6 +152,7 @@ function createClientEditForm(client = {}) {
     name: client.name || client.client_name || "",
     contract_full_name: client.contract_full_name || "",
     phone: client.phone || client.client_phone || "",
+    max_chat_url: client.max_chat_url || "",
     email: client.email || client.client_email || "",
     address: client.address || client.object_address || "",
     address_lat: client.address_lat || client.object_lat || "",
@@ -328,7 +330,9 @@ function maxMessengerPhone(value) {
   return "";
 }
 
-function maxMessengerHref(project, form) {
+function maxMessengerHref(project, form, clientChatUrl = "") {
+  const directLink = validMaxChatUrl(clientChatUrl);
+  if (directLink) return directLink;
   const clientName = String(form?.client_name || project?.client_name || "").trim();
   const clientPhone = String(form?.client_phone || project?.client_phone || "").trim();
   const maxPhone = maxMessengerPhone(clientPhone);
@@ -340,19 +344,13 @@ function maxMessengerHref(project, form) {
     greeting,
     `Пишу по проекту${projectLabel ? ` ${projectLabel}` : ""}.`,
   ].filter(Boolean);
-  const params = new URLSearchParams({
-    phone: maxPhone,
-    text: messageParts.join("\n"),
-  });
-
-  return maxPhone ? `https://max.ru/chat?${params.toString()}` : "";
+  return maxPhone ? maxShareUrl(messageParts.join("\n")) : "";
 }
 
 function openMaxApp(event, webUrl) {
   event.preventDefault();
   openAppLink({
     webUrl,
-    nativeUrl: maxNativeUrl(webUrl),
     androidPackage: "ru.oneme.app",
   });
 }
@@ -1553,8 +1551,8 @@ export default function Projects() {
     activeProjectClient?.address, activeProjectClient?.address_lat, activeProjectClient?.address_lon,
   ]);
   const maxMessageUrl = useMemo(
-    () => maxMessengerHref(activeProject, detailForm),
-    [activeProject, detailForm.client_name, detailForm.client_phone, detailForm.title]
+    () => maxMessengerHref(activeProject, detailForm, activeProjectClient?.max_chat_url),
+    [activeProject, activeProjectClient?.max_chat_url, detailForm.client_name, detailForm.client_phone, detailForm.title]
   );
   const projectClientMaxUrl = useMemo(
     () =>
@@ -1562,8 +1560,8 @@ export default function Projects() {
         ...projectClientForm,
         client_name: projectClientForm.name,
         client_phone: projectClientForm.phone,
-      }),
-    [activeProject, projectClientForm.name, projectClientForm.phone]
+      }, projectClientForm.max_chat_url || activeProjectClient?.max_chat_url),
+    [activeProject, activeProjectClient?.max_chat_url, projectClientForm.name, projectClientForm.phone, projectClientForm.max_chat_url]
   );
   const projectClientRouteLinks = useMemo(
     () =>
@@ -2136,6 +2134,7 @@ export default function Projects() {
         name: projectClientForm.name.trim(),
         contract_full_name: projectClientForm.contract_full_name.trim(),
         phone: normalizeOptionalClientPhone(projectClientForm.phone),
+        max_chat_url: projectClientForm.max_chat_url.trim(),
         email: projectClientForm.email.trim() || null,
         address: projectClientForm.address.trim() || null,
         address_lat: projectClientForm.address_lat || null,
@@ -3619,8 +3618,8 @@ export default function Projects() {
                           className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
                           href={maxMessageUrl}
                           onClick={(event) => openMaxApp(event, maxMessageUrl)}
-                          title="Написать клиенту в MAX"
-                          aria-label="Написать клиенту в MAX"
+                          title={activeProjectClient?.max_chat_url ? "Открыть чат клиента в MAX" : "Поделиться сообщением в MAX"}
+                          aria-label={activeProjectClient?.max_chat_url ? "Открыть чат клиента в MAX" : "Поделиться сообщением в MAX"}
                         >
                           <MessageSquare size={17} />
                         </a>
@@ -4627,8 +4626,8 @@ export default function Projects() {
                     className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-slate-950 text-white ring-1 ring-slate-950 transition hover:bg-slate-800"
                     href={projectClientMaxUrl}
                     onClick={(event) => openMaxApp(event, projectClientMaxUrl)}
-                    title="Написать в MAX"
-                    aria-label="Написать в MAX"
+                    title={projectClientForm.max_chat_url ? "Открыть чат клиента в MAX" : "Поделиться сообщением в MAX"}
+                    aria-label={projectClientForm.max_chat_url ? "Открыть чат клиента в MAX" : "Поделиться сообщением в MAX"}
                   >
                     <MessageSquare size={18} />
                   </a>
@@ -4660,6 +4659,7 @@ export default function Projects() {
               <ClientInfoTile icon={MapPin} label="Квартира" value={activeProjectClient?.apartment || projectClientForm.apartment} />
               <ClientInfoTile icon={MapPin} label="Этаж" value={activeProjectClient?.floor || projectClientForm.floor} />
               <ClientInfoTile icon={Ticket} label="Промокод" value={activeProjectClient?.promo_code || "Недоступен без телефона"} />
+              <ClientInfoTile icon={MessageSquare} label="Ссылка на чат MAX" value={activeProjectClient?.max_chat_url || projectClientForm.max_chat_url} />
               <ClientInfoTile icon={Wallet} label="Бонусный счёт" value={`${formatMoney(activeProjectClient?.bonus_balance || 0)} ₽`} />
             </div>
           </div>
@@ -4713,6 +4713,16 @@ export default function Projects() {
                 onChange={(event) => setProjectClientForm((prev) => ({ ...prev, email: event.target.value }))}
                 placeholder="client@example.ru"
               />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Ссылка на чат клиента в MAX</Label>
+              <Input
+                type="url"
+                value={projectClientForm.max_chat_url}
+                onChange={(event) => setProjectClientForm((prev) => ({ ...prev, max_chat_url: event.target.value }))}
+                placeholder="https://max.ru/u/..."
+              />
+              <p className="text-xs text-slate-500">Если ссылки нет, кнопка MAX откроет выбор получателя с готовым текстом.</p>
             </div>
             <ClientAddressFields
               form={projectClientForm}

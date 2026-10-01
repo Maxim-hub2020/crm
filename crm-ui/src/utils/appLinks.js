@@ -42,10 +42,6 @@ export function openAppLink({ webUrl, nativeUrl = "", androidPackage = "" }) {
   window.location.assign(nativeUrl);
 }
 
-export function maxNativeUrl(webUrl) {
-  return String(webUrl || "").replace(/^https:\/\//i, "max://");
-}
-
 export function openNativeYandexRoute({ webUrl, mapsUrl, navigatorUrl = "" }) {
   if (!webUrl || !nativeAppAvailable()) return false;
   if (!window.CEHCRMNative?.capabilities?.route) return sendNativeAction("openExternal", webUrl);

@@ -1034,6 +1034,27 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
         self.client_card.refresh_from_db()
         self.assertTrue(self.client_card.works_with_contract)
 
+    def test_client_can_store_real_max_chat_link(self):
+        api_client = self.auth_client_for(self.manager)
+        response = api_client.patch(
+            f"/api/clients/{self.client_card.id}/",
+            {"max_chat_url": "https://max.ru/u/client-id"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.client_card.refresh_from_db()
+        self.assertEqual(self.client_card.max_chat_url, "https://max.ru/u/client-id")
+
+    def test_client_rejects_unsupported_max_phone_link(self):
+        api_client = self.auth_client_for(self.manager)
+        response = api_client.patch(
+            f"/api/clients/{self.client_card.id}/",
+            {"max_chat_url": "https://max.ru/chat?phone=79000000000"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("max_chat_url", response.data)
+
     def test_client_card_can_be_updated(self):
         api_client = self.auth_client_for(self.manager)
 
