@@ -24,10 +24,13 @@ final class RoomPlanController: ObservableObject {
               let frame = session.currentFrame else { return "Камера ещё не определила стену. Наведите её на поверхность и попробуйте снова." }
         let center = CGPoint(x: 0.5, y: 0.5)
         let targets: [ARRaycastQuery.Target] = [.existingPlaneGeometry, .estimatedPlane]
-        guard let hit = targets.lazy.compactMap({ target in
-            guard let query = frame.raycastQuery(from: center, allowing: target, alignment: .vertical) else { return nil }
-            return session.raycast(query).first
-        }).first else { return "Не удалось определить точку на стене. Наведите метку на розетку и подождите секунду." }
+        var hit: ARRaycastResult?
+        for target in targets {
+            guard let query = frame.raycastQuery(from: center, allowing: target, alignment: .vertical) else { continue }
+            hit = session.raycast(query).first
+            if hit != nil { break }
+        }
+        guard let hit else { return "Не удалось определить точку на стене. Наведите метку на розетку и подождите секунду." }
         let translation = hit.worldTransform.columns.3
         marks.append(LiveFixtureMark(type: type, label: label,
             position: SIMD3<Float>(translation.x, translation.y, translation.z)))
