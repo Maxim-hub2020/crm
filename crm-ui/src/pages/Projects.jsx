@@ -77,7 +77,7 @@ import ClientAddressFields from "../components/ClientAddressFields.jsx";
 const MeasurementSheet = React.lazy(() => import("../components/MeasurementSheet.jsx"));
 import { openAppLink, openNativeYandexRoute } from "../utils/appLinks.js";
 import { nativeAppAvailable } from "../utils/nativeApp.js";
-import { maxShareUrl, validMaxChatUrl } from "../utils/maxLinks.js";
+import { validMaxChatUrl } from "../utils/maxLinks.js";
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits, phoneSearchDigits } from "../utils/phone.js";
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
@@ -347,13 +347,16 @@ function maxMessengerHref(project, form, clientChatUrl = "") {
     `Пишу по проекту${projectLabel ? ` ${projectLabel}` : ""}.`,
   ].filter(Boolean);
   if (!maxPhone) return "";
-  if (nativeAppAvailable()) return maxShareUrl(messageParts.join("\n"));
   const params = new URLSearchParams({ phone: maxPhone, text: messageParts.join("\n") });
   return `https://max.ru/chat?${params.toString()}`;
 }
 
-function openMaxApp(event, webUrl) {
+function openMaxApp(event, webUrl, directLink, onMissingLink) {
   event.preventDefault();
+  if (nativeAppAvailable() && !validMaxChatUrl(directLink)) {
+    onMissingLink?.();
+    return;
+  }
   openAppLink({
     webUrl,
     androidPackage: "ru.oneme.app",
@@ -1991,6 +1994,11 @@ export default function Projects() {
     setProjectClientOpen(true);
   }
 
+  function openProjectClientMaxLink() {
+    openProjectClientCard();
+    window.setTimeout(() => document.getElementById("project-client-max-url")?.scrollIntoView({ block: "center", behavior: "smooth" }), 80);
+  }
+
   function closeProjectClientCard() {
     if (projectClientSaving) return;
     setProjectClientOpen(false);
@@ -2872,40 +2880,20 @@ export default function Projects() {
 
   async function handleYandexDiskFolderOpen() {
     if (!activeProject?.id || yandexDiskPublishing) return;
-    if (activeProject.yandex_disk_public_url) {
-      openAppLink({ webUrl: activeProject.yandex_disk_public_url, androidPackage: "ru.yandex.disk" });
-      return;
-    }
-    if (!nativeAppAvailable()) {
+    if (!activeProject.yandex_disk_public_url) {
       openAppLink({ webUrl: activeProject.yandex_disk_web_url, androidPackage: "ru.yandex.disk" });
       return;
     }
-    if (!window.confirm("Открыть папку в приложении Диска? CRM создаст публичную ссылку: любой, у кого она окажется, сможет просматривать файлы в этой папке, включая новые. Доступ можно отключить здесь же.")) return;
-    setYandexDiskPublishing(true);
-    setDetailError("");
-    try {
-      const result = await setProjectYandexDiskPublicLink(activeProject.id, true);
-      if (result.project) applyUpdatedProject(result.project);
-      if (result.public_url) openAppLink({ webUrl: result.public_url, androidPackage: "ru.yandex.disk" });
-    } catch (error) {
-      setDetailError(extractApiErrorMessage(error, "Не удалось открыть доступ к папке на Яндекс.Диске."));
-    } finally {
-      setYandexDiskPublishing(false);
-    }
-  }
-
-  async function handleYandexDiskFolderUnpublish() {
-    if (!activeProject?.id || yandexDiskPublishing) return;
-    if (!window.confirm("Отключить публичную ссылку на папку проекта?")) return;
     setYandexDiskPublishing(true);
     setDetailError("");
     try {
       const result = await setProjectYandexDiskPublicLink(activeProject.id, false);
       if (result.project) applyUpdatedProject(result.project);
     } catch (error) {
-      setDetailError(extractApiErrorMessage(error, "Не удалось закрыть доступ к папке."));
+      setDetailError(extractApiErrorMessage(error, "Не удалось закрыть ранее созданную публичную ссылку на Яндекс.Диске."));
     } finally {
       setYandexDiskPublishing(false);
+      openAppLink({ webUrl: activeProject.yandex_disk_web_url, androidPackage: "ru.yandex.disk" });
     }
   }
 
@@ -3662,9 +3650,9 @@ export default function Projects() {
                         <a
                           className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
                           href={maxMessageUrl}
-                          onClick={(event) => openMaxApp(event, maxMessageUrl)}
-                          title={activeProjectClient?.max_chat_url ? "Открыть чат клиента в MAX" : "Поделиться сообщением в MAX"}
-                          aria-label={activeProjectClient?.max_chat_url ? "Открыть чат клиента в MAX" : "Поделиться сообщением в MAX"}
+                          onClick={(event) => openMaxApp(event, maxMessageUrl, activeProjectClient?.max_chat_url, openProjectClientMaxLink)}
+                          title={activeProjectClient?.max_chat_url ? "Открыть чат клиента в MAX" : "Добавить ссылку клиента MAX для прямого перехода"}
+                          aria-label={activeProjectClient?.max_chat_url ? "Открыть чат клиента в MAX" : "Добавить ссылку клиента MAX для прямого перехода"}
                         >
                           <MessageSquare size={17} />
                         </a>
@@ -3996,11 +3984,6 @@ export default function Projects() {
                         <span className="min-w-0">{yandexDiskCreating ? "Создаём..." : "Создать папку"}</span>
                       </Button>
                     )}
-                    {activeProject.yandex_disk_public_url ? (
-                      <Button type="button" variant="secondary" className="justify-center px-3" onClick={handleYandexDiskFolderUnpublish} disabled={yandexDiskPublishing}>
-                        <span className="min-w-0">Закрыть доступ по ссылке</span>
-                      </Button>
-                    ) : null}
                     {detailForm.works_with_contract ? (
                       <>
                         <Button
@@ -4676,9 +4659,9 @@ export default function Projects() {
                   <a
                     className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-slate-950 text-white ring-1 ring-slate-950 transition hover:bg-slate-800"
                     href={projectClientMaxUrl}
-                    onClick={(event) => openMaxApp(event, projectClientMaxUrl)}
-                    title={projectClientForm.max_chat_url ? "Открыть чат клиента в MAX" : "Поделиться сообщением в MAX"}
-                    aria-label={projectClientForm.max_chat_url ? "Открыть чат клиента в MAX" : "Поделиться сообщением в MAX"}
+                    onClick={(event) => openMaxApp(event, projectClientMaxUrl, projectClientForm.max_chat_url || activeProjectClient?.max_chat_url, () => document.getElementById("project-client-max-url")?.focus())}
+                    title={projectClientForm.max_chat_url ? "Открыть чат клиента в MAX" : "Добавить ссылку клиента MAX для прямого перехода"}
+                    aria-label={projectClientForm.max_chat_url ? "Открыть чат клиента в MAX" : "Добавить ссылку клиента MAX для прямого перехода"}
                   >
                     <MessageSquare size={18} />
                   </a>
@@ -4768,12 +4751,13 @@ export default function Projects() {
             <div className="space-y-2 sm:col-span-2">
               <Label>Ссылка на чат клиента в MAX</Label>
               <Input
+                id="project-client-max-url"
                 type="url"
                 value={projectClientForm.max_chat_url}
                 onChange={(event) => setProjectClientForm((prev) => ({ ...prev, max_chat_url: event.target.value }))}
                 placeholder="https://max.ru/u/..."
               />
-              <p className="text-xs text-slate-500">Если ссылки нет, кнопка MAX откроет выбор получателя с готовым текстом.</p>
+              <p className="text-xs text-slate-500">Вставьте ссылку на профиль клиента, скопированную из MAX. Адрес max.ru/chat?phone=... в приложении iPhone не работает.</p>
             </div>
             <ClientAddressFields
               form={projectClientForm}

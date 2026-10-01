@@ -138,7 +138,7 @@ class ClientSerializer(serializers.ModelSerializer):
         parsed = urlsplit(value.strip())
         if (parsed.scheme != "https" or parsed.hostname not in {"max.ru", "max.page.link"}
                 or parsed.username or parsed.password or parsed.port
-                or not parsed.path.strip("/") or parsed.path.startswith("/chat")):
+                or not parsed.path.strip("/") or parsed.path.startswith(("/chat", "/:share"))):
             raise serializers.ValidationError("Вставьте ссылку на профиль клиента из MAX, а не номер телефона.")
         return value.strip()
 

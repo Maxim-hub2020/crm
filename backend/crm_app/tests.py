@@ -2709,22 +2709,25 @@ class TestYandexDiskPublicLinkApi(AuthenticatedApiMixin, APITestCase):
         )
         self.client = self.auth_client_for(self.user)
 
-    def test_publish_and_revoke_are_explicit_actions(self):
+    def test_new_public_links_are_disabled_but_old_links_can_be_revoked(self):
         url = f"/api/projects/{self.project.id}/yandex-disk-public-link/"
+        self.project.yandex_disk_public_url = "https://disk.yandex.ru/d/test"
+        self.project.save(update_fields=["yandex_disk_public_url"])
+
         def set_public_link(project, publish):
-            project.yandex_disk_public_url = "https://disk.yandex.ru/d/test" if publish else ""
+            self.assertFalse(publish)
+            project.yandex_disk_public_url = ""
             return project.yandex_disk_public_url
 
         with patch("crm_app.views.set_project_folder_public") as set_public:
             set_public.side_effect = set_public_link
             response = self.client.post(url, {"publish": True}, format="json")
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(response.data["public_url"], "https://disk.yandex.ru/d/test")
-            self.assertEqual(response.data["project"]["yandex_disk_public_url"], "https://disk.yandex.ru/d/test")
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+            set_public.assert_not_called()
             response = self.client.post(url, {"publish": False}, format="json")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             self.assertEqual(response.data["public_url"], "")
-            self.assertEqual(set_public.call_count, 2)
+            self.assertEqual(set_public.call_count, 1)
 
     def test_publish_rejects_invalid_request(self):
         response = self.client.post(

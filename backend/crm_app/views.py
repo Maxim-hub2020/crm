@@ -1131,10 +1131,10 @@ class ProjectViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="yandex-disk-public-link")
     def yandex_disk_public_link(self, request, pk=None):
         project = self.get_object()
-        if not isinstance(request.data.get("publish"), bool):
-            return Response({"detail": "Укажите publish: true или false."}, status=drf_status.HTTP_400_BAD_REQUEST)
+        if request.data.get("publish") is not False:
+            return Response({"detail": "Создание публичных ссылок отключено."}, status=drf_status.HTTP_400_BAD_REQUEST)
         try:
-            public_url = set_project_folder_public(project, publish=request.data["publish"])
+            public_url = set_project_folder_public(project, publish=False)
         except YandexDiskError as exc:
             return Response({"detail": str(exc)}, status=drf_status.HTTP_400_BAD_REQUEST)
         return Response({"public_url": public_url, "project": self.get_serializer(project).data})
