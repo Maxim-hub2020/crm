@@ -110,8 +110,12 @@ struct CRMWebView: UIViewRepresentable {
                   let rawURL = body["url"], let url = URL(string: rawURL),
                   let webView = message.webView else { return }
             if body["action"] == "scan", let scan = ScanRequest(url: url) { onScan(scan) }
-            if body["action"] == "openRoute", let route = YandexRouteLink(message: body) {
-                openRoute(route, from: webView)
+            if body["action"] == "openRoute" {
+                if let route = YandexRouteLink(message: body) {
+                    openRoute(route, from: webView)
+                } else if url.scheme == "https", url.host == "yandex.ru", url.path == "/maps/" {
+                    openExternal(url, from: webView)
+                }
             }
             if body["action"] == "openExternal", url.scheme == "https", url.user == nil, url.password == nil {
                 openExternal(url, from: webView)
