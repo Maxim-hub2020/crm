@@ -77,7 +77,7 @@ import ClientAddressFields from "../components/ClientAddressFields.jsx";
 const MeasurementSheet = React.lazy(() => import("../components/MeasurementSheet.jsx"));
 import { openAppLink, openNativeYandexRoute } from "../utils/appLinks.js";
 import { nativeAppAvailable } from "../utils/nativeApp.js";
-import { validMaxChatUrl } from "../utils/maxLinks.js";
+import { maxWebChatUrl, validMaxChatUrl } from "../utils/maxLinks.js";
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone, phoneDigits, phoneSearchDigits } from "../utils/phone.js";
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
@@ -351,10 +351,14 @@ function maxMessengerHref(project, form, clientChatUrl = "") {
   return `https://max.ru/chat?${params.toString()}`;
 }
 
-function openMaxApp(event, webUrl, directLink, onMissingLink) {
+function openMaxApp(event, webUrl, directLink, clientPhone) {
   event.preventDefault();
   if (nativeAppAvailable() && !validMaxChatUrl(directLink)) {
-    onMissingLink?.();
+    const phone = maxMessengerPhone(clientPhone);
+    if (phone && window.navigator.clipboard?.writeText) {
+      window.navigator.clipboard.writeText(`+${phone}`).catch(() => {});
+    }
+    openAppLink({ webUrl: maxWebChatUrl(webUrl) });
     return;
   }
   openAppLink({
@@ -1992,11 +1996,6 @@ export default function Projects() {
     setProjectClientForm(createClientEditForm(activeProjectClient));
     setProjectClientError("");
     setProjectClientOpen(true);
-  }
-
-  function openProjectClientMaxLink() {
-    openProjectClientCard();
-    window.setTimeout(() => document.getElementById("project-client-max-url")?.scrollIntoView({ block: "center", behavior: "smooth" }), 80);
   }
 
   function closeProjectClientCard() {
@@ -3650,9 +3649,9 @@ export default function Projects() {
                         <a
                           className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
                           href={maxMessageUrl}
-                          onClick={(event) => openMaxApp(event, maxMessageUrl, activeProjectClient?.max_chat_url, openProjectClientMaxLink)}
-                          title={activeProjectClient?.max_chat_url ? "Открыть чат клиента в MAX" : "Добавить ссылку клиента MAX для прямого перехода"}
-                          aria-label={activeProjectClient?.max_chat_url ? "Открыть чат клиента в MAX" : "Добавить ссылку клиента MAX для прямого перехода"}
+                          onClick={(event) => openMaxApp(event, maxMessageUrl, activeProjectClient?.max_chat_url, detailForm.client_phone)}
+                          title={nativeAppAvailable() && !validMaxChatUrl(activeProjectClient?.max_chat_url) ? "Открыть MAX Web, номер клиента скопируется" : "Написать клиенту в MAX"}
+                          aria-label={nativeAppAvailable() && !validMaxChatUrl(activeProjectClient?.max_chat_url) ? "Открыть MAX Web, номер клиента скопируется" : "Написать клиенту в MAX"}
                         >
                           <MessageSquare size={17} />
                         </a>
@@ -4659,9 +4658,9 @@ export default function Projects() {
                   <a
                     className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-slate-950 text-white ring-1 ring-slate-950 transition hover:bg-slate-800"
                     href={projectClientMaxUrl}
-                    onClick={(event) => openMaxApp(event, projectClientMaxUrl, projectClientForm.max_chat_url || activeProjectClient?.max_chat_url, () => document.getElementById("project-client-max-url")?.focus())}
-                    title={projectClientForm.max_chat_url ? "Открыть чат клиента в MAX" : "Добавить ссылку клиента MAX для прямого перехода"}
-                    aria-label={projectClientForm.max_chat_url ? "Открыть чат клиента в MAX" : "Добавить ссылку клиента MAX для прямого перехода"}
+                    onClick={(event) => openMaxApp(event, projectClientMaxUrl, projectClientForm.max_chat_url || activeProjectClient?.max_chat_url, projectClientForm.phone || activeProjectClient?.phone)}
+                    title={nativeAppAvailable() && !validMaxChatUrl(projectClientForm.max_chat_url || activeProjectClient?.max_chat_url) ? "Открыть MAX Web, номер клиента скопируется" : "Написать клиенту в MAX"}
+                    aria-label={nativeAppAvailable() && !validMaxChatUrl(projectClientForm.max_chat_url || activeProjectClient?.max_chat_url) ? "Открыть MAX Web, номер клиента скопируется" : "Написать клиенту в MAX"}
                   >
                     <MessageSquare size={18} />
                   </a>
@@ -4693,7 +4692,6 @@ export default function Projects() {
               <ClientInfoTile icon={MapPin} label="Квартира" value={activeProjectClient?.apartment || projectClientForm.apartment} />
               <ClientInfoTile icon={MapPin} label="Этаж" value={activeProjectClient?.floor || projectClientForm.floor} />
               <ClientInfoTile icon={Ticket} label="Промокод" value={activeProjectClient?.promo_code || "Недоступен без телефона"} />
-              <ClientInfoTile icon={MessageSquare} label="Ссылка на чат MAX" value={activeProjectClient?.max_chat_url || projectClientForm.max_chat_url} />
               <ClientInfoTile icon={Wallet} label="Бонусный счёт" value={`${formatMoney(activeProjectClient?.bonus_balance || 0)} ₽`} />
             </div>
           </div>
@@ -4747,17 +4745,6 @@ export default function Projects() {
                 onChange={(event) => setProjectClientForm((prev) => ({ ...prev, email: event.target.value }))}
                 placeholder="client@example.ru"
               />
-            </div>
-            <div className="space-y-2 sm:col-span-2">
-              <Label>Ссылка на чат клиента в MAX</Label>
-              <Input
-                id="project-client-max-url"
-                type="url"
-                value={projectClientForm.max_chat_url}
-                onChange={(event) => setProjectClientForm((prev) => ({ ...prev, max_chat_url: event.target.value }))}
-                placeholder="https://max.ru/u/..."
-              />
-              <p className="text-xs text-slate-500">Вставьте ссылку на профиль клиента, скопированную из MAX. Адрес max.ru/chat?phone=... в приложении iPhone не работает.</p>
             </div>
             <ClientAddressFields
               form={projectClientForm}

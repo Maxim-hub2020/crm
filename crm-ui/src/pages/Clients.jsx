@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Edit3, Gift, Mail, MapPin, MessageSquare, Phone, Plus, Ticket, Trash2, Wallet } from "lucide-react";
+import { ChevronRight, Edit3, Gift, Mail, MapPin, Phone, Plus, Ticket, Trash2, Wallet } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -529,7 +529,6 @@ export default function Clients() {
                   <div className="grid gap-3 md:grid-cols-2">
                     <InfoRow icon={Phone} label="Телефон" value={selectedClient.phone} href={selectedClient.phone ? `tel:${selectedClient.phone}` : ""} />
                     <InfoRow icon={Mail} label="Email" value={selectedClient.email} href={selectedClient.email ? `mailto:${selectedClient.email}` : ""} />
-                    <InfoRow icon={MessageSquare} label="Чат MAX" value={selectedClient.max_chat_url} href={selectedClient.max_chat_url} />
                     {selectedClient.worksWithContract ? (
                       <div className="md:col-span-2">
                         <InfoRow icon={Edit3} label="ФИО для договора" value={selectedClient.contract_full_name} />
@@ -569,10 +568,6 @@ export default function Clients() {
                     <div className="space-y-2">
                       <Label>Email</Label>
                       <Input value={editForm.email} onChange={(event) => setEditForm((prev) => ({ ...prev, email: event.target.value }))} />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>Ссылка на чат клиента в MAX</Label>
-                      <Input type="url" value={editForm.max_chat_url} onChange={(event) => setEditForm((prev) => ({ ...prev, max_chat_url: event.target.value }))} placeholder="https://max.ru/u/..." />
                     </div>
                     <ClientAddressFields form={editForm} setForm={setEditForm} />
                   </div>
@@ -666,10 +661,6 @@ export default function Clients() {
               />
             </div>
             <ClientAddressFields form={createForm} setForm={setCreateForm} />
-          </div>
-          <div className="space-y-2">
-            <Label>Ссылка на чат клиента в MAX</Label>
-            <Input type="url" value={createForm.max_chat_url} onChange={(event) => setCreateForm((prev) => ({ ...prev, max_chat_url: event.target.value }))} placeholder="https://max.ru/u/..." />
           </div>
 
           <label className="flex items-center gap-2 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
