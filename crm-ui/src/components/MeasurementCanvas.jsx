@@ -29,6 +29,7 @@ import {
 import { mergeMeasurementSpecifications, packageMeasurementTranscript } from "../utils/measurementTranscript.js";
 import { snapOrthogonalPoint } from "../utils/measurementGeometry.js";
 import { MEASUREMENT_VIEWPORT, measurementViewportFraction, measurementViewportRenderBox, panMeasurementViewport, zoomMeasurementViewport } from "../utils/measurementViewport.js";
+import { resizeMeasurementWall } from "../utils/measurementScanGeometry.js";
 
 const CANVAS = { x: 54, y: 42, width: 892, height: 596 };
 const VIEW_LABELS = { wall: "Стена" };
@@ -130,6 +131,8 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
   const [drawingFullscreen, setDrawingFullscreen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [contextEditorOpen, setContextEditorOpen] = useState(false);
+  const [wallWidthDraft, setWallWidthDraft] = useState(String(diagram.wall.width));
+  const [wallHeightDraft, setWallHeightDraft] = useState(String(diagram.wall.height));
   const [magnifier, setMagnifier] = useState(null);
   const [mobile, setMobile] = useState(() => window.matchMedia("(max-width: 767px), (pointer: coarse)").matches);
   useEffect(() => {
@@ -151,6 +154,20 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
   const wallWidth = Math.max(numberValue(diagram.wall.width, 2000), 100);
   const wallHeight = Math.max(numberValue(diagram.wall.height, 2600), 100);
   const selected = diagram.elements.find((element) => element.id === selectedId) || null;
+
+  useEffect(() => { setWallWidthDraft(String(diagram.wall.width)); }, [diagram.wall.width]);
+  useEffect(() => { setWallHeightDraft(String(diagram.wall.height)); }, [diagram.wall.height]);
+
+  function commitWallSize(axis) {
+    const width = axis === "width" ? Number(wallWidthDraft) : wallWidth;
+    const height = axis === "height" ? Number(wallHeightDraft) : wallHeight;
+    const resized = resizeMeasurementWall(diagram, width, height);
+    if (resized !== diagram) updateDiagram({ wall: resized.wall, elements: resized.elements });
+    else {
+      setWallWidthDraft(String(wallWidth));
+      setWallHeightDraft(String(wallHeight));
+    }
+  }
 
   useEffect(() => {
     if (mobile || selected?.type !== "dimension" || autoFocusDimensionIdRef.current !== selectedId) return;
@@ -681,6 +698,14 @@ export default function MeasurementCanvas({ value, onChange, onStartLidar, lidar
       </div>
 
       {mobile && !drawingFullscreen ? <button type="button" onClick={openDrawingFullscreen} className="mx-3 my-2 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-sky-400 px-3 font-bold text-slate-950"><Expand size={20} />Открыть лист на весь экран</button> : null}
+      <div className="grid shrink-0 grid-cols-2 gap-2 bg-slate-900 px-3 py-2 sm:max-w-md sm:px-5">
+        <label className="min-w-0 text-xs font-bold text-slate-300">Ширина стены, мм
+          <input aria-label="Ширина стены в миллиметрах" type="text" inputMode="numeric" value={wallWidthDraft} onChange={(event) => setWallWidthDraft(event.target.value)} onBlur={() => commitWallSize("width")} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} className="mt-1 h-10 w-full rounded-xl border border-white/20 bg-white px-3 text-base text-slate-900" />
+        </label>
+        <label className="min-w-0 text-xs font-bold text-slate-300">Высота стены, мм
+          <input aria-label="Высота стены в миллиметрах" type="text" inputMode="numeric" value={wallHeightDraft} onChange={(event) => setWallHeightDraft(event.target.value)} onBlur={() => commitWallSize("height")} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} className="mt-1 h-10 w-full rounded-xl border border-white/20 bg-white px-3 text-base text-slate-900" />
+        </label>
+      </div>
       <div className={`measurement-toolbar flex shrink-0 gap-2 overflow-x-auto border-b border-white/10 bg-slate-900/80 px-3 [scrollbar-width:none] sm:px-5 ${drawingFullscreen ? "py-2" : "py-3 sm:flex-wrap"}`}>
         {TOOLS.map(({ id, label, icon: Icon }) => (
           <button key={id} type="button" aria-pressed={tool === id} onClick={() => { cancelCanvasInteraction(); setTool(id); setSelectedId(null); }} className={`flex min-h-11 shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold transition ${tool === id ? "border-sky-400 bg-sky-400 text-slate-950" : "border-white/10 bg-white/5 text-slate-300"}`}><Icon size={18} />{label}</button>

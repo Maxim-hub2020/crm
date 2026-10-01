@@ -38,7 +38,7 @@ struct ScannedWall: Codable {
 }
 
 struct ScannedElement: Codable, Identifiable {
-    let id = UUID()
+    var id: UUID = UUID()
     let type: String
     let x: Double
     let y: Double
@@ -52,7 +52,8 @@ struct ScannedElement: Codable, Identifiable {
         case type, x, y, width, height, diameter, confidence, label
     }
 
-    init(type: String, x: Double, y: Double, width: Double? = nil, height: Double? = nil, diameter: Double? = nil, confidence: Double, label: String) {
+    init(id: UUID = UUID(), type: String, x: Double, y: Double, width: Double? = nil, height: Double? = nil, diameter: Double? = nil, confidence: Double, label: String) {
+        self.id = id
         self.type = type
         self.x = x
         self.y = y

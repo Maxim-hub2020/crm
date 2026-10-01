@@ -58,6 +58,7 @@ function scanStorageKey(projectId) {
 }
 
 import { nativeAppVersion, nativeScannerAvailable, sendNativeAction } from "../utils/nativeApp.js";
+import { editableScanContourLines } from "../utils/measurementScanGeometry.js";
 
 const lidarScannerDistributed = import.meta.env.VITE_LIDAR_SCANNER_DISTRIBUTED === "true";
 const lidarScannerInstallUrl = String(import.meta.env.VITE_LIDAR_SCANNER_INSTALL_URL || "").trim();
@@ -84,8 +85,9 @@ function diagramFromScan(diagram, scanSession) {
     y: Math.round((1 - Number(point.y || 0)) * wallHeight),
   })) : [];
   const previousElements = Array.isArray(diagram?.elements)
-    ? diagram.elements.filter((element) => element.source_scan_session !== scanSession.id)
+    ? diagram.elements.filter((element) => !element.source_scan_session)
     : [];
+  const scanLines = editableScanContourLines(source.wall?.contour, wallWidth, wallHeight, scanSession.id);
   const scannedElements = (Array.isArray(source.elements) ? source.elements : []).map((element, index) => {
     const template = SCAN_ELEMENT_DEFAULTS[element.type] || SCAN_ELEMENT_DEFAULTS.cut_rect;
     const x = Math.round(Number(element.x || 0) * wallWidth);
@@ -113,15 +115,15 @@ function diagramFromScan(diagram, scanSession) {
       confidence: Number(element.confidence || 0),
       needs_review: Number(element.confidence || 0) < 0.8,
       source_scan_session: scanSession.id,
-      note: Number(element.confidence || 0) < 0.8 ? "Проверьте объект, распознавание неуверенное" : "Распознано LiDAR-сканером",
+      note: Number(element.confidence || 0) < 0.8 ? "Проверьте положение и тип объекта по фото" : "Отмечено на фото стены",
     };
   });
   return {
     ...createDefaultDiagram(),
     ...(diagram || {}),
     active_view: "wall",
-    wall: { ...createDefaultDiagram().wall, ...(diagram?.wall || {}), ...(contour.length >= 3 ? { points: contour } : {}) },
-    elements: [...previousElements, ...scannedElements],
+    wall: { ...createDefaultDiagram().wall, ...(diagram?.wall || {}), ...(scanLines.length ? { points: [] } : contour.length >= 3 ? { points: contour } : {}) },
+    elements: [...previousElements, ...scanLines, ...scannedElements],
   };
 }
 

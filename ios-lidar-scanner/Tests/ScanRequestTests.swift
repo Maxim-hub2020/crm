@@ -38,6 +38,8 @@ final class ScanRequestTests: XCTestCase {
     func testResultRoundTrip() throws {
         let element = ScannedElement(type: "socket_single", x: 0.5, y: 0.5, confidence: 0.5, label: "Test")
         let data = try JSONEncoder().encode(element)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(payload["id"])
         XCTAssertEqual(try JSONDecoder().decode(ScannedElement.self, from: data).type, "socket_single")
     }
 }
@@ -47,7 +49,7 @@ final class NativeBridgeTests: XCTestCase {
     func testAppDeclaresCameraPermission() {
         let description = Bundle.main.object(forInfoDictionaryKey: "NSCameraUsageDescription") as? String
         XCTAssertFalse(description?.isEmpty ?? true)
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "4")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "5")
     }
 
     func testMobileConfigurationAnnouncesNativeBridgeBeforePageScripts() {

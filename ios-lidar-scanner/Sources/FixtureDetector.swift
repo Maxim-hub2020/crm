@@ -30,29 +30,15 @@ enum FixtureDetector {
         let x = box.midX
         let y = 1 - box.midY
         let ratio = box.width / max(box.height, 0.0001)
-        let type: String
-        let label: String
-        if ratio > 2.4 {
-            type = "socket_triple"
-            label = "Возможная тройная розетка"
-        } else if ratio > 1.45 {
-            type = "socket_double"
-            label = "Возможная двойная розетка"
-        } else if ratio > 0.72 {
-            type = "socket_single"
-            label = "Возможная розетка или вырез"
-        } else {
-            type = "cut_rect"
-            label = "Возможный прямоугольный вырез"
-        }
+        guard ratio > 0.35 else { return nil }
         return ScannedElement(
-            type: type,
+            type: "cut_rect",
             x: x,
             y: y,
             width: box.width,
             height: box.height,
-            confidence: Double(observation.confidence) * 0.78,
-            label: label
+            confidence: Double(observation.confidence) * 0.5,
+            label: "Возможный контур — выберите тип"
         )
     }
 }
