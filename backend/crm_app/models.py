@@ -845,3 +845,45 @@ class AuditLog(models.Model):
         if not self.workspace_id:
             self.workspace = default_workspace()
         super().save(*args, **kwargs)
+
+
+class McpOAuthClient(models.Model):
+    """Public OAuth client registered by a supported MCP host."""
+
+    client_id = models.CharField(max_length=255, unique=True)
+    client_name = models.CharField(max_length=200, blank=True, default="")
+    redirect_uris = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class McpAuthorizationCode(models.Model):
+    code_hash = models.CharField(max_length=64, unique=True)
+    client = models.ForeignKey(McpOAuthClient, on_delete=models.CASCADE, related_name="authorization_codes")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="mcp_authorization_codes")
+    redirect_uri = models.URLField(max_length=500)
+    resource = models.URLField(max_length=500)
+    scope = models.CharField(max_length=500, blank=True, default="")
+    code_challenge = models.CharField(max_length=128)
+    expires_at = models.DateTimeField(db_index=True)
+    used_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class McpAccessToken(models.Model):
+    access_token_hash = models.CharField(max_length=64, unique=True)
+    refresh_token_hash = models.CharField(max_length=64, unique=True)
+    client = models.ForeignKey(McpOAuthClient, on_delete=models.CASCADE, related_name="access_tokens")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="mcp_access_tokens")
+    resource = models.URLField(max_length=500)
+    scope = models.CharField(max_length=500, blank=True, default="")
+    expires_at = models.DateTimeField(db_index=True)
+    refresh_expires_at = models.DateTimeField(db_index=True)
+    revoked_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    @staticmethod
+    def hash_token(token):
+        return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+    def is_active(self):
+        return not self.revoked_at and timezone.now() < self.expires_at and self.user.is_active

@@ -1,0 +1,131 @@
+import base64
+import hashlib
+import json
+from urllib.parse import parse_qs, urlsplit
+
+from django.test import TestCase, override_settings
+
+from .models import Client, Project, ProjectComment, User, Workspace
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+class RemoteMcpTests(TestCase):
+    def setUp(self):
+        self.workspace = Workspace.objects.create(name="Цех", slug="mcp-test")
+        self.user = User.objects.create_user(
+            username="master", password="strong-test-password", role=User.Role.ADMIN, workspace=self.workspace,
+        )
+        self.client_record = Client.objects.create(workspace=self.workspace, name="Клиент", phone="+79990000000")
+        self.project = Project.objects.create(
+            workspace=self.workspace,
+            manager=self.user,
+            client=self.client_record,
+            client_name="Клиент",
+            client_phone="+79990000000",
+            title="Зеркало",
+        )
+
+    def connect(self):
+        redirect_uri = "https://chatgpt.com/connector/oauth/test-callback"
+        registration = self.client.post(
+            "/api/mcp/oauth/register/",
+            data=json.dumps({"client_name": "ChatGPT", "redirect_uris": [redirect_uri], "token_endpoint_auth_method": "none"}),
+            content_type="application/json",
+        )
+        self.assertEqual(registration.status_code, 201)
+        client_id = registration.json()["client_id"]
+        verifier = "v" * 64
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "crm.read crm.write crm.admin",
+            "state": "state-1",
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "resource": "http://testserver/api/mcp",
+            "username": "master",
+            "password": "strong-test-password",
+            "approve": "yes",
+        }
+        authorized = self.client.post("/api/mcp/oauth/authorize/", params)
+        self.assertEqual(authorized.status_code, 302)
+        code = parse_qs(urlsplit(authorized["Location"]).query)["code"][0]
+        token = self.client.post("/api/mcp/oauth/token/", {
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "resource": "http://testserver/api/mcp",
+            "code": code,
+            "code_verifier": verifier,
+        })
+        self.assertEqual(token.status_code, 200, token.content)
+        return token.json()["access_token"]
+
+    def rpc(self, method, params=None, token=None, message_id=1):
+        headers = {"HTTP_AUTHORIZATION": f"Bearer {token}"} if token else {}
+        return self.client.post(
+            "/api/mcp/",
+            data=json.dumps({"jsonrpc": "2.0", "id": message_id, "method": method, "params": params or {}}),
+            content_type="application/json",
+            **headers,
+        )
+
+    def test_discovery_and_oauth_metadata(self):
+        metadata = self.client.get("/.well-known/oauth-protected-resource")
+        self.assertEqual(metadata.status_code, 200)
+        self.assertEqual(metadata.json()["resource"], "http://testserver/api/mcp")
+        tools = self.rpc("tools/list")
+        self.assertEqual(tools.status_code, 200)
+        self.assertIn("crm_search", {item["name"] for item in tools.json()["result"]["tools"]})
+        skills = self.rpc("skills/list")
+        self.assertEqual(skills.status_code, 200)
+        self.assertEqual(
+            {item["frontmatter"]["name"] for item in skills.json()["result"]["skills"]},
+            {"crm-operator", "production-technologist"},
+        )
+        production = next(
+            item for item in skills.json()["result"]["skills"]
+            if item["frontmatter"]["name"] == "production-technologist"
+        )
+        fetched = self.rpc("skills/get", {"uri": production["uri"]})
+        self.assertEqual(fetched.json()["result"]["skill"], production)
+        resource = self.rpc("resources/read", {"uri": production["uri"]})
+        self.assertIn("# Технолог производства", resource.json()["result"]["contents"][0]["text"])
+
+    def test_authenticated_read_write_and_delete_confirmation(self):
+        token = self.connect()
+        profile = self.rpc("tools/call", {"name": "crm_profile", "arguments": {}}, token)
+        self.assertEqual(profile.json()["result"]["structuredContent"]["id"], f"crm-user-{self.user.id}")
+        result = self.rpc("tools/call", {"name": "crm_get", "arguments": {"resource": "projects", "id": self.project.id}}, token)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()["result"]["structuredContent"]["data"]["id"], self.project.id)
+
+        created = self.rpc("tools/call", {"name": "crm_create", "arguments": {
+            "resource": "project-comments", "data": {"project": self.project.id, "text": "Проверено через MCP"},
+        }}, token)
+        self.assertFalse(created.json()["result"].get("isError", False), created.content)
+        comment_id = ProjectComment.objects.get().id
+
+        rejected = self.rpc("tools/call", {"name": "crm_delete", "arguments": {
+            "resource": "project-comments", "id": comment_id, "confirm": False,
+        }}, token)
+        self.assertTrue(rejected.json()["result"]["isError"])
+        self.assertTrue(ProjectComment.objects.filter(pk=comment_id).exists())
+
+        deleted = self.rpc("tools/call", {"name": "crm_delete", "arguments": {
+            "resource": "project-comments", "id": comment_id, "confirm": True,
+        }}, token)
+        self.assertFalse(deleted.json()["result"].get("isError", False), deleted.content)
+        self.assertFalse(ProjectComment.objects.filter(pk=comment_id).exists())
+
+        finance_rejected = self.rpc("tools/call", {"name": "crm_create", "arguments": {
+            "resource": "payments", "data": {"project": self.project.id, "amount": "1000.00"},
+        }}, token)
+        self.assertTrue(finance_rejected.json()["result"]["isError"])
+
+    def test_tool_call_requires_oauth(self):
+        response = self.rpc("tools/call", {"name": "crm_search", "arguments": {"query": "0022"}})
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("resource_metadata", response["WWW-Authenticate"])

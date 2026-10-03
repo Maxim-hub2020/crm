@@ -45,6 +45,8 @@ from .public_calculator import (
     public_calculator_config_view,
     public_calculator_lead_view,
 )
+from .mcp_gateway import mcp_view
+from .mcp_oauth import authorize as mcp_oauth_authorize, register_client as mcp_oauth_register, token as mcp_oauth_token
 
 router = DefaultRouter()
 router.register(r"clients", ClientViewSet, basename="clients")
@@ -66,6 +68,10 @@ router.register(r"audit-logs", AuditLogViewSet, basename="audit-logs")
 router.register(r"users", UserViewSet, basename="users")
 
 urlpatterns = [
+    path("mcp/", mcp_view),
+    path("mcp/oauth/register/", mcp_oauth_register),
+    path("mcp/oauth/authorize/", mcp_oauth_authorize),
+    path("mcp/oauth/token/", mcp_oauth_token),
     path("health/", health_view),
     path("me/", me_view),
     path("menu-settings/", menu_settings_view),
