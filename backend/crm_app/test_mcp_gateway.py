@@ -167,12 +167,25 @@ class RemoteMcpTests(TestCase):
         self.assertEqual(by_number["projects"][0]["project_id"], target.id)
         self.assertEqual(by_number["projects"][0]["order_number"], 44)
         self.assertNotEqual(by_number["projects"][0]["project_id"], 44)
+        self.assertEqual(by_number["project"]["id"], target.id)
+        self.assertEqual(by_number["project"]["order_number"], 44)
 
         by_address = self.rpc("tools/call", {
             "name": "crm_resolve_project", "arguments": {"query": "Левобережная"},
         }, token).json()["result"]["structuredContent"]
         self.assertEqual(by_address["match_status"], "resolved")
         self.assertEqual(by_address["projects"][0]["project_id"], target.id)
+
+        comment = self.rpc("tools/call", {"name": "crm_create", "arguments": {
+            "resource": "project-comments",
+            "project_query": "Левобережная",
+            "data": {"text": "Быстрая запись без отдельного поиска"},
+        }}, token).json()["result"]
+        self.assertFalse(comment.get("isError", False), comment)
+        self.assertTrue(ProjectComment.objects.filter(
+            project=target,
+            text="Быстрая запись без отдельного поиска",
+        ).exists())
 
     @patch("crm_app.mcp_gateway.requests.get")
     def test_chat_file_is_downloaded_and_attached_to_measurement_field(self, get_mock):
@@ -191,7 +204,7 @@ class RemoteMcpTests(TestCase):
 
         token = self.connect()
         response = self.rpc("tools/call", {"name": "crm_upload_file", "arguments": {
-            "project_id": self.project.id,
+            "project_query": str(self.project.order_number),
             "target": "project_field",
             "file": {
                 "download_url": "https://files.example.test/download/file_123",

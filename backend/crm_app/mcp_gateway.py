@@ -90,7 +90,7 @@ TOOLS = [
     {
         "name": "crm_resolve_project",
         "title": "Определить проект CRM",
-        "description": "Обязательный первый шаг, когда пользователь называет проект по номеру заказа, адресу, клиенту, телефону или названию. Номер заказа — это не внутренний ID. Инструмент возвращает внутренний project_id, который затем нужно использовать в crm_get, crm_create, crm_update, crm_action и crm_upload_file.",
+        "description": "Быстро найти проект по номеру заказа, адресу, клиенту, телефону или названию и сразу получить полную карточку одним вызовом. Номер заказа — это не внутренний ID. Не вызывайте после этого crm_get для того же проекта.",
         "inputSchema": {"type": "object", "properties": {
             "query": {"type": "string", "minLength": 1, "description": "Известное пользователю обозначение: номер заказа, адрес, клиент, телефон или название проекта."},
         }, "required": ["query"], "additionalProperties": False},
@@ -111,9 +111,10 @@ TOOLS = [
     {
         "name": "crm_create",
         "title": "Создать объект CRM",
-        "description": "Создать проект, клиента, задачу, платёж, комментарий, замер или другой разрешённый объект CRM. Если объект привязывается к существующему проекту, сначала получите его внутренний project_id через crm_resolve_project.",
+        "description": "Создать проект, клиента, задачу, платёж, комментарий, замер или другой разрешённый объект CRM. Для объекта существующего проекта передайте известный пользователю номер, адрес, клиента или телефон в project_query: сервер сам найдёт внутренний project_id за один вызов.",
         "inputSchema": {"type": "object", "properties": {
             "resource": {"type": "string", "enum": _resource_enum()},
+            "project_query": {"type": "string", "minLength": 1, "description": "Номер заказа, адрес, клиент, телефон или название проекта. Используйте для project-comments, payments, tasks, production-plans и measurement-sheets вместо предварительного поиска."},
             "data": {"type": "object", "additionalProperties": True},
             "confirm": {"type": "boolean", "description": "True только после явного подтверждения пользователя для финансовых и административных операций."},
         }, "required": ["resource", "data"], "additionalProperties": False},
@@ -123,13 +124,14 @@ TOOLS = [
     {
         "name": "crm_update",
         "title": "Изменить объект CRM",
-        "description": "Частично изменить существующий объект CRM. Для проекта сначала вызовите crm_resolve_project и используйте возвращённый внутренний project_id, а не номер заказа. Перед финансовым или административным изменением подтвердить итог с пользователем.",
+        "description": "Частично изменить существующий объект CRM. Для resource=projects можно передать номер заказа, адрес, клиента или телефон в project_query вместо внутреннего id. Перед финансовым или административным изменением подтвердить итог с пользователем.",
         "inputSchema": {"type": "object", "properties": {
             "resource": {"type": "string", "enum": _resource_enum()},
             "id": {"type": "integer", "minimum": 1, "description": "Внутренний ID объекта из результата CRM-инструмента; не номер заказа."},
+            "project_query": {"type": "string", "minLength": 1, "description": "Только для resource=projects: номер заказа, адрес, клиент, телефон или название."},
             "data": {"type": "object", "additionalProperties": True},
             "confirm": {"type": "boolean", "description": "True только после явного подтверждения пользователя для финансовых и административных изменений."},
-        }, "required": ["resource", "id", "data"], "additionalProperties": False},
+        }, "required": ["resource", "data"], "anyOf": [{"required": ["id"]}, {"required": ["project_query"]}], "additionalProperties": False},
         "securitySchemes": [OAUTH_SCHEME],
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
     },
@@ -169,18 +171,19 @@ TOOLS = [
     {
         "name": "crm_upload_file",
         "title": "Загрузить файл в CRM",
-        "description": "Прикрепить файл из текущего чата к полю проекта или опубликовать финальный PDF/DXF в папку «Чертежи» на Яндекс.Диске. Передавайте вложение в file; максимум 8 МБ.",
+        "description": "Одним вызовом найти проект и прикрепить файл из текущего чата к его полю либо опубликовать финальный PDF/DXF в папку «Чертежи» на Яндекс.Диске. Предпочитайте project_query с номером заказа или адресом; project_id нужен только если уже известен. Максимум 8 МБ.",
         "inputSchema": {"type": "object", "$defs": {"OpenAIFile": OPENAI_FILE_SCHEMA}, "properties": {
             "project_id": {"type": "integer", "minimum": 1, "description": "Внутренний ID проекта, предварительно полученный через crm_resolve_project; не номер заказа."},
+            "project_query": {"type": "string", "minLength": 1, "description": "Номер заказа, адрес, клиент, телефон или название проекта; позволяет найти проект и загрузить файл за один вызов."},
             "target": {"type": "string", "enum": ["project_field", "drawings"]},
             "field_id": {"type": "integer", "minimum": 1, "description": "Идентификатор файлового поля. Для поля «Замер» можно не указывать: CRM найдёт его автоматически."},
             "file": {"$ref": "#/$defs/OpenAIFile"},
             "filename": {"type": "string", "minLength": 1},
             "content_base64": {"type": "string", "minLength": 1},
             "confirm": {"type": "boolean", "const": True},
-        }, "required": ["project_id", "target", "confirm"], "anyOf": [
-            {"required": ["file"]},
-            {"required": ["filename", "content_base64"]},
+        }, "required": ["target", "confirm"], "allOf": [
+            {"anyOf": [{"required": ["project_id"]}, {"required": ["project_query"]}]},
+            {"anyOf": [{"required": ["file"]}, {"required": ["filename", "content_base64"]}]},
         ], "additionalProperties": False},
         "securitySchemes": [OAUTH_SCHEME],
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
@@ -283,7 +286,7 @@ def _explicit_order_number(query):
     return int(match.group(1)) if match else None
 
 
-def _call_resolve_project(user, query):
+def _call_resolve_project(user, query, include_card=True):
     from .models import Project
     from .tenancy import current_workspace
 
@@ -310,11 +313,27 @@ def _call_resolve_project(user, query):
         instruction = "Проект не найден. Не выполняйте запись и уточните у пользователя номер, адрес, клиента или телефон."
     elif len(candidates) == 1:
         status = "resolved"
-        instruction = "Проект определён. Используйте только project_id из этого результата во всех последующих инструментах."
+        instruction = "Проект определён, полная карточка уже включена в project. Ответьте без дополнительного crm_get."
     else:
         status = "ambiguous"
         instruction = "Найдено несколько проектов. Покажите краткий список и попросите пользователя выбрать; до выбора ничего не изменяйте."
-    return {"query": value, "match_status": status, "projects": candidates, "instruction": instruction}
+    result = {"query": value, "match_status": status, "projects": candidates, "instruction": instruction}
+    if status == "resolved" and include_card:
+        result["project"] = _dispatch_viewset(user, "projects", "retrieve", candidates[0]["project_id"])["data"]
+    return result
+
+
+def _resolve_project_id(user, query):
+    result = _call_resolve_project(user, query, include_card=False)
+    if result["match_status"] == "resolved":
+        return int(result["projects"][0]["project_id"])
+    if result["match_status"] == "ambiguous":
+        labels = [
+            " · ".join(filter(None, [project["order_number_label"], project["client_name"], project["object_address"]]))
+            for project in result["projects"]
+        ]
+        raise ValueError({"detail": "Найдено несколько проектов", "projects": labels})
+    raise ValueError("Проект не найден по номеру, адресу, клиенту, телефону или названию")
 
 
 def _call_action(user, args):
@@ -418,6 +437,14 @@ def _measurement_field_id(user):
 def _call_upload(user, args):
     from django.core.files.uploadedfile import SimpleUploadedFile
     from .views import ProjectViewSet
+    args = dict(args)
+    if args.get("project_query"):
+        resolved_id = _resolve_project_id(user, args["project_query"])
+        if args.get("project_id") and int(args["project_id"]) != resolved_id:
+            raise ValueError("project_id не соответствует project_query")
+        args["project_id"] = resolved_id
+    if not args.get("project_id"):
+        raise ValueError("Передайте project_query или внутренний project_id")
     content, filename, content_type = _upload_content(args)
     if args["target"] == "drawings":
         if Path(filename).suffix.lower() not in {".pdf", ".dxf"}:
@@ -481,12 +508,31 @@ def _execute_tool(user, token_record, name, args):
         sensitive = args["resource"] in {"payments", "accounts", "users", "project-statuses", "finance-categories"}
         if sensitive and not args.get("confirm"):
             raise ValueError("Финансовая или административная операция требует confirm=true после подтверждения пользователя")
-        return _dispatch_viewset(user, args["resource"], "create", data=args["data"])
+        data = dict(args["data"])
+        if args.get("project_query"):
+            project_resources = {"payments", "project-comments", "production-plans", "measurement-sheets", "measurement-scans", "tasks"}
+            if args["resource"] not in project_resources:
+                raise ValueError("project_query поддерживается только для объектов, связанных с проектом")
+            resolved_id = _resolve_project_id(user, args["project_query"])
+            if data.get("project") and int(data["project"]) != resolved_id:
+                raise ValueError("Поле project не соответствует project_query")
+            data["project"] = resolved_id
+        return _dispatch_viewset(user, args["resource"], "create", data=data)
     if name == "crm_update":
         sensitive = args["resource"] in {"payments", "accounts", "users", "project-statuses", "finance-categories"}
         if sensitive and not args.get("confirm"):
             raise ValueError("Финансовое или административное изменение требует confirm=true после подтверждения пользователя")
-        return _dispatch_viewset(user, args["resource"], "update", int(args["id"]), args["data"])
+        object_id = args.get("id")
+        if args.get("project_query"):
+            if args["resource"] != "projects":
+                raise ValueError("project_query при изменении поддерживается только для resource=projects")
+            resolved_id = _resolve_project_id(user, args["project_query"])
+            if object_id and int(object_id) != resolved_id:
+                raise ValueError("id не соответствует project_query")
+            object_id = resolved_id
+        if not object_id:
+            raise ValueError("Передайте id или project_query")
+        return _dispatch_viewset(user, args["resource"], "update", int(object_id), args["data"])
     if name == "crm_delete":
         if not args.get("confirm"):
             raise ValueError("Удаление требует confirm=true после подтверждения пользователя")
@@ -567,7 +613,7 @@ def mcp_view(request):
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {"listChanged": False}, "resources": {}, "extensions": {"io.modelcontextprotocol/skills": {}}},
             "serverInfo": {"name": "ceh-crm-production", "version": "1.0.0"},
-            "instructions": "Use CRM tools within the authenticated user's permissions. Confirm destructive, financial, approval, and administrative changes before calling write tools.",
+            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. For project comments, tasks, payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
         })
     if method in {"notifications/initialized", "ping"}:
         return _rpc_result(message_id, {})
