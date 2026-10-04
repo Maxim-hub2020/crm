@@ -81,6 +81,7 @@ class RemoteMcpTests(TestCase):
         self.assertEqual(tools.status_code, 200)
         tool_items = tools.json()["result"]["tools"]
         self.assertIn("crm_search", {item["name"] for item in tool_items})
+        self.assertIn("crm_resolve_project", {item["name"] for item in tool_items})
         upload_tool = next(item for item in tool_items if item["name"] == "crm_upload_file")
         self.assertEqual(upload_tool["_meta"]["openai/fileParams"], ["file"])
         file_schema = upload_tool["inputSchema"]["$defs"]["OpenAIFile"]
@@ -134,6 +135,44 @@ class RemoteMcpTests(TestCase):
             "resource": "payments", "data": {"project": self.project.id, "amount": "1000.00"},
         }}, token)
         self.assertTrue(finance_rejected.json()["result"]["isError"])
+
+    def test_project_resolver_never_treats_order_number_as_internal_id(self):
+        Project.objects.create(
+            id=44,
+            workspace=self.workspace,
+            manager=self.user,
+            client=self.client_record,
+            order_number=14,
+            client_name="Заказ 14",
+            client_phone="+79992222222",
+            title="Проект с внутренним ID 44",
+        )
+        target = Project.objects.create(
+            id=45,
+            workspace=self.workspace,
+            manager=self.user,
+            client=self.client_record,
+            order_number=44,
+            client_name="Заказ 44",
+            client_phone="+79991111111",
+            title="Зеркало на Левобережной",
+            object_address="Левобережная 12",
+        )
+        token = self.connect()
+
+        by_number = self.rpc("tools/call", {
+            "name": "crm_resolve_project", "arguments": {"query": "заказ номер 44"},
+        }, token).json()["result"]["structuredContent"]
+        self.assertEqual(by_number["match_status"], "resolved")
+        self.assertEqual(by_number["projects"][0]["project_id"], target.id)
+        self.assertEqual(by_number["projects"][0]["order_number"], 44)
+        self.assertNotEqual(by_number["projects"][0]["project_id"], 44)
+
+        by_address = self.rpc("tools/call", {
+            "name": "crm_resolve_project", "arguments": {"query": "Левобережная"},
+        }, token).json()["result"]["structuredContent"]
+        self.assertEqual(by_address["match_status"], "resolved")
+        self.assertEqual(by_address["projects"][0]["project_id"], target.id)
 
     @patch("crm_app.mcp_gateway.requests.get")
     def test_chat_file_is_downloaded_and_attached_to_measurement_field(self, get_mock):

@@ -6,9 +6,10 @@
 
 ## Чтение
 
-- `crm_search` — поиск проекта, клиента, номера, телефона или адреса.
+- `crm_resolve_project` — обязательное определение проекта по номеру заказа, адресу, клиенту, телефону или названию; возвращает внутренний `project_id`.
+- `crm_search` — общий поиск по CRM.
 - `crm_list` — списки с фильтрами.
-- `crm_get` — одна карточка по идентификатору.
+- `crm_get` — одна карточка по внутреннему идентификатору. Номер заказа нельзя передавать как `id`.
 
 Ресурсы: `clients`, `projects`, `payments`, `project-comments`, `production-plans`, `measurement-sheets`, `measurement-scans`, `project-statuses`, `finance-categories`, `accounts`, `project-custom-fields`, `document-templates`, `tasks`, `task-templates`, `audit-logs`, `users`.
 

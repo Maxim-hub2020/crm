@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -87,12 +88,22 @@ TOOLS = [
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     },
     {
+        "name": "crm_resolve_project",
+        "title": "Определить проект CRM",
+        "description": "Обязательный первый шаг, когда пользователь называет проект по номеру заказа, адресу, клиенту, телефону или названию. Номер заказа — это не внутренний ID. Инструмент возвращает внутренний project_id, который затем нужно использовать в crm_get, crm_create, crm_update, crm_action и crm_upload_file.",
+        "inputSchema": {"type": "object", "properties": {
+            "query": {"type": "string", "minLength": 1, "description": "Известное пользователю обозначение: номер заказа, адрес, клиент, телефон или название проекта."},
+        }, "required": ["query"], "additionalProperties": False},
+        "securitySchemes": [OAUTH_SCHEME],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
         "name": "crm_get",
         "title": "Карточка объекта CRM",
-        "description": "Получить одну карточку CRM по типу и идентификатору.",
+        "description": "Получить одну карточку CRM по внутреннему идентификатору. Для проекта сначала вызовите crm_resolve_project: никогда не передавайте номер заказа в поле id.",
         "inputSchema": {"type": "object", "properties": {
             "resource": {"type": "string", "enum": _resource_enum()},
-            "id": {"type": "integer", "minimum": 1},
+            "id": {"type": "integer", "minimum": 1, "description": "Внутренний ID объекта из результата CRM-инструмента; не номер заказа."},
         }, "required": ["resource", "id"], "additionalProperties": False},
         "securitySchemes": [OAUTH_SCHEME],
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
@@ -100,7 +111,7 @@ TOOLS = [
     {
         "name": "crm_create",
         "title": "Создать объект CRM",
-        "description": "Создать проект, клиента, задачу, платёж, комментарий, замер или другой разрешённый объект CRM.",
+        "description": "Создать проект, клиента, задачу, платёж, комментарий, замер или другой разрешённый объект CRM. Если объект привязывается к существующему проекту, сначала получите его внутренний project_id через crm_resolve_project.",
         "inputSchema": {"type": "object", "properties": {
             "resource": {"type": "string", "enum": _resource_enum()},
             "data": {"type": "object", "additionalProperties": True},
@@ -112,10 +123,10 @@ TOOLS = [
     {
         "name": "crm_update",
         "title": "Изменить объект CRM",
-        "description": "Частично изменить существующий объект CRM. Перед финансовым или административным изменением подтвердить итог с пользователем.",
+        "description": "Частично изменить существующий объект CRM. Для проекта сначала вызовите crm_resolve_project и используйте возвращённый внутренний project_id, а не номер заказа. Перед финансовым или административным изменением подтвердить итог с пользователем.",
         "inputSchema": {"type": "object", "properties": {
             "resource": {"type": "string", "enum": _resource_enum()},
-            "id": {"type": "integer", "minimum": 1},
+            "id": {"type": "integer", "minimum": 1, "description": "Внутренний ID объекта из результата CRM-инструмента; не номер заказа."},
             "data": {"type": "object", "additionalProperties": True},
             "confirm": {"type": "boolean", "description": "True только после явного подтверждения пользователя для финансовых и административных изменений."},
         }, "required": ["resource", "id", "data"], "additionalProperties": False},
@@ -128,7 +139,7 @@ TOOLS = [
         "description": "Удалить объект CRM. Всегда требует явного подтверждения пользователя и confirm=true.",
         "inputSchema": {"type": "object", "properties": {
             "resource": {"type": "string", "enum": _resource_enum()},
-            "id": {"type": "integer", "minimum": 1},
+            "id": {"type": "integer", "minimum": 1, "description": "Внутренний ID объекта из результата CRM-инструмента; не номер заказа."},
             "confirm": {"type": "boolean", "const": True},
         }, "required": ["resource", "id", "confirm"], "additionalProperties": False},
         "securitySchemes": [OAUTH_SCHEME],
@@ -137,7 +148,7 @@ TOOLS = [
     {
         "name": "crm_search",
         "title": "Поиск по CRM",
-        "description": "Найти проект, клиента, адрес, телефон или номер заказа по всей CRM.",
+        "description": "Общий поиск проектов, клиентов, задач, финансов и комментариев. Для выбора проекта перед последующим действием используйте crm_resolve_project.",
         "inputSchema": {"type": "object", "properties": {"query": {"type": "string", "minLength": 1}}, "required": ["query"], "additionalProperties": False},
         "securitySchemes": [OAUTH_SCHEME],
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
@@ -148,7 +159,7 @@ TOOLS = [
         "description": "Выполнить специальное действие: получить активность/проверки проекта, создать папку Яндекс.Диска, изменить публичную ссылку или утвердить производственный план.",
         "inputSchema": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["project_activity", "project_status_checks", "create_yandex_folder", "set_yandex_public_link", "approve_production_plan"]},
-            "id": {"type": "integer", "minimum": 1},
+            "id": {"type": "integer", "minimum": 1, "description": "Внутренний ID проекта или производственного плана из результата CRM-инструмента; не номер заказа."},
             "data": {"type": "object", "additionalProperties": True},
             "confirm": {"type": "boolean"},
         }, "required": ["action", "id"], "additionalProperties": False},
@@ -160,7 +171,7 @@ TOOLS = [
         "title": "Загрузить файл в CRM",
         "description": "Прикрепить файл из текущего чата к полю проекта или опубликовать финальный PDF/DXF в папку «Чертежи» на Яндекс.Диске. Передавайте вложение в file; максимум 8 МБ.",
         "inputSchema": {"type": "object", "$defs": {"OpenAIFile": OPENAI_FILE_SCHEMA}, "properties": {
-            "project_id": {"type": "integer", "minimum": 1},
+            "project_id": {"type": "integer", "minimum": 1, "description": "Внутренний ID проекта, предварительно полученный через crm_resolve_project; не номер заказа."},
             "target": {"type": "string", "enum": ["project_field", "drawings"]},
             "field_id": {"type": "integer", "minimum": 1, "description": "Идентификатор файлового поля. Для поля «Замер» можно не указывать: CRM найдёт его автоматически."},
             "file": {"$ref": "#/$defs/OpenAIFile"},
@@ -247,6 +258,63 @@ def _call_search(user, query):
     if response.status_code >= 400:
         raise ValueError({"status": response.status_code, "detail": response.data})
     return response.data
+
+
+def _project_candidate(project):
+    return {
+        "project_id": project.id,
+        "order_number": project.order_number,
+        "order_number_label": f"№{project.order_number:04d}" if project.order_number else "",
+        "title": project.title,
+        "client_name": project.client_name,
+        "client_phone": project.client_phone,
+        "object_address": project.object_address or "",
+        "status": project.status,
+    }
+
+
+def _explicit_order_number(query):
+    value = str(query or "").strip()
+    match = re.fullmatch(
+        r"(?:(?:заказ|проект)\s*)?(?:(?:номер|№|#)\s*)?0*(\d{1,6})",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return int(match.group(1)) if match else None
+
+
+def _call_resolve_project(user, query):
+    from .models import Project
+    from .tenancy import current_workspace
+
+    value = str(query or "").strip()
+    projects = Project.objects.filter(workspace=current_workspace(user)).select_related("client")
+    if not user.is_admin():
+        projects = projects.filter(manager=user)
+
+    order_number = _explicit_order_number(value)
+    if order_number is not None:
+        candidates = [_project_candidate(project) for project in projects.filter(order_number=order_number)[:2]]
+    else:
+        search = _call_search(user, value)
+        project_ids = [
+            item.get("project_id") or item.get("id")
+            for item in search.get("results", [])
+            if item.get("type") == "project"
+        ]
+        by_id = {project.id: project for project in projects.filter(id__in=project_ids)}
+        candidates = [_project_candidate(by_id[project_id]) for project_id in project_ids if project_id in by_id]
+
+    if not candidates:
+        status = "not_found"
+        instruction = "Проект не найден. Не выполняйте запись и уточните у пользователя номер, адрес, клиента или телефон."
+    elif len(candidates) == 1:
+        status = "resolved"
+        instruction = "Проект определён. Используйте только project_id из этого результата во всех последующих инструментах."
+    else:
+        status = "ambiguous"
+        instruction = "Найдено несколько проектов. Покажите краткий список и попросите пользователя выбрать; до выбора ничего не изменяйте."
+    return {"query": value, "match_status": status, "projects": candidates, "instruction": instruction}
 
 
 def _call_action(user, args):
@@ -389,7 +457,7 @@ def _call_upload(user, args):
 
 def _execute_tool(user, token_record, name, args):
     scopes = set(token_record.scope.split())
-    read_tools = {"crm_profile", "crm_list", "crm_get", "crm_search"}
+    read_tools = {"crm_profile", "crm_list", "crm_resolve_project", "crm_get", "crm_search"}
     if name in read_tools and "crm.read" not in scopes:
         raise PermissionError("Токен не имеет области crm.read")
     if name not in read_tools and "crm.write" not in scopes:
@@ -405,6 +473,8 @@ def _execute_tool(user, token_record, name, args):
         }
     if name == "crm_list":
         return _dispatch_viewset(user, args["resource"], "list", filters=args.get("filters"))
+    if name == "crm_resolve_project":
+        return _call_resolve_project(user, args["query"])
     if name == "crm_get":
         return _dispatch_viewset(user, args["resource"], "retrieve", int(args["id"]))
     if name == "crm_create":
