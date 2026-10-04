@@ -2,7 +2,9 @@ import base64
 import hashlib
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
+import requests
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -12,6 +14,19 @@ from .mcp_oauth import authenticate_mcp_request, canonical_resource
 
 
 SKILL_ROOT = Path(__file__).resolve().parent / "mcp_skills"
+MAX_MCP_FILE_SIZE = 8 * 1024 * 1024
+
+OPENAI_FILE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "download_url": {"type": "string"},
+        "file_id": {"type": "string"},
+        "mime_type": {"type": "string"},
+        "file_name": {"type": "string"},
+    },
+    "required": ["download_url", "file_id"],
+    "additionalProperties": False,
+}
 
 RESOURCE_VIEWSETS = {
     "clients": "ClientViewSet",
@@ -143,17 +158,22 @@ TOOLS = [
     {
         "name": "crm_upload_file",
         "title": "Загрузить файл в CRM",
-        "description": "Прикрепить небольшой файл к полю проекта или опубликовать финальный PDF/DXF в папку «Чертежи» на Яндекс.Диске. Содержимое передаётся base64; максимум 8 МБ.",
-        "inputSchema": {"type": "object", "properties": {
+        "description": "Прикрепить файл из текущего чата к полю проекта или опубликовать финальный PDF/DXF в папку «Чертежи» на Яндекс.Диске. Передавайте вложение в file; максимум 8 МБ.",
+        "inputSchema": {"type": "object", "$defs": {"OpenAIFile": OPENAI_FILE_SCHEMA}, "properties": {
             "project_id": {"type": "integer", "minimum": 1},
             "target": {"type": "string", "enum": ["project_field", "drawings"]},
-            "field_id": {"type": "integer", "minimum": 1},
+            "field_id": {"type": "integer", "minimum": 1, "description": "Идентификатор файлового поля. Для поля «Замер» можно не указывать: CRM найдёт его автоматически."},
+            "file": {"$ref": "#/$defs/OpenAIFile"},
             "filename": {"type": "string", "minLength": 1},
             "content_base64": {"type": "string", "minLength": 1},
             "confirm": {"type": "boolean", "const": True},
-        }, "required": ["project_id", "target", "filename", "content_base64", "confirm"], "additionalProperties": False},
+        }, "required": ["project_id", "target", "confirm"], "anyOf": [
+            {"required": ["file"]},
+            {"required": ["filename", "content_base64"]},
+        ], "additionalProperties": False},
         "securitySchemes": [OAUTH_SCHEME],
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
+        "_meta": {"openai/fileParams": ["file"]},
     },
 ]
 
@@ -248,16 +268,89 @@ def _call_action(user, args):
     raise ValueError(f"Неизвестное действие: {action}")
 
 
+def _safe_download_url(value):
+    url = str(value or "").strip()
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("ChatGPT передал некорректную ссылку на файл")
+    return url
+
+
+def _download_chat_file(file_ref):
+    url = _safe_download_url(file_ref.get("download_url"))
+    try:
+        response = requests.get(url, stream=True, timeout=(5, 30), allow_redirects=True)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise ValueError("Не удалось получить файл из текущего чата. Прикрепите его ещё раз.") from exc
+    try:
+        for hop in [*response.history, response]:
+            _safe_download_url(hop.url)
+    except ValueError:
+        response.close()
+        raise
+    declared_size = response.headers.get("Content-Length")
+    if declared_size:
+        try:
+            content_length = int(declared_size)
+        except (TypeError, ValueError):
+            content_length = 0
+        if content_length > MAX_MCP_FILE_SIZE:
+            response.close()
+            raise ValueError("Файл больше 8 МБ")
+    chunks = []
+    total = 0
+    try:
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > MAX_MCP_FILE_SIZE:
+                raise ValueError("Файл больше 8 МБ")
+            chunks.append(chunk)
+    finally:
+        response.close()
+    filename = Path(str(file_ref.get("file_name") or file_ref.get("file_id") or "chat-file")).name
+    content_type = str(file_ref.get("mime_type") or response.headers.get("Content-Type") or "application/octet-stream").split(";", 1)[0]
+    return b"".join(chunks), filename, content_type
+
+
+def _upload_content(args):
+    file_ref = args.get("file")
+    if isinstance(file_ref, dict):
+        return _download_chat_file(file_ref)
+    try:
+        content = base64.b64decode(args["content_base64"], validate=True)
+    except (KeyError, ValueError, TypeError) as exc:
+        raise ValueError("Передайте файл из чата в поле file") from exc
+    if len(content) > MAX_MCP_FILE_SIZE:
+        raise ValueError("Файл больше 8 МБ")
+    return content, Path(args["filename"]).name, "application/octet-stream"
+
+
+def _measurement_field_id(user):
+    from .models import ProjectCustomField
+    from .tenancy import current_workspace
+
+    file_fields = ProjectCustomField.objects.filter(
+        workspace=current_workspace(user),
+        field_type=ProjectCustomField.FieldType.FILE,
+    ).order_by("sort_order", "id")
+    fields = [field for field in file_fields if "замер" in field.name.casefold()]
+    exact = [field for field in fields if field.name.strip().casefold() == "замер"]
+    if len(exact) == 1:
+        return exact[0].id
+    if len(fields) == 1:
+        return fields[0].id
+    if not fields:
+        raise ValueError("В CRM не найдено файловое поле «Замер»")
+    raise ValueError("Найдено несколько файловых полей замера; укажите field_id")
+
+
 def _call_upload(user, args):
     from django.core.files.uploadedfile import SimpleUploadedFile
     from .views import ProjectViewSet
-    try:
-        content = base64.b64decode(args["content_base64"], validate=True)
-    except (ValueError, TypeError) as exc:
-        raise ValueError("Файл не является корректным base64") from exc
-    if len(content) > 8 * 1024 * 1024:
-        raise ValueError("Файл больше 8 МБ")
-    filename = Path(args["filename"]).name
+    content, filename, content_type = _upload_content(args)
     if args["target"] == "drawings":
         if Path(filename).suffix.lower() not in {".pdf", ".dxf"}:
             raise ValueError("В папку «Чертежи» разрешены только PDF и DXF")
@@ -280,12 +373,11 @@ def _call_upload(user, args):
         destination = join_disk_path(drawings_path, filename)
         upload_bytes(disk_settings.oauth_token, destination, content)
         return {"project": project.id, "filename": filename, "yandex_disk_path": destination}
-    if not args.get("field_id"):
-        raise ValueError("Для target=project_field требуется field_id")
-    upload = SimpleUploadedFile(filename, content)
+    field_id = args.get("field_id") or _measurement_field_id(user)
+    upload = SimpleUploadedFile(filename, content, content_type=content_type)
     req = APIRequestFactory().post(
         f"/api/projects/{int(args['project_id'])}/custom-field-files/",
-        {"field_id": int(args["field_id"]), "files": [upload]},
+        {"field_id": int(field_id), "files": [upload]},
         format="multipart",
     )
     force_authenticate(req, user=user)

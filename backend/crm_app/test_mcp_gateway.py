@@ -1,11 +1,12 @@
 import base64
 import hashlib
 import json
+from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
 from django.test import TestCase, override_settings
 
-from .models import Client, Project, ProjectComment, User, Workspace
+from .models import Client, Project, ProjectComment, ProjectCustomField, User, Workspace
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
@@ -78,7 +79,16 @@ class RemoteMcpTests(TestCase):
         self.assertEqual(metadata.json()["resource"], "http://testserver/api/mcp")
         tools = self.rpc("tools/list")
         self.assertEqual(tools.status_code, 200)
-        self.assertIn("crm_search", {item["name"] for item in tools.json()["result"]["tools"]})
+        tool_items = tools.json()["result"]["tools"]
+        self.assertIn("crm_search", {item["name"] for item in tool_items})
+        upload_tool = next(item for item in tool_items if item["name"] == "crm_upload_file")
+        self.assertEqual(upload_tool["_meta"]["openai/fileParams"], ["file"])
+        file_schema = upload_tool["inputSchema"]["$defs"]["OpenAIFile"]
+        self.assertEqual(file_schema["required"], ["download_url", "file_id"])
+        self.assertEqual(
+            set(file_schema["properties"]),
+            {"download_url", "file_id", "mime_type", "file_name"},
+        )
         skills = self.rpc("skills/list")
         self.assertEqual(skills.status_code, 200)
         self.assertEqual(
@@ -124,6 +134,46 @@ class RemoteMcpTests(TestCase):
             "resource": "payments", "data": {"project": self.project.id, "amount": "1000.00"},
         }}, token)
         self.assertTrue(finance_rejected.json()["result"]["isError"])
+
+    @patch("crm_app.mcp_gateway.requests.get")
+    def test_chat_file_is_downloaded_and_attached_to_measurement_field(self, get_mock):
+        ProjectCustomField.objects.create(
+            workspace=self.workspace,
+            name="Замер",
+            field_type=ProjectCustomField.FieldType.FILE,
+        )
+        download = Mock()
+        download.url = "https://files.example.test/download/file_123"
+        download.history = []
+        download.headers = {"Content-Length": "11", "Content-Type": "image/jpeg"}
+        download.iter_content.return_value = [b"photo-bytes"]
+        download.raise_for_status.return_value = None
+        get_mock.return_value = download
+
+        token = self.connect()
+        response = self.rpc("tools/call", {"name": "crm_upload_file", "arguments": {
+            "project_id": self.project.id,
+            "target": "project_field",
+            "file": {
+                "download_url": "https://files.example.test/download/file_123",
+                "file_id": "file_123",
+                "mime_type": "image/jpeg",
+                "file_name": "замер.jpg",
+            },
+            "confirm": True,
+        }}, token)
+
+        payload = response.json()["result"]
+        self.assertFalse(payload.get("isError", False), payload)
+        self.assertEqual(payload["structuredContent"]["uploaded"][0]["name"], "замер.jpg")
+        self.assertEqual(payload["structuredContent"]["uploaded"][0]["content_type"], "image/jpeg")
+        get_mock.assert_called_once_with(
+            "https://files.example.test/download/file_123",
+            stream=True,
+            timeout=(5, 30),
+            allow_redirects=True,
+        )
+        download.close.assert_called_once()
 
     def test_tool_call_requires_oauth(self):
         response = self.rpc("tools/call", {"name": "crm_search", "arguments": {"query": "0022"}})
