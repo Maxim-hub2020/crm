@@ -187,8 +187,9 @@ class RemoteMcpTests(TestCase):
             text="Быстрая запись без отдельного поиска",
         ).exists())
 
+    @patch("crm_app.views.sync_project_measurement_files_to_yandex", side_effect=RuntimeError("test sync failure"))
     @patch("crm_app.mcp_gateway.requests.get")
-    def test_chat_file_is_downloaded_and_attached_to_measurement_field(self, get_mock):
+    def test_chat_file_is_downloaded_and_attached_to_measurement_field(self, get_mock, sync_mock):
         ProjectCustomField.objects.create(
             workspace=self.workspace,
             name="Замер",
@@ -219,6 +220,8 @@ class RemoteMcpTests(TestCase):
         self.assertFalse(payload.get("isError", False), payload)
         self.assertEqual(payload["structuredContent"]["uploaded"][0]["name"], "замер.jpg")
         self.assertEqual(payload["structuredContent"]["uploaded"][0]["content_type"], "image/jpeg")
+        self.assertFalse(payload["structuredContent"]["yandex_disk"]["ok"])
+        sync_mock.assert_called_once()
         get_mock.assert_called_once_with(
             "https://files.example.test/download/file_123",
             stream=True,

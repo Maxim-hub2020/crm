@@ -1164,12 +1164,31 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Поле файла не найдено."}, status=drf_status.HTTP_404_NOT_FOUND)
 
         file_values = []
+        saved_paths = []
         for uploaded_file in uploaded_files:
             original_name = uploaded_file.name or "file"
             safe_name = get_valid_filename(original_name) or "file"
             storage_path = f"project_custom_fields/{project.id}/{field.id}/{uuid.uuid4().hex}-{safe_name}"
-            saved_path = default_storage.save(storage_path, uploaded_file)
-            file_url = default_storage.url(saved_path)
+            try:
+                saved_path = default_storage.save(storage_path, uploaded_file)
+                saved_paths.append(saved_path)
+                file_url = default_storage.url(saved_path)
+            except Exception:
+                logger.exception(
+                    "Project custom-field file storage failed project_id=%s field_id=%s filename=%s",
+                    project.id,
+                    field.id,
+                    original_name,
+                )
+                for path in saved_paths:
+                    try:
+                        default_storage.delete(path)
+                    except Exception:
+                        logger.exception("Failed to remove partial project upload path=%s", path)
+                return Response(
+                    {"detail": "Не удалось сохранить файл в хранилище CRM."},
+                    status=drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
             if file_url.startswith("/"):
                 file_url = request.build_absolute_uri(file_url)
 
@@ -1195,13 +1214,52 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         custom_fields[str(field.id)] = existing_files + file_values
         project.custom_fields = custom_fields
-        project.save(update_fields=["custom_fields", "updated_at"])
-        yandex_disk_result = sync_project_measurement_files_to_yandex(
-            project,
-            field,
-            custom_fields[str(field.id)],
-            actor=request.user,
-        )
+        try:
+            project.save(update_fields=["custom_fields", "updated_at"])
+        except Exception:
+            logger.exception(
+                "Project custom-field metadata save failed project_id=%s field_id=%s",
+                project.id,
+                field.id,
+            )
+            for path in saved_paths:
+                try:
+                    default_storage.delete(path)
+                except Exception:
+                    logger.exception("Failed to remove rolled-back project upload path=%s", path)
+            return Response(
+                {"detail": "Файл получен, но не удалось записать его в карточку проекта."},
+                status=drf_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        try:
+            yandex_disk_result = sync_project_measurement_files_to_yandex(
+                project,
+                field,
+                custom_fields[str(field.id)],
+                actor=request.user,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Measurement upload saved in CRM but Yandex sync failed project_id=%s field_id=%s",
+                project.id,
+                field.id,
+            )
+            yandex_disk_result = {
+                "ok": False,
+                "error": "Файл сохранён в CRM, но синхронизация с Яндекс.Диском завершилась ошибкой.",
+                "error_type": type(exc).__name__,
+            }
+
+        try:
+            project_payload = self.get_serializer(project).data
+        except Exception:
+            logger.exception("Project serialization failed after custom-field upload project_id=%s", project.id)
+            project_payload = {
+                "id": project.id,
+                "order_number": project.order_number,
+                "title": project.title,
+            }
 
         return Response(
             {
@@ -1209,7 +1267,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 "value": custom_fields[str(field.id)],
                 "uploaded": file_values,
                 "yandex_disk": yandex_disk_result,
-                "project": self.get_serializer(project).data,
+                "project": project_payload,
             }
         )
 
