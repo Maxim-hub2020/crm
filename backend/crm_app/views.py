@@ -1203,7 +1203,16 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 }
             )
 
-        custom_fields = dict(project.custom_fields or {})
+        raw_custom_fields = project.custom_fields
+        if isinstance(raw_custom_fields, dict):
+            custom_fields = dict(raw_custom_fields)
+        else:
+            logger.warning(
+                "Resetting legacy non-object custom_fields during file upload project_id=%s type=%s",
+                project.id,
+                type(raw_custom_fields).__name__,
+            )
+            custom_fields = {}
         existing_value = custom_fields.get(str(field.id))
         if isinstance(existing_value, list):
             existing_files = [item for item in existing_value if isinstance(item, dict)]

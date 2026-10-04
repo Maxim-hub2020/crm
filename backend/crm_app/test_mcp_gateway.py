@@ -190,6 +190,8 @@ class RemoteMcpTests(TestCase):
     @patch("crm_app.views.sync_project_measurement_files_to_yandex", side_effect=RuntimeError("test sync failure"))
     @patch("crm_app.mcp_gateway.requests.get")
     def test_chat_file_is_downloaded_and_attached_to_measurement_field(self, get_mock, sync_mock):
+        Project.objects.filter(pk=self.project.pk).update(custom_fields="legacy-value")
+        self.project.refresh_from_db()
         ProjectCustomField.objects.create(
             workspace=self.workspace,
             name="Замер",
