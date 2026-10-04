@@ -222,220 +222,58 @@
       }
     </script>
 
-    <link rel="preload" as="image" type="image/webp" href="assets/images/cinematic/hero.webp" />
-    <link rel="stylesheet" href="styles.css?v=20260809-calculator-modal1" />
-    <link rel="stylesheet" href="cinematic.css?v=20260905-parts1" />
-    <script src="script.js?v=20260809-calculator-modal1" defer></script>
-    <script src="cinematic.js?v=20260905-mobile-snap1" defer></script>
+
+    <link rel="stylesheet" href="/gallery.css?v=20261004-3d1" />
+    <script type="importmap">{"imports":{"three":"/assets/vendor/three/build/three.module.js","three/addons/":"/assets/vendor/three/examples/jsm/"}}</script>
+    <script src="/script.js?v=20260809-calculator-modal1" defer></script>
+    <script type="module" src="/gallery.js?v=20261004-3d1"></script>
   </head>
-  <body>
-    <a class="skip-link" href="#main">Перейти к содержанию</a>
-
-    <header class="site-header" data-header>
-      <div class="container header-inner">
-        <a class="brand" href="#top" aria-label="AMALGAMA — на главную">
-          <span class="brand-mark" aria-hidden="true">A</span>
-          <span class="brand-name">AMALGAMA</span>
-        </a>
-
-        <nav class="desktop-nav" aria-label="Основная навигация">
-          <a href="#showers" data-story-jump="0.18">Душевые</a>
-          <a href="#mirrors" data-story-jump="0.45">Зеркала</a>
-          <a href="#furniture" data-story-jump="0.70">Мебель</a>
-          <a href="/calculator/">Калькулятор</a>
-          <a href="#contact" data-story-jump="0.97">Заявка</a>
-        </nav>
-
-        <a class="button button-small header-cta" href="/calculator/">Рассчитать</a>
-
-        <button
-          class="menu-toggle"
-          type="button"
-          aria-label="Открыть меню"
-          aria-controls="mobile-menu"
-          aria-expanded="false"
-          data-menu-toggle
-        >
-          <span></span>
-          <span></span>
-        </button>
-      </div>
-
+  <body class="gallery-body">
+    <a class="skip-link" href="#contact">Перейти к заявке</a>
+    <header class="gallery-header" data-header>
+      <a class="gallery-brand" href="#top" aria-label="AMALGAMA — на главную">AMALGAMA</a>
+      <nav aria-label="Направления">
+        <a href="#showers">Душевые</a><a href="#mirrors">Зеркала</a><a href="#furniture">Мебель</a>
+      </nav>
+      <a class="button button-filled header-calculate" href="/calculator/">Рассчитать <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></a>
     </header>
-
-    <nav class="mobile-menu" id="mobile-menu" aria-label="Мобильная навигация" data-mobile-menu>
-      <a href="#showers" data-story-jump="0.18">Душевые</a>
-      <a href="#mirrors" data-story-jump="0.45">Зеркала</a>
-      <a href="#furniture" data-story-jump="0.70">Мебель</a>
-      <a href="/calculator/">Калькулятор</a>
-      <a href="#contact" data-story-jump="0.97">Заявка</a>
-      <a class="button" href="/calculator/">Рассчитать стоимость</a>
-    </nav>
-
-    <main id="main">
-      <section class="cinematic-story" id="top" data-cinematic-story aria-labelledby="cinematic-title">
-        <div class="cinematic-pin" data-cinematic-pin>
-          <div class="cinematic-media" aria-hidden="true">
-            <figure class="cinematic-scene cinematic-scene-overview">
-              <img
-                src="assets/images/cinematic/hero.webp"
-                alt=""
-                width="1672"
-                height="941"
-                decoding="async"
-                fetchpriority="high"
-              />
-            </figure>
-
-            <figure class="cinematic-scene cinematic-scene-showers">
-              <img
-                src="assets/images/hero-shower.webp"
-                alt=""
-                width="1715"
-                height="916"
-                decoding="async"
-              />
-            </figure>
-
-            <figure class="cinematic-scene cinematic-scene-mirrors">
-              <img
-                src="assets/images/mirror.webp"
-                alt=""
-                width="1536"
-                height="1024"
-                decoding="async"
-              />
-            </figure>
-
-            <figure class="cinematic-scene cinematic-scene-furniture">
-              <img
-                src="assets/images/kitchen.webp"
-                alt=""
-                width="1536"
-                height="1024"
-                decoding="async"
-              />
-            </figure>
-
-            <div class="cinematic-contact-shade"></div>
-            <div class="cinematic-grain"></div>
-          </div>
-
-          <div class="product-explainer" data-explainer>
-            <section class="breakdown" id="shower-details" data-breakdown="showers" aria-hidden="true" inert>
-              <div class="breakdown-heading"><span>01 / Душевые</span><h2>Прозрачность.<br />До последней детали.</h2><p>Стекло, крепления и фурнитура — под вашу конфигурацию.</p></div>
-              <div class="breakdown-parts">
-                <figure class="product-part"><div class="part-art" aria-hidden="true"></div><figcaption><b>Неподвижная панель</b><span>Закалённое стекло 8–10 мм</span></figcaption></figure>
-                <figure class="product-part"><div class="part-art" aria-hidden="true"></div><figcaption><b>Стеклянная дверь</b><span>Полированная кромка, точные вырезы</span></figcaption></figure>
-                <figure class="product-part"><div class="part-art" aria-hidden="true"></div><figcaption><b>Петли</b><span>Металлическая фурнитура для стекла</span></figcaption></figure>
-                <figure class="product-part"><div class="part-art" aria-hidden="true"></div><figcaption><b>Ручка и крепления</b><span>Покрытие — под стиль интерьера</span></figcaption></figure>
-              </div>
-              <p class="breakdown-note">Пример комплектации. Детали и материалы согласуем в проекте.</p>
-            </section>
-            <section class="breakdown" id="mirror-details" data-breakdown="mirrors" aria-hidden="true" inert>
-              <div class="breakdown-heading"><span>02 / Зеркала</span><h2>Свет внутри.<br />Красота снаружи.</h2><p>Посмотрите, из чего складывается зеркало с подсветкой.</p></div>
-              <div class="breakdown-parts">
-                <figure class="product-part"><div class="part-art" aria-hidden="true"></div><figcaption><b>Зеркальное полотно</b><span>Стекло с отражающим покрытием</span></figcaption></figure>
-                <figure class="product-part"><div class="part-art" aria-hidden="true"></div><figcaption><b>LED-подсветка</b><span>Светодиоды и рассеивающий профиль</span></figcaption></figure>
-                <figure class="product-part"><div class="part-art" aria-hidden="true"></div><figcaption><b>Основание</b><span>Монтажный каркас и крепления</span></figcaption></figure>
-                <figure class="product-part"><div class="part-art" aria-hidden="true"></div><figcaption><b>Управление светом</b><span>Блок питания и сенсор — по комплектации</span></figcaption></figure>
-              </div>
-              <p class="breakdown-note">Пример комплектации. Форма, свет и дополнительные функции — на выбор.</p>
-            </section>
-            <section class="breakdown" id="furniture-details" data-breakdown="furniture" aria-hidden="true" inert>
-              <div class="breakdown-heading"><span>03 / Мебель</span><h2>Продумана.<br />Снаружи и внутри.</h2><p>Материалы, фактуры и механизмы работают вместе.</p></div>
-              <div class="breakdown-parts">
-                <figure class="product-part"><div class="part-art" aria-hidden="true"></div><figcaption><b>Столешница</b><span>Камень или другой материал — на выбор</span></figcaption></figure>
-                <figure class="product-part"><div class="part-art" aria-hidden="true"></div><figcaption><b>Корпус</b><span>Плитные материалы под задачу проекта</span></figcaption></figure>
-                <figure class="product-part"><div class="part-art" aria-hidden="true"></div><figcaption><b>Фасады</b><span>МДФ, шпон и другие варианты отделки</span></figcaption></figure>
-                <figure class="product-part"><div class="part-art" aria-hidden="true"></div><figcaption><b>Направляющие</b><span>Механизмы плавного закрывания</span></figcaption></figure>
-              </div>
-              <p class="breakdown-note">На примере тумбы. Материалы и механизмы выбираем вместе с вами.</p>
-            </section>
-          </div>
-
-          <div class="cinematic-interface">
-            <article class="cinematic-chapter cinematic-chapter-overview" data-cinematic-chapter data-active="true">
-              <span class="cinematic-chapter-kicker">Ростов-на-Дону · собственное производство</span>
-              <h1 id="cinematic-title">Душевые, зеркала<br />и мебель на заказ</h1>
-              <p>Три направления, которые мы соединяем в одном цельном интерьере.</p>
-              <div class="cinematic-actions">
-                <a class="button button-filled" href="/calculator/">Рассчитать стоимость</a>
-              </div>
-
-              <nav class="cinematic-category-rail" aria-label="Три направления AMALGAMA">
-                <a href="#showers" data-story-jump="0.18">
-                  <span>01</span>
-                  <strong>Душевые</strong>
-                  <em>Стекло и фурнитура</em>
-                </a>
-                <a href="#mirrors" data-story-jump="0.45">
-                  <span>02</span>
-                  <strong>Зеркала</strong>
-                  <em>Форма и свет</em>
-                </a>
-                <a href="#furniture" data-story-jump="0.70">
-                  <span>03</span>
-                  <strong>Мебель</strong>
-                  <em>Проект и изготовление</em>
-                </a>
-              </nav>
-            </article>
-
-            <article class="cinematic-chapter cinematic-chapter-product" id="showers" data-cinematic-chapter aria-hidden="true">
-              <span class="cinematic-product-number">01 / 03</span>
-              <h2>Душевые<br />из стекла</h2>
-              <p>Перегородки, двери и ограждения из закалённого стекла 8–10 мм по размерам вашего помещения.</p>
-              <div class="cinematic-specs" aria-label="Особенности душевых">
-                <span>Закалённое стекло</span>
-                <span>Фурнитура на выбор</span>
-                <span>Монтаж под ключ</span>
-              </div>
-              <div class="cinematic-actions">
-                <a class="button button-filled" href="#contact" data-story-jump="0.97" data-service-link="Душевые">Оставить заявку</a>
-                <a class="text-link" href="#shower-details" data-story-jump="0.30">Из чего состоит</a>
-                <a class="text-link" href="/dushevye/">Подробнее</a>
-              </div>
-            </article>
-
-            <article class="cinematic-chapter cinematic-chapter-product cinematic-chapter-mirrors" id="mirrors" data-cinematic-chapter aria-hidden="true">
-              <span class="cinematic-product-number">02 / 03</span>
-              <h2>Зеркала<br />с подсветкой</h2>
-              <p>Круглые, прямоугольные и фигурные зеркала с мягким светом, подогревом и сенсорным управлением.</p>
-              <div class="cinematic-specs" aria-label="Особенности зеркал">
-                <span>Любая форма</span>
-                <span>Тёплый или нейтральный свет</span>
-                <span>Точное изготовление</span>
-              </div>
-              <div class="cinematic-actions">
-                <a class="button button-filled" href="#contact" data-story-jump="0.97" data-service-link="Зеркала">Оставить заявку</a>
-                <a class="text-link" href="#mirror-details" data-story-jump="0.56">Из чего состоит</a>
-                <a class="text-link" href="/zerkala/">Подробнее</a>
-              </div>
-            </article>
-
-            <article class="cinematic-chapter cinematic-chapter-product cinematic-chapter-furniture" id="furniture" data-cinematic-chapter aria-hidden="true">
-              <span class="cinematic-product-number">03 / 03</span>
-              <h2>Мебель<br />по вашим размерам</h2>
-              <p>Кухни, тумбы и системы хранения, созданные под архитектуру помещения и ваш образ жизни.</p>
-              <div class="cinematic-specs" aria-label="Особенности мебели">
-                <span>Индивидуальный проект</span>
-                <span>Премиальные материалы</span>
-                <span>Установка под ключ</span>
-              </div>
-              <div class="cinematic-actions">
-                <a class="button button-filled" href="#contact" data-story-jump="0.97" data-service-link="Мебель">Оставить заявку</a>
-                <a class="text-link" href="#furniture-details" data-story-jump="0.82">Из чего состоит</a>
-                <a class="text-link" href="/mebel/">Подробнее</a>
-              </div>
-            </article>
-
-            <article class="cinematic-chapter cinematic-chapter-contact" id="contact" data-cinematic-chapter aria-hidden="true">
-              <span class="cinematic-chapter-kicker">Следующий шаг</span>
-              <h2>Рассчитаем<br />ваш проект</h2>
-              <p>Заявка сразу поступит менеджеру. Мы уточним детали и свяжемся с вами.</p>
-
-              <form class="contact-form cinematic-contact-form" data-contact-form novalidate>
+    <div class="gallery-scene" data-gallery-scene>
+      <img class="scene-fallback" src="/assets/images/gallery/mirrors.webp" alt="" />
+      <canvas data-gallery-canvas aria-label="Интерактивное изделие: потяните для вращения" tabindex="0"></canvas>
+      <div class="scene-fade"></div>
+      <span class="scene-loading" role="status">Создаём пространство…</span>
+    </div>
+    <main>
+      <section class="gallery-section" id="top" data-scene="overview" aria-labelledby="hero-title">
+        <div class="gallery-copy">
+          <h1 id="hero-title">Пространство.<br /><em>В новом измерении.</em></h1>
+          <p>Душевые, зеркала и мебель по вашим размерам.</p>
+          <a class="button button-outline" href="#showers">Исследовать коллекцию <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></a>
+        </div>
+        <span class="gallery-location">Ростов-на-Дону · Ростовская область</span>
+        <a class="next-scene" href="#showers" aria-label="Перейти к душевым"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></a>
+      </section>
+      <section class="gallery-section" id="showers" data-scene="showers" aria-labelledby="showers-title">
+        <div class="gallery-copy"><h2 id="showers-title">Стекло.<br /><em>Лёгкость формы.</em></h2>
+          <p>Душевые перегородки по индивидуальным размерам. Закалённое стекло, точная геометрия и фурнитура под ваш интерьер.</p>
+          <div class="gallery-actions"><a class="button button-filled" href="#contact" data-service-link="Душевые">Оставить заявку <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></a><a class="text-link" href="/dushevye/">Подробнее</a></div>
+        </div>
+      </section>
+      <section class="gallery-section" id="mirrors" data-scene="mirrors" aria-labelledby="mirrors-title">
+        <div class="gallery-copy"><h2 id="mirrors-title">Свет.<br /><em>Ваша новая грань.</em></h2>
+          <p>Круглые, прямоугольные и фигурные зеркала. Мягкая подсветка и отражение, которое меняется вместе с ракурсом.</p>
+          <div class="gallery-actions"><a class="button button-filled" href="#contact" data-service-link="Зеркала">Оставить заявку <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></a><a class="text-link" href="/zerkala/">Подробнее</a></div>
+        </div>
+      </section>
+      <section class="gallery-section" id="furniture" data-scene="furniture" aria-labelledby="furniture-title">
+        <div class="gallery-copy"><h2 id="furniture-title">Форма.<br /><em>По вашей жизни.</em></h2>
+          <p>Мебель под архитектуру пространства. Натуральные фактуры, продуманное хранение и детали, которые хочется рассмотреть.</p>
+          <div class="gallery-actions"><a class="button button-filled" href="#contact" data-service-link="Мебель">Оставить заявку <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></a><a class="text-link" href="/mebel/">Подробнее</a></div>
+        </div>
+      </section>
+      <section class="gallery-contact" id="contact">
+        <div class="contact-intro"><h2>Начнём<br /><em>с вашей идеи.</em></h2><p>Расскажите о проекте. Мы уточним детали и подготовим расчёт.</p><img src="/assets/images/gallery/mirrors.webp" alt="Зеркало в 3D-галерее" loading="lazy" /></div>
+        <div class="contact-panel"><a class="text-link" href="#top">← Назад к коллекции</a><form class="contact-form gallery-form" data-contact-form novalidate>
                 <div class="form-honeypot" aria-hidden="true">
                   <label>
                     <span>Компания</span>
@@ -476,7 +314,7 @@
                   </label>
 
                   <label class="form-message">
-                    <span>Коротко о задаче</span>
+                    <span>О проекте</span>
                     <textarea
                       name="message"
                       rows="2"
@@ -493,19 +331,22 @@
                 </div>
 
                 <p class="form-status" role="status" aria-live="polite" data-form-status></p>
-              </form>
-            </article>
-          </div>
-
-          <div class="cinematic-progress" role="progressbar" aria-label="Прогресс просмотра" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-cinematic-progress>
-            <span>01</span>
-            <span class="cinematic-progress-track"><span class="cinematic-progress-bar"></span></span>
-            <span>05</span>
-          </div>
-
-          <span class="cinematic-scroll-label">Прокручивайте</span>
-        </div>
+              </form></div>
       </section>
     </main>
+    <div class="gallery-controls" data-controls aria-label="Управление изделием">
+      <div class="product-controls" hidden>
+        <label class="variant-control"><span data-variant-label>Форма</span><select data-variant aria-label="Вариант изделия"></select></label>
+        <button type="button" data-open aria-pressed="false">Открыть дверь</button>
+        <button type="button" data-explode aria-pressed="false">Разобрать</button>
+        <button type="button" data-auto aria-pressed="false">Автовращение</button>
+        <label class="tone-control">Отделка <select data-finish aria-label="Отделка"><option value="bronze">Бронза</option><option value="black">Чёрная</option><option value="chrome">Хром</option></select></label>
+      </div>
+      <label class="light-control">Свет <input type="range" min="0" max="100" value="75" data-light aria-label="Яркость света" /></label>
+      <span class="drag-hint" data-hint>Потяните изделие для вращения</span>
+    </div>
+    <nav class="scene-pagination" aria-label="Сцены коллекции"><a href="#top" aria-label="Общая коллекция">01</a><a href="#showers" aria-label="Душевые">02</a><a href="#mirrors" aria-label="Зеркала">03</a><a href="#furniture" aria-label="Мебель">04</a></nav>
+    <p class="configuration-note">Визуализация вариантов. Размеры и комплектация согласуются по проекту.</p>
+    <div class="sr-only" role="status" aria-live="polite" data-scene-status></div>
   </body>
 </html>
