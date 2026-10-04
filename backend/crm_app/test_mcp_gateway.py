@@ -222,6 +222,7 @@ class RemoteMcpTests(TestCase):
         self.assertFalse(payload.get("isError", False), payload)
         self.assertEqual(payload["structuredContent"]["uploaded"][0]["name"], "замер.jpg")
         self.assertEqual(payload["structuredContent"]["uploaded"][0]["content_type"], "image/jpeg")
+        self.assertTrue(payload["structuredContent"]["uploaded"][0]["url"].startswith("https://testserver/"))
         self.assertFalse(payload["structuredContent"]["yandex_disk"]["ok"])
         sync_mock.assert_called_once()
         get_mock.assert_called_once_with(

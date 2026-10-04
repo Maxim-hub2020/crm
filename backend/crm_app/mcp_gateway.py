@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import requests
+from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -470,10 +471,20 @@ def _call_upload(user, args):
         return {"project": project.id, "filename": filename, "yandex_disk_path": destination}
     field_id = args.get("field_id") or _measurement_field_id(user)
     upload = SimpleUploadedFile(filename, content, content_type=content_type)
+    request_host = next(
+        (
+            host
+            for host in settings.ALLOWED_HOSTS
+            if host not in {"*", "localhost", "127.0.0.1", "backend"} and not host.startswith(".")
+        ),
+        "localhost",
+    )
     req = APIRequestFactory().post(
         f"/api/projects/{int(args['project_id'])}/custom-field-files/",
         {"field_id": int(field_id), "files": [upload]},
         format="multipart",
+        HTTP_HOST=request_host,
+        HTTP_X_FORWARDED_PROTO="https",
     )
     force_authenticate(req, user=user)
     response = ProjectViewSet.as_view({"post": "upload_custom_field_file"})(req, pk=int(args["project_id"]))
