@@ -4,7 +4,7 @@ import { createModelFactory } from './gallery-models.js?v=20261004-console2';
 import { catalog } from './gallery-catalog.js?v=20261004-console2';
 
 const $=s=>document.querySelector(s),canvas=$('[data-gallery-canvas]'),host=$('[data-gallery-scene]');
-const contact=$('#contact'),help=$('[data-help-dialog]'),track=$('[data-model-track]');
+const contact=$('#contact'),track=$('[data-model-track]');
 const reduced=matchMedia('(prefers-reduced-motion: reduce)'),mobile=matchMedia('(max-width:760px)');
 const state={category:'showers',index:0,angle:0,tilt:0,open:false,explode:false,auto:false,finish:'bronze',light:.75};
 if(new URLSearchParams(location.search).get('service')==='mirrors')state.category='mirrors';
@@ -67,8 +67,7 @@ function showContact(){
 }
 contact.addEventListener('close',()=>{history.replaceState(null,'',routeHash());requestFrame();});
 $('[data-close-contact]').addEventListener('click',()=>contact.close());
-$('[data-help]').addEventListener('click',()=>help.showModal());$('[data-close-help]').addEventListener('click',()=>help.close());
-for(const dialog of [contact,help])dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});
+contact.addEventListener('click',e=>{if(e.target===contact){const r=contact.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)contact.close();}});
 document.querySelectorAll('a[href^="#"]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();if(a.hash==='#contact')showContact();else select(a.hash==='#mirrors'?'mirrors':'showers');}));
 $('[data-previous]').addEventListener('click',()=>step(-1));$('[data-next]').addEventListener('click',()=>step(1));
 $('button[data-open]').addEventListener('click',()=>toggle('open'));$('[data-explode]').addEventListener('click',()=>toggle('explode'));$('[data-auto]').addEventListener('click',()=>toggle('auto'));
@@ -88,26 +87,6 @@ let pointer;
 canvas.addEventListener('pointerdown',e=>{if(e.button!==0)return;pointer={id:e.pointerId,x:e.clientX,y:e.clientY};state.auto=false;canvas.setPointerCapture(e.pointerId);updateUI();});
 canvas.addEventListener('pointermove',e=>{if(!pointer||pointer.id!==e.pointerId)return;state.angle+=(e.clientX-pointer.x)*.008;state.tilt=clamp(state.tilt+(e.clientY-pointer.y)*.002,-.12,.15);pointer.x=e.clientX;pointer.y=e.clientY;requestFrame();});
 canvas.addEventListener('pointerup',()=>{pointer=null;});canvas.addEventListener('pointercancel',()=>{pointer=null;});
-
-// Standard Gamepad mapping: DualSense/DualShock, Xbox and compatible controllers.
-let padTimer=0,previousButtons=[],lastDirection=0,lastStep=0;
-function pollPad(){
-  const pad=Array.from(navigator.getGamepads?.()||[]).find(p=>p?.connected);
-  if(!pad){clearInterval(padTimer);padTimer=0;previousButtons=[];$('[data-gamepad-status]').textContent='Геймпад отключён. Можно продолжить мышью или клавиатурой.';return;}
-  $('[data-gamepad-status]').textContent='Геймпад подключён. Правый стик вращает модель.';
-  const buttons=pad.buttons.map(b=>b.pressed),pressed=i=>buttons[i]&&!previousButtons[i];
-  if(!document.hidden&&!modalOpen()){
-    const dir=buttons[14]?-1:buttons[15]?1:0,now=performance.now();
-    if(dir&&(dir!==lastDirection||now-lastStep>330)){step(dir);lastStep=now;}lastDirection=dir;
-    if(pressed(4)||pressed(5)||pressed(12)||pressed(13))changeCategory();
-    if(pressed(0))toggle('open');if(pressed(2))toggle('explode');if(pressed(3)){const a=['bronze','chrome','black'];finish(a[(a.indexOf(state.finish)+1)%3]);}if(pressed(9))showContact();
-    const x=pad.axes[2]||0,y=pad.axes[3]||0;if(Math.abs(x)>.15||Math.abs(y)>.15){state.auto=false;state.angle+=x*.05;state.tilt=clamp(state.tilt+y*.006,-.12,.15);requestFrame();}
-  }else if(pressed(1)){document.querySelector('dialog[open]')?.close();}
-  previousButtons=buttons;
-}
-function connectPad(){if(!padTimer)padTimer=setInterval(pollPad,32);}
-window.addEventListener('gamepadconnected',connectPad);window.addEventListener('gamepaddisconnected',pollPad);
-if(Array.from(navigator.getGamepads?.()||[]).some(Boolean))connectPad();
 
 function resize(){
   if(!renderer)return;const w=host.clientWidth,h=host.clientHeight;
