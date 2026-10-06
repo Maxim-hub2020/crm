@@ -543,6 +543,8 @@ def public_calculator_lead_view(request):
     source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
     configuration = {**calculation["configuration"], "delivery": calculation["delivery"], "fingerprint": fingerprint}
     quote = None
+    project = None
+    production_plan = None
     with transaction.atomic():
         lead, created = CalculatorLead.objects.get_or_create(
             calculation_id=calculation_id,
@@ -584,11 +586,19 @@ def public_calculator_lead_view(request):
             )
             lead.quote = quote
             lead.save(update_fields=["quote", "updated_at"])
+            if calculation["product"] == "shower" and configuration.get("productionRequested"):
+                from .calculator_leads import create_public_production_project
+                project, production_plan = create_public_production_project(quote, lead)
     if created:
         _notify_calculator_lead(lead, quote)
     response_payload = {"ok": True, "lead_id": lead.id}
     if quote:
         response_payload.update({"quote_id": quote.quote_id, "quote_number": quote.number})
+    if project and production_plan:
+        response_payload.update({
+            "project_created": True,
+            "production_status": production_plan.status,
+        })
     return Response(response_payload, status=status.HTTP_201_CREATED)
 
 

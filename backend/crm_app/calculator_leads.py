@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation, ROUND_CEILING
 
 from django.db import IntegrityError, transaction
 
-from .models import CalculatorLead, CalculatorQuote, Client, Project, ProjectStatus, User
+from .models import CalculatorLead, CalculatorQuote, Client, ProductionPlan, Project, ProjectStatus, User
 from .phones import normalize_russian_phone
 from .workflow import apply_task_templates_for_project, create_audit_log, snapshot_model
 
@@ -142,6 +142,142 @@ def _sync_internal_quote_project(quote, payload, customer, name, phone, amount, 
             workspace=project.workspace,
         )
     return project
+
+
+def create_public_production_project(quote, lead):
+    """Create a CRM project and a safe needs-input production draft.
+
+    Public dimensions are sufficient for a preliminary quote and verification
+    sketch, but never for manufacturing output.  The draft records exactly what
+    the visitor entered and exposes every missing production input as a blocker
+    for the server-side production-technologist skill.
+    """
+    if lead.product != "shower":
+        return None, None
+
+    configuration = _dict(lead.configuration)
+    if not configuration.get("productionRequested"):
+        return None, None
+
+    manager = _project_manager(quote)
+    status = _application_status(quote.workspace_id)
+    if manager is None or status is None:
+        return None, None
+
+    payload = _dict(quote.payload)
+    items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    item = _dict(items[0]) if items else payload
+    dimensions = _dict(configuration.get("dimensions"))
+    tray = _dict(configuration.get("tray"))
+    opening_direction = str(configuration.get("openingDirection") or "").strip()[:80]
+    obstacles = str(configuration.get("obstacles") or "").strip()[:1000]
+    construction_title = str(item.get("constructionTitle") or "Душевая по размерам")[:300]
+
+    project = quote.project
+    created = project is None
+    if created:
+        client, normalized_phone = _quote_client(quote, lead.client_name, lead.client_phone)
+        project = Project.objects.create(
+            workspace_id=quote.workspace_id,
+            client=client,
+            client_name=lead.client_name or client.name,
+            client_phone=normalized_phone or lead.client_phone,
+            manager=manager,
+            status=status.code,
+            title=construction_title[:200],
+            description=(
+                f"Заявка на проектирование с сайта. КП №{quote.number or quote.quote_id}.\n"
+                "Номинальные размеры введены клиентом; финальный выпуск только после проверки замера технологом."
+            ),
+            total_amount=lead.amount,
+            categories="shower",
+        )
+        quote.project = project
+        quote.save(update_fields=["project", "updated_at"])
+        apply_task_templates_for_project(project, actor=manager)
+        create_audit_log(
+            manager,
+            "project",
+            project.id,
+            "create",
+            after=snapshot_model(project, ["id", "title", "client_name", "client_phone", "total_amount", "status"]),
+            workspace=project.workspace,
+        )
+
+    existing = ProductionPlan.objects.filter(project=project).order_by("-revision").first()
+    if existing:
+        return project, existing
+
+    blockers = [
+        "Нужны фактические контрольные размеры проёма и сторон на нижней и верхней отметках.",
+        "Нужны отклонения стен от вертикали и пола или поддона от уровня.",
+        "Нужно подтвердить ширину порожка, положение оси стекла и чистовую высоту конструкции.",
+        "Нужно подтвердить точные артикулы петель, креплений, профилей, ручки и уплотнителей.",
+    ]
+    if not opening_direction:
+        blockers.append("Нужно выбрать направление открывания двери и допустимую зону её хода.")
+    if not obstacles:
+        blockers.append("Нужно подтвердить отсутствие препятствий и скрытых коммуникаций в местах крепления.")
+
+    evidence = [
+        {"field": key, "value_mm": value, "source": "ввод клиента на сайте"}
+        for key, value in dimensions.items()
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    ]
+    specification = {
+        "product": {
+            "type": "shower",
+            "construction_id": str(configuration.get("constructionId") or ""),
+            "construction_title": construction_title,
+        },
+        "source": {
+            "kind": "public_site_designer",
+            "calculation_id": lead.calculation_id,
+            "quote_number": quote.number,
+            "price_version": lead.price_version,
+        },
+        "geometry": {
+            "nominal_dimensions_mm": dimensions,
+            "tray": tray,
+        },
+        "panels": [],
+        "operations": [],
+        "hardware": {
+            "finish_id": str(configuration.get("hardwareId") or ""),
+            "class_id": str(configuration.get("hardwareClassId") or ""),
+            "glass_id": str(configuration.get("glassId") or ""),
+            "exact_articles": [],
+        },
+        "clearances": {},
+        "installation": {
+            "opening_direction": opening_direction,
+            "obstacles": obstacles,
+            "installation_requested": bool(configuration.get("installation")),
+        },
+        "assumptions": [],
+        "evidence": evidence,
+    }
+    plan = ProductionPlan.objects.create(
+        workspace_id=project.workspace_id,
+        project=project,
+        revision=1,
+        product_type=ProductionPlan.ProductType.SHOWER,
+        status=ProductionPlan.Status.NEEDS_INPUT,
+        summary=(
+            f"Автоматический черновик по заявке с сайта: {construction_title}. "
+            "Смета предварительная; производственные размеры не назначены до проверки замера."
+        ),
+        specification=specification,
+        blocking_questions=blockers,
+        warnings=[
+            "Номинальные размеры клиента нельзя использовать для заказа стекла без контрольного замера.",
+            "Проверочный эскиз сайта не является производственным чертежом или DXF.",
+        ],
+        source_files=[],
+        output_files=[],
+        created_by=manager,
+    )
+    return project, plan
 
 
 def sync_quote_lead(quote):

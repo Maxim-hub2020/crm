@@ -6,7 +6,7 @@ from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import CalculatorLead, CalculatorQuote, CalculatorSettings, User, default_workspace
+from .models import CalculatorLead, CalculatorQuote, CalculatorSettings, ProductionPlan, Project, User, default_workspace
 
 
 class PublicCalculatorApiTests(APITestCase):
@@ -204,6 +204,56 @@ class PublicCalculatorApiTests(APITestCase):
         self.assertEqual(item["serviceLines"][0]["label"], "Монтаж")
         self.assertEqual(item["details"][-1]["value"], "Включено")
         self.assertEqual(quote.payload["customer"]["clientName"], "Анна")
+
+    def test_production_request_creates_project_and_needs_input_plan(self):
+        User.objects.create_user(
+            username="production-manager",
+            password="test",
+            role=User.Role.ADMIN,
+            workspace=self.workspace,
+        )
+        calculation = self.client.post(
+            "/api/public-calculator/calculate/",
+            {
+                "product": "shower",
+                "configuration": {
+                    "constructionId": "shower-1",
+                    "dimensions": {"HEIGHT_0": 2000, "WIDTH_0": 1000},
+                    "glassId": "clear",
+                    "hardwareId": "chrome",
+                    "hardwareClassId": "standard",
+                    "installation": True,
+                    "productionRequested": True,
+                    "tray": {"ledgeWidthMm": 90, "axis": "center"},
+                    "openingDirection": "outward-right",
+                    "obstacles": "Смеситель слева от проёма.",
+                },
+                "delivery": {"enabled": False, "zone": "inside", "km": 0},
+            },
+            format="json",
+        )
+        self.assertEqual(calculation.status_code, status.HTTP_200_OK)
+
+        lead_response = self.client.post(
+            "/api/public-calculator/lead/",
+            {
+                "calculation_id": calculation.data["calculation_id"],
+                "name": "Пётр",
+                "phone": "+7 (999) 000-11-22",
+            },
+            format="json",
+        )
+
+        self.assertEqual(lead_response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(lead_response.data["project_created"])
+        self.assertEqual(lead_response.data["production_status"], ProductionPlan.Status.NEEDS_INPUT)
+        self.assertEqual(Project.objects.count(), 1)
+        plan = ProductionPlan.objects.get()
+        self.assertEqual(plan.project.calculator_quote.number, "1001")
+        self.assertEqual(plan.specification["geometry"]["tray"]["ledgeWidthMm"], 90)
+        self.assertEqual(plan.specification["source"]["kind"], "public_site_designer")
+        self.assertTrue(plan.blocking_questions)
+        self.assertFalse(plan.output_files)
 
     def test_honeypot_does_not_create_lead(self):
         response = self.client.post(

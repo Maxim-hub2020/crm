@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createModelFactory } from './gallery-models.js?v=20261004-console2';
 import { catalog } from './gallery-catalog.js?v=20261004-console2';
+import { setupDesigner } from './designer.js?v=20261006-designer1';
 
 const $=s=>document.querySelector(s),canvas=$('[data-gallery-canvas]'),host=$('[data-gallery-scene]');
 const contact=$('#contact'),track=$('[data-model-track]');
@@ -11,6 +12,7 @@ if(new URLSearchParams(location.search).get('service')==='mirrors')state.categor
 let renderer,scene,camera,factory,model,frame=0,lastTime=0,yaw=0,tilt=0,opened=0,exploded=0,reveal=1,failed=false;
 const reflection={texture:null,floor:null};
 const current=()=>catalog[state.category][state.index];
+const designer=setupDesigner({onClose:()=>requestFrame()});
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 function routeHash(){return `#${state.category}/${current().id}`;}
 function updateUI(rebuild=false){
@@ -21,6 +23,8 @@ function updateUI(rebuild=false){
   $('[data-spec-material]').textContent=mirror?'Зеркало с LED-подсветкой':'Закалённое стекло';
   $('[data-spec-layout]').textContent=mirror?'По вашим размерам':`${item.panels} ${item.panels===1?'стекло':item.panels===2?'стекла':'стекла'} · по вашим размерам`;
   $('[data-details]').href=mirror?'/zerkala/':'/dushevye/';
+  $('[data-choose]').href=mirror?'#contact':'#designer';
+  $('[data-choose]').innerHTML=mirror?'Выбрать зеркало <span aria-hidden="true">→</span>':'Рассчитать модель <span aria-hidden="true">→</span>';
   $('.header-calculate').href=`/calculator/?product=${mirror?'mirror':'shower'}`;
   $('[data-collection-label]').textContent=mirror?'Зеркала':'Душевые';
   $('[data-model-count]').textContent=`${String(state.index+1).padStart(2,'0')} / ${catalog[state.category].length}`;
@@ -65,10 +69,14 @@ function showContact(){
   const message=$('textarea[name=message]');if(!message.value||message.dataset.autoValue===message.value){message.value=summary;message.dataset.autoValue=summary;}
   if(!contact.open)contact.showModal();history.replaceState(null,'','#contact');
 }
+function showDesigner(){
+  state.auto=false;updateUI();
+  designer.open({...current(),finish:state.finish});
+}
 contact.addEventListener('close',()=>{history.replaceState(null,'',routeHash());requestFrame();});
 $('[data-close-contact]').addEventListener('click',()=>contact.close());
 contact.addEventListener('click',e=>{if(e.target===contact){const r=contact.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)contact.close();}});
-document.querySelectorAll('a[href^="#"]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();if(a.hash==='#contact')showContact();else select(a.hash==='#mirrors'?'mirrors':'showers');}));
+document.querySelectorAll('a[href^="#"]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();if(a.hash==='#contact')showContact();else if(a.hash==='#designer')showDesigner();else select(a.hash==='#mirrors'?'mirrors':'showers');}));
 $('[data-previous]').addEventListener('click',()=>step(-1));$('[data-next]').addEventListener('click',()=>step(1));
 $('button[data-open]').addEventListener('click',()=>toggle('open'));$('[data-explode]').addEventListener('click',()=>toggle('explode'));$('[data-auto]').addEventListener('click',()=>toggle('auto'));
 document.querySelectorAll('[data-finish]').forEach(b=>b.addEventListener('click',()=>finish(b.dataset.finish)));
