@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
 from django.test import TestCase, override_settings
+from rest_framework.test import APIClient
 
 from .models import Account, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, User, Workspace
 
@@ -260,13 +261,14 @@ class RemoteMcpTests(TestCase):
         self.assertIsNone(adjustment.category_id)
         self.assertEqual(adjustment.adjustment_direction, Payment.AdjustmentDirection.DECREASE)
 
-        self.client.force_login(self.user)
-        analytics = self.client.get("/api/finance-analytics/")
+        api_client = APIClient()
+        api_client.force_authenticate(self.user)
+        analytics = api_client.get("/api/finance-analytics/")
         self.assertEqual(analytics.status_code, 200)
         self.assertEqual(analytics.json()["summary"]["income_total"], "1000.00")
         self.assertEqual(analytics.json()["summary"]["expense_total"], "0.00")
 
-        forecast = self.client.get("/api/cash-forecast/")
+        forecast = api_client.get("/api/cash-forecast/")
         self.assertEqual(forecast.status_code, 200)
         self.assertEqual(forecast.json()["current_balance"], "800.00")
 
