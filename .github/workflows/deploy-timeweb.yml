@@ -246,7 +246,7 @@ jobs:
           curl --fail --silent --show-error \
             --retry 10 --retry-delay 3 --retry-all-errors \
             https://amalgama.cehcrm.ru/ \
-            | grep -F "Душевые, зеркала и мебель на заказ"
+            | grep -F "<title>Душевые и зеркала на заказ в Ростове-на-Дону | AMALGAMA</title>"
 
       - name: Notify Telegram
         if: always()
