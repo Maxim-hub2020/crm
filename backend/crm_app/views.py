@@ -404,11 +404,16 @@ def _task_result(task):
 
 
 def _payment_result(payment):
+    title = (
+        "Корректировка баланса"
+        if payment.operation_kind == Payment.OperationKind.BALANCE_ADJUSTMENT
+        else getattr(payment.category, "name", "") or "Операция"
+    )
     return {
         "type": "payment",
         "id": payment.id,
         "project_id": payment.project_id,
-        "title": f"{getattr(payment.category, 'name', '') or 'Операция'} · {payment.amount} ₽",
+        "title": f"{title} · {payment.amount} ₽",
         "subtitle": " · ".join([value for value in [getattr(payment.project, "title", ""), payment.comment] if value]),
         "route": "/projects" if payment.project_id else "/finances",
         "tab": "finances",
@@ -1527,13 +1532,13 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 "payment",
                 payment.id,
                 "create",
-                after=snapshot_model(payment, ["id", "project_id", "category_id", "account_id", "paid_at", "amount", "type", "comment"]),
+                after=snapshot_model(payment, ["id", "project_id", "operation_kind", "adjustment_direction", "category_id", "account_id", "paid_at", "amount", "type", "comment"]),
                 workspace=payment.project.workspace if payment.project_id else current_workspace(self.request.user),
             )
 
     def perform_update(self, serializer):
         previous_project_id = serializer.instance.project_id
-        before = snapshot_model(serializer.instance, ["id", "project_id", "category_id", "account_id", "paid_at", "amount", "type", "comment"])
+        before = snapshot_model(serializer.instance, ["id", "project_id", "operation_kind", "adjustment_direction", "category_id", "account_id", "paid_at", "amount", "type", "comment"])
         with transaction.atomic():
             payment = serializer.save()
             project_ids = {previous_project_id, payment.project_id}
@@ -1546,7 +1551,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 payment.id,
                 "update",
                 before=before,
-                after=snapshot_model(payment, ["id", "project_id", "category_id", "account_id", "paid_at", "amount", "type", "comment"]),
+                after=snapshot_model(payment, ["id", "project_id", "operation_kind", "adjustment_direction", "category_id", "account_id", "paid_at", "amount", "type", "comment"]),
                 workspace=payment.project.workspace if payment.project_id else current_workspace(self.request.user),
             )
 
@@ -1554,7 +1559,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
         payment_id = instance.id
         project_id = instance.project_id
         workspace = instance.project.workspace if instance.project_id else current_workspace(self.request.user)
-        before = snapshot_model(instance, ["id", "project_id", "category_id", "account_id", "paid_at", "amount", "type", "comment"])
+        before = snapshot_model(instance, ["id", "project_id", "operation_kind", "adjustment_direction", "category_id", "account_id", "paid_at", "amount", "type", "comment"])
         with transaction.atomic():
             instance.delete()
             if project_id:

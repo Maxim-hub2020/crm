@@ -304,7 +304,13 @@ def _serialize_payment_for_analytics(payment):
         "project": payment.project_id,
         "project_title": _project_label(project) if project else "",
         "category": payment.category_id,
-        "category_name": getattr(payment.category, "name", "") or "Без категории",
+        "operation_kind": payment.operation_kind,
+        "adjustment_direction": payment.adjustment_direction,
+        "category_name": (
+            "Корректировка баланса"
+            if payment.operation_kind == Payment.OperationKind.BALANCE_ADJUSTMENT
+            else getattr(payment.category, "name", "") or "Без категории"
+        ),
         "category_type": kind,
         "account": payment.account_id,
         "account_name": getattr(payment.account, "name", "") or "",
@@ -644,8 +650,13 @@ def build_finance_overview(projects_queryset, payments_queryset, filters=None, r
     )
     current_payments = [payment for payment in payments if not payment.paid_at or payment.paid_at <= now]
     future_payments = [payment for payment in payments if payment.paid_at and payment.paid_at > now]
-    income_payments = [payment for payment in current_payments if _payment_kind(payment) == FinanceCategory.Type.INCOME]
-    expense_payments = [payment for payment in current_payments if _payment_kind(payment) == FinanceCategory.Type.EXPENSE]
+    analytical_payments = [
+        payment
+        for payment in current_payments
+        if payment.operation_kind != Payment.OperationKind.BALANCE_ADJUSTMENT
+    ]
+    income_payments = [payment for payment in analytical_payments if _payment_kind(payment) == FinanceCategory.Type.INCOME]
+    expense_payments = [payment for payment in analytical_payments if _payment_kind(payment) == FinanceCategory.Type.EXPENSE]
 
     income_total = _money(sum((payment.amount for payment in income_payments), Decimal("0")))
     expense_total = _money(sum((payment.amount for payment in expense_payments), Decimal("0")))
@@ -655,7 +666,7 @@ def build_finance_overview(projects_queryset, payments_queryset, filters=None, r
         margin_percent = (margin_amount / income_total * Decimal("100")).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
     categories = {}
-    for payment in current_payments:
+    for payment in analytical_payments:
         kind = _payment_kind(payment)
         category_key = f"{kind}:{payment.category_id or 'none'}"
         if category_key not in categories:
@@ -876,7 +887,11 @@ def build_cash_forecast(projects_queryset, payments_queryset, reference_projects
                 "kind": kind,
                 "date": paid_date.isoformat(),
                 "amount": amount,
-                "title": getattr(payment.category, "name", "") or ("Расход" if kind == FinanceCategory.Type.EXPENSE else "Доход"),
+                "title": (
+                    "Корректировка баланса"
+                    if payment.operation_kind == Payment.OperationKind.BALANCE_ADJUSTMENT
+                    else getattr(payment.category, "name", "") or ("Расход" if kind == FinanceCategory.Type.EXPENSE else "Доход")
+                ),
                 "project": payment.project_id,
                 "project_title": _project_label(payment.project) if payment.project_id else "Без проекта",
                 "comment": payment.comment or "",

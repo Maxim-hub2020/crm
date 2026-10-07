@@ -591,6 +591,14 @@ class CalculatorLead(models.Model):
 
 
 class Payment(models.Model):
+    class OperationKind(models.TextChoices):
+        STANDARD = "standard", "Standard"
+        BALANCE_ADJUSTMENT = "balance_adjustment", "Balance adjustment"
+
+    class AdjustmentDirection(models.TextChoices):
+        INCREASE = "increase", "Increase"
+        DECREASE = "decrease", "Decrease"
+
     class Type(models.TextChoices):
         ADVANCE = "advance", "Advance"
         ADDITIONAL = "additional", "Additional"
@@ -611,6 +619,18 @@ class Payment(models.Model):
         null=True,
     )
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="created_payments")
+    operation_kind = models.CharField(
+        max_length=30,
+        choices=OperationKind.choices,
+        default=OperationKind.STANDARD,
+        db_index=True,
+    )
+    adjustment_direction = models.CharField(
+        max_length=20,
+        choices=AdjustmentDirection.choices,
+        blank=True,
+        default="",
+    )
     category = models.ForeignKey(
         FinanceCategory,
         on_delete=models.SET_NULL,

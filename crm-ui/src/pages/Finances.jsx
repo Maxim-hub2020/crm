@@ -24,6 +24,7 @@ const moneyFormatter = new Intl.NumberFormat("ru-RU", {
 });
 
 function paymentKind(payment) {
+  if (payment?.operation_kind === "balance_adjustment") return "balance_adjustment";
   if (payment?.category_type === "expense" || payment?.category_type === "income") return payment.category_type;
   return payment?.type === "refund" || payment?.type === "correction" ? "expense" : "income";
 }
@@ -71,7 +72,9 @@ function isFuturePayment(payment) {
 }
 
 function createPaymentForm(payment = {}) {
-  const categoryKind = payment.id ? paymentKind(payment) : "";
+  const categoryKind = payment?.operation_kind === "balance_adjustment"
+    ? `balance_adjustment_${payment.adjustment_direction || "increase"}`
+    : payment.id ? paymentKind(payment) : "";
 
   return {
     project: payment.project ? String(payment.project) : "",
@@ -86,6 +89,9 @@ function createPaymentForm(payment = {}) {
 
 function paymentDisplaySignedAmount(payment) {
   const amount = Number(payment?.amount || 0);
+  if (payment?.operation_kind === "balance_adjustment") {
+    return payment.adjustment_direction === "decrease" ? -amount : amount;
+  }
   return paymentKind(payment) === "expense" ? -amount : amount;
 }
 
@@ -99,10 +105,12 @@ function projectDisplayName(project) {
 }
 
 function paymentCategoryLabel(payment) {
+  if (payment?.operation_kind === "balance_adjustment") return "Корректировка баланса";
   return payment?.category_name || "Без категории";
 }
 
 function paymentCategoryBadgeClass(payment) {
+  if (payment?.operation_kind === "balance_adjustment") return "bg-amber-50 text-amber-700";
   return paymentKind(payment) === "expense" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600";
 }
 
@@ -869,7 +877,8 @@ export default function Finances() {
         setActionError("Выберите тип операции: доход или расход.");
         return;
       }
-      if (!paymentForm.category) {
+      const isBalanceAdjustment = paymentForm.category_kind.startsWith("balance_adjustment_");
+      if (!isBalanceAdjustment && !paymentForm.category) {
         setActionError("Выберите категорию операции.");
         return;
       }
@@ -891,8 +900,12 @@ export default function Finances() {
       }
 
       const payload = {
-        project: paymentForm.project || null,
-        category: paymentForm.category,
+        project: isBalanceAdjustment ? null : paymentForm.project || null,
+        operation_kind: isBalanceAdjustment ? "balance_adjustment" : "standard",
+        adjustment_direction: isBalanceAdjustment
+          ? paymentForm.category_kind.replace("balance_adjustment_", "")
+          : "",
+        category: isBalanceAdjustment ? null : paymentForm.category,
         account: hasMultipleAccounts ? paymentForm.account : singleAccountId || null,
         amount: paymentForm.amount.trim(),
         comment: paymentForm.comment.trim(),
@@ -1062,6 +1075,7 @@ export default function Finances() {
                 <option value="all">Доходы и расходы</option>
                 <option value="income">Доход</option>
                 <option value="expense">Расход</option>
+                <option value="balance_adjustment">Корректировка баланса</option>
               </Select>
             </div>
             <div className="space-y-2">
@@ -1255,15 +1269,18 @@ export default function Finances() {
                     ...prev,
                     category_kind: nextKind,
                     category: firstCategory ? String(firstCategory.id) : "",
+                    project: nextKind.startsWith("balance_adjustment_") ? "" : prev.project,
                   }));
                 }}
               >
                 <option value="">Выберите тип</option>
                 <option value="income">Доход</option>
                 <option value="expense">Расход</option>
+                <option value="balance_adjustment_increase">Корректировка: увеличить баланс</option>
+                <option value="balance_adjustment_decrease">Корректировка: уменьшить баланс</option>
               </Select>
             </div>
-            {paymentForm.category_kind ? (
+            {paymentForm.category_kind && !paymentForm.category_kind.startsWith("balance_adjustment_") ? (
               <div className="space-y-2">
                 <Label>{paymentForm.category_kind === "expense" ? "Категория расхода" : "Категория дохода"}</Label>
                 <Select value={paymentForm.category} onChange={(event) => setPaymentForm((prev) => ({ ...prev, category: event.target.value }))}>

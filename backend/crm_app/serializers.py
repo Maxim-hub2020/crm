@@ -747,11 +747,32 @@ class PaymentSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         workspace = current_workspace(getattr(request, "user", None))
 
+        operation_kind = attrs.get(
+            "operation_kind",
+            getattr(self.instance, "operation_kind", Payment.OperationKind.STANDARD),
+        )
         category = attrs.get("category", getattr(self.instance, "category", None))
-        if not category:
-            raise serializers.ValidationError({"category": "Выберите категорию операции."})
-
-        attrs["type"] = Payment.Type.CORRECTION if category.type == FinanceCategory.Type.EXPENSE else Payment.Type.ADVANCE
+        if operation_kind == Payment.OperationKind.BALANCE_ADJUSTMENT:
+            direction = attrs.get(
+                "adjustment_direction",
+                getattr(self.instance, "adjustment_direction", ""),
+            )
+            if direction not in Payment.AdjustmentDirection.values:
+                raise serializers.ValidationError({"adjustment_direction": "Укажите увеличение или уменьшение баланса."})
+            if attrs.get("project", getattr(self.instance, "project", None)) is not None:
+                raise serializers.ValidationError({"project": "Корректировка баланса не привязывается к проекту."})
+            attrs["category"] = None
+            attrs["project"] = None
+            attrs["type"] = (
+                Payment.Type.ADVANCE
+                if direction == Payment.AdjustmentDirection.INCREASE
+                else Payment.Type.CORRECTION
+            )
+        else:
+            if not category:
+                raise serializers.ValidationError({"category": "Выберите категорию операции."})
+            attrs["adjustment_direction"] = ""
+            attrs["type"] = Payment.Type.CORRECTION if category.type == FinanceCategory.Type.EXPENSE else Payment.Type.ADVANCE
         attrs["method"] = attrs.get("method") or getattr(self.instance, "method", Payment.Method.TRANSFER) or Payment.Method.TRANSFER
 
         paid_at = attrs.get("paid_at")
@@ -782,6 +803,8 @@ class PaymentSerializer(serializers.ModelSerializer):
             "id",
             "project",
             "created_by",
+            "operation_kind",
+            "adjustment_direction",
             "category",
             "category_name",
             "category_type",
@@ -798,7 +821,9 @@ class PaymentSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_by", "created_at", "category_name", "category_type", "account_name"]
         extra_kwargs = {
             "project": {"required": False, "allow_null": True},
-            "category": {"required": True, "allow_null": False},
+            "operation_kind": {"required": False},
+            "adjustment_direction": {"required": False, "allow_blank": True},
+            "category": {"required": False, "allow_null": True},
             "account": {"required": False, "allow_null": True},
             "comment": {"required": False, "allow_blank": True},
             "attachment_url": {"required": False, "allow_blank": True, "allow_null": True},

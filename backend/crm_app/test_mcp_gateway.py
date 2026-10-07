@@ -82,6 +82,7 @@ class RemoteMcpTests(TestCase):
         tool_items = tools.json()["result"]["tools"]
         self.assertIn("crm_search", {item["name"] for item in tool_items})
         self.assertIn("crm_resolve_project", {item["name"] for item in tool_items})
+        self.assertIn("crm_adjust_balance", {item["name"] for item in tool_items})
         upload_tool = next(item for item in tool_items if item["name"] == "crm_upload_file")
         self.assertEqual(upload_tool["_meta"]["openai/fileParams"], ["file"])
         file_schema = upload_tool["inputSchema"]["$defs"]["OpenAIFile"]
@@ -225,6 +226,49 @@ class RemoteMcpTests(TestCase):
             {payment.type for payment in payments},
             {Payment.Type.CORRECTION, Payment.Type.ADVANCE},
         )
+
+    def test_balance_adjustment_changes_cash_but_not_income_or_expense_analytics(self):
+        income_category = FinanceCategory.objects.create(
+            workspace=self.workspace,
+            name="Продажи",
+            type=FinanceCategory.Type.INCOME,
+        )
+        account = Account.objects.create(workspace=self.workspace, name="Касса")
+        Payment.objects.create(
+            project=None,
+            created_by=self.user,
+            category=income_category,
+            account=account,
+            amount="1000.00",
+            type=Payment.Type.ADVANCE,
+            comment="Обычный доход",
+        )
+        token = self.connect()
+
+        response = self.rpc("tools/call", {"name": "crm_adjust_balance", "arguments": {
+            "account_id": account.id,
+            "direction": "decrease",
+            "amount": 200,
+            "comment": "Контрольная сверка",
+            "confirm": True,
+        }}, token)
+        payload = response.json()["result"]
+        self.assertFalse(payload.get("isError", False), payload)
+
+        adjustment = Payment.objects.get(operation_kind=Payment.OperationKind.BALANCE_ADJUSTMENT)
+        self.assertIsNone(adjustment.project_id)
+        self.assertIsNone(adjustment.category_id)
+        self.assertEqual(adjustment.adjustment_direction, Payment.AdjustmentDirection.DECREASE)
+
+        self.client.force_login(self.user)
+        analytics = self.client.get("/api/finance-analytics/")
+        self.assertEqual(analytics.status_code, 200)
+        self.assertEqual(analytics.json()["summary"]["income_total"], "1000.00")
+        self.assertEqual(analytics.json()["summary"]["expense_total"], "0.00")
+
+        forecast = self.client.get("/api/cash-forecast/")
+        self.assertEqual(forecast.status_code, 200)
+        self.assertEqual(forecast.json()["current_balance"], "800.00")
 
     @patch("crm_app.views.sync_project_measurement_files_to_yandex", side_effect=RuntimeError("test sync failure"))
     @patch("crm_app.mcp_gateway.requests.get")

@@ -123,6 +123,21 @@ TOOLS = [
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
     },
     {
+        "name": "crm_adjust_balance",
+        "title": "Скорректировать баланс",
+        "description": "Сверить фактический остаток счёта с CRM: создать отдельную положительную или отрицательную корректировку. Она изменяет текущий остаток, но не входит в доходы, расходы, прибыль и маржу. Перед вызовом явно подтвердите счёт, направление и сумму разницы с пользователем.",
+        "inputSchema": {"type": "object", "properties": {
+            "account_id": {"type": "integer", "minimum": 1, "description": "Внутренний ID счёта из crm_list resource=accounts."},
+            "direction": {"type": "string", "enum": ["increase", "decrease"], "description": "increase, если реальный остаток выше CRM; decrease, если ниже."},
+            "amount": {"type": "number", "exclusiveMinimum": 0, "description": "Абсолютная сумма расхождения в рублях."},
+            "comment": {"type": "string", "minLength": 1, "maxLength": 500, "description": "Причина сверки, например «Сверка фактического остатка на 07.10.2026»."},
+            "paid_at": {"type": "string", "format": "date-time", "description": "Дата и время корректировки; если не передано, используется текущее время."},
+            "confirm": {"type": "boolean", "const": True},
+        }, "required": ["account_id", "direction", "amount", "comment", "confirm"], "additionalProperties": False},
+        "securitySchemes": [OAUTH_SCHEME],
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
         "name": "crm_update",
         "title": "Изменить объект CRM",
         "description": "Частично изменить существующий объект CRM. Для resource=projects можно передать номер заказа, адрес, клиента или телефон в project_query вместо внутреннего id. Перед финансовым или административным изменением подтвердить итог с пользователем.",
@@ -529,6 +544,19 @@ def _execute_tool(user, token_record, name, args):
                 raise ValueError("Поле project не соответствует project_query")
             data["project"] = resolved_id
         return _dispatch_viewset(user, args["resource"], "create", data=data)
+    if name == "crm_adjust_balance":
+        if not args.get("confirm"):
+            raise ValueError("Корректировка баланса требует confirm=true после подтверждения пользователя")
+        data = {
+            "operation_kind": "balance_adjustment",
+            "adjustment_direction": args["direction"],
+            "account": args["account_id"],
+            "amount": args["amount"],
+            "comment": args["comment"],
+        }
+        if args.get("paid_at"):
+            data["paid_at"] = args["paid_at"]
+        return _dispatch_viewset(user, "payments", "create", data=data)
     if name == "crm_update":
         sensitive = args["resource"] in {"payments", "accounts", "users", "project-statuses", "finance-categories"}
         if sensitive and not args.get("confirm"):
@@ -624,7 +652,7 @@ def mcp_view(request):
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {"listChanged": False}, "resources": {}, "extensions": {"io.modelcontextprotocol/skills": {}}},
             "serverInfo": {"name": "ceh-crm-production", "version": "1.0.0"},
-            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. Create general income or expenses not tied to an order as payments without project and without project_query. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
+            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. Create general income or expenses not tied to an order as payments without project and without project_query. Use crm_adjust_balance only for a confirmed reconciliation difference: it changes cash balance but never monthly income, expenses, profit, or margin. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
         })
     if method in {"notifications/initialized", "ping"}:
         return _rpc_result(message_id, {})
