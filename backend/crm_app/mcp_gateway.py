@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 import requests
 from django.conf import settings
 from django.http import JsonResponse
+from django.utils.dateparse import parse_date
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -95,6 +96,23 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {
             "query": {"type": "string", "minLength": 1, "description": "Известное пользователю обозначение: номер заказа, адрес, клиент, телефон или название проекта."},
         }, "required": ["query"], "additionalProperties": False},
+        "securitySchemes": [OAUTH_SCHEME],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
+        "name": "crm_finance_overview",
+        "title": "Финансовое состояние компании",
+        "description": "Получить рассчитанную CRM финансовую сводку и кассовый прогноз без внешнего ИИ: остаток, доходы, расходы, личные траты вне маржи, прибыль, маржинальность, будущий денежный поток и проблемные проекты.",
+        "inputSchema": {"type": "object", "properties": {
+            "project_query": {"type": "string", "minLength": 1, "description": "Необязательно: номер заказа, адрес, клиент, телефон или название для анализа одного проекта."},
+            "date_from": {"type": "string", "format": "date", "description": "Начало периода аналитики YYYY-MM-DD."},
+            "date_to": {"type": "string", "format": "date", "description": "Конец периода аналитики YYYY-MM-DD."},
+            "kind": {"type": "string", "enum": ["income", "expense"], "description": "Необязательный фильтр операций аналитики."},
+            "category_id": {"type": "integer", "minimum": 1},
+            "account_id": {"type": "integer", "minimum": 1},
+            "search": {"type": "string", "minLength": 1},
+            "include_cash_forecast": {"type": "boolean", "default": True},
+        }, "additionalProperties": False},
         "securitySchemes": [OAUTH_SCHEME],
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     },
@@ -277,6 +295,57 @@ def _call_search(user, query):
     if response.status_code >= 400:
         raise ValueError({"status": response.status_code, "detail": response.data})
     return response.data
+
+
+def _call_finance_overview(user, args):
+    from .views import cash_forecast_view, finance_analytics_view
+
+    parsed_dates = {}
+    for field in ("date_from", "date_to"):
+        if args.get(field):
+            parsed_dates[field] = parse_date(args[field])
+            if parsed_dates[field] is None:
+                raise ValueError(f"{field} должен быть датой в формате YYYY-MM-DD")
+    if parsed_dates.get("date_from") and parsed_dates.get("date_to"):
+        if parsed_dates["date_from"] > parsed_dates["date_to"]:
+            raise ValueError("date_from не может быть позже date_to")
+
+    filters = {}
+    if args.get("project_query"):
+        filters["project"] = _resolve_project_id(user, args["project_query"])
+    for source, target in (
+        ("date_from", "date_from"),
+        ("date_to", "date_to"),
+        ("kind", "kind"),
+        ("category_id", "category"),
+        ("account_id", "account"),
+        ("search", "search"),
+    ):
+        if args.get(source) not in (None, ""):
+            filters[target] = args[source]
+
+    factory = APIRequestFactory()
+    analytics_request = factory.get("/api/finance-analytics/", filters)
+    force_authenticate(analytics_request, user=user)
+    analytics_response = finance_analytics_view(analytics_request)
+    if analytics_response.status_code >= 400:
+        raise ValueError({"status": analytics_response.status_code, "detail": analytics_response.data})
+
+    result = {"analytics": analytics_response.data}
+    if args.get("include_cash_forecast", True):
+        cash_filters = {
+            key: value
+            for key, value in filters.items()
+            if key in {"project", "account"}
+        }
+        forecast_request = factory.get("/api/cash-forecast/", cash_filters)
+        force_authenticate(forecast_request, user=user)
+        forecast_response = cash_forecast_view(forecast_request)
+        if forecast_response.status_code >= 400:
+            raise ValueError({"status": forecast_response.status_code, "detail": forecast_response.data})
+        result["cash_forecast"] = forecast_response.data
+        result["cash_scope"] = "Полная история выбранной компании, проекта или счёта; период аналитики не обрезает текущий остаток."
+    return result
 
 
 def _project_candidate(project):
@@ -510,7 +579,7 @@ def _call_upload(user, args):
 
 def _execute_tool(user, token_record, name, args):
     scopes = set(token_record.scope.split())
-    read_tools = {"crm_profile", "crm_list", "crm_resolve_project", "crm_get", "crm_search"}
+    read_tools = {"crm_profile", "crm_list", "crm_resolve_project", "crm_finance_overview", "crm_get", "crm_search"}
     if name in read_tools and "crm.read" not in scopes:
         raise PermissionError("Токен не имеет области crm.read")
     if name not in read_tools and "crm.write" not in scopes:
@@ -528,6 +597,8 @@ def _execute_tool(user, token_record, name, args):
         return _dispatch_viewset(user, args["resource"], "list", filters=args.get("filters"))
     if name == "crm_resolve_project":
         return _call_resolve_project(user, args["query"])
+    if name == "crm_finance_overview":
+        return _call_finance_overview(user, args)
     if name == "crm_get":
         return _dispatch_viewset(user, args["resource"], "retrieve", int(args["id"]))
     if name == "crm_create":
@@ -652,7 +723,7 @@ def mcp_view(request):
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {"listChanged": False}, "resources": {}, "extensions": {"io.modelcontextprotocol/skills": {}}},
             "serverInfo": {"name": "ceh-crm-production", "version": "1.0.0"},
-            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. Create general income or expenses not tied to an order as payments without project and without project_query. The expense category 'Личные траты' must have affects_margin=false: it reduces cash but never profit or margin. Use crm_adjust_balance only for a confirmed reconciliation difference: it changes cash balance but never monthly income, expenses, profit, or margin. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
+            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. Use crm_finance_overview for company or project financial health; it returns deterministic CRM analytics and cash forecast without external AI. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. Create general income or expenses not tied to an order as payments without project and without project_query. The expense category 'Личные траты' must have affects_margin=false: it reduces cash but never profit or margin. Use crm_adjust_balance only for a confirmed reconciliation difference: it changes cash balance but never monthly income, expenses, profit, or margin. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
         })
     if method in {"notifications/initialized", "ping"}:
         return _rpc_result(message_id, {})

@@ -83,6 +83,7 @@ class RemoteMcpTests(TestCase):
         tool_items = tools.json()["result"]["tools"]
         self.assertIn("crm_search", {item["name"] for item in tool_items})
         self.assertIn("crm_resolve_project", {item["name"] for item in tool_items})
+        self.assertIn("crm_finance_overview", {item["name"] for item in tool_items})
         self.assertIn("crm_adjust_balance", {item["name"] for item in tool_items})
         upload_tool = next(item for item in tool_items if item["name"] == "crm_upload_file")
         self.assertEqual(upload_tool["_meta"]["openai/fileParams"], ["file"])
@@ -257,6 +258,52 @@ class RemoteMcpTests(TestCase):
         self.assertEqual(response.status_code, 201, response.data)
         self.assertFalse(response.data["affects_margin"])
         self.assertFalse(FinanceCategory.objects.get(pk=response.data["id"]).affects_margin)
+
+    def test_finance_overview_keeps_personal_expenses_out_of_margin(self):
+        personal_category = FinanceCategory.objects.create(
+            workspace=self.workspace,
+            name="Личные траты",
+            type=FinanceCategory.Type.EXPENSE,
+            affects_margin=False,
+        )
+        income_category = FinanceCategory.objects.create(
+            workspace=self.workspace,
+            name="Продажи",
+            type=FinanceCategory.Type.INCOME,
+        )
+        account = Account.objects.create(workspace=self.workspace, name="Касса")
+        Payment.objects.create(
+            created_by=self.user,
+            category=income_category,
+            account=account,
+            amount="2500.00",
+            type=Payment.Type.ADVANCE,
+        )
+        Payment.objects.create(
+            created_by=self.user,
+            category=personal_category,
+            account=account,
+            amount="1000.00",
+            type=Payment.Type.CORRECTION,
+        )
+        token = self.connect()
+
+        response = self.rpc("tools/call", {
+            "name": "crm_finance_overview",
+            "arguments": {},
+        }, token)
+        payload = response.json()["result"]
+        self.assertFalse(payload.get("isError", False), payload)
+        overview = payload["structuredContent"]
+        summary = overview["analytics"]["summary"]
+        self.assertEqual(summary["income_total"], "2500.00")
+        self.assertEqual(summary["expense_total"], "1000.00")
+        self.assertEqual(summary["margin_expense_total"], "0.00")
+        self.assertEqual(summary["excluded_from_margin_total"], "1000.00")
+        self.assertEqual(summary["margin_amount"], "2500.00")
+        self.assertEqual(summary["margin_percent"], "100.00")
+        self.assertEqual(overview["cash_forecast"]["current_balance"], "1500.00")
+        self.assertIn("период аналитики не обрезает", overview["cash_scope"])
 
     def test_balance_adjustment_changes_cash_but_not_income_or_expense_analytics(self):
         income_category = FinanceCategory.objects.create(
