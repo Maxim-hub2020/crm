@@ -161,7 +161,7 @@ jobs:
             find /opt/crm -mindepth 1 ! -name ".env" -exec rm -rf {} +
             tar -xzf /tmp/crm-files.tar.gz -C /opt/crm
             cp /tmp/crm-preserve/.env /opt/crm/.env
-            sed -i -E '/^(GEMINI_|VERTEX_AI_|GOOGLE_APPLICATION_CREDENTIALS=|GOOGLE_CLOUD_PROJECT=)/d' /opt/crm/.env
+            sed -i -E "/^(GEMINI_|VERTEX_AI_|GOOGLE_APPLICATION_CREDENTIALS=|GOOGLE_CLOUD_PROJECT=)/d" /opt/crm/.env
             cp /tmp/site-notifier.env /opt/crm/site-notifier.env
             if [ -f /opt/amalgama-notifier/.env ]; then
               grep -E "^(MAX_API_BASE_URL|MAX_BOT_TOKEN|MAX_USER_ID|MAX_CHAT_ID)=" \
