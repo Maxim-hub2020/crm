@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowUpCircle, Brain, CheckCircle2, Pencil, Plus, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowUpCircle, CheckCircle2, Pencil, Plus, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -13,7 +13,6 @@ import {
   fetchPayments,
   fetchProjects,
   fetchProjectStatuses,
-  requestCashForecastAi,
   updatePayment,
 } from "../api";
 import { Badge, Button, Input, Label, Modal, Select } from "../components/ui.jsx";
@@ -170,7 +169,7 @@ function FinanceAnalyticsBlock({
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="flex items-center gap-2 text-sm font-black uppercase tracking-tight text-slate-900">
-            <Brain size={18} className="text-blue-600" />
+            <ArrowUpCircle size={18} className="text-blue-600" />
             Финансы-аналитика
           </div>
           <div className="mt-1 text-xs font-semibold leading-5 text-slate-500">
@@ -459,11 +458,7 @@ function CashForecastBlock({
   forecast,
   loading,
   error,
-  aiAnalysis,
-  aiError,
-  aiLoading,
   onRefresh,
-  onAnalyze,
   onProjectOpen,
 }) {
   const buckets = forecast?.buckets || [];
@@ -474,27 +469,20 @@ function CashForecastBlock({
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="flex items-center gap-2 text-sm font-black uppercase tracking-tight text-slate-900">
-            <Brain size={18} className="text-blue-600" />
+            <ArrowUpCircle size={18} className="text-blue-600" />
             Кассовый прогноз
           </div>
           <div className="mt-1 text-xs font-semibold leading-5 text-slate-500">
             Сводит текущий остаток, будущие оплаты, ожидаемые поступления по проектам и оценку предстоящих расходов.
           </div>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Button type="button" variant="secondary" className="justify-center" onClick={onRefresh} disabled={loading}>
-            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-            Обновить
-          </Button>
-          <Button type="button" className="justify-center" onClick={onAnalyze} disabled={aiLoading || loading}>
-            <Brain size={16} />
-            {aiLoading ? "Gemini считает..." : "Gemini-прогноз"}
-          </Button>
-        </div>
+        <Button type="button" variant="secondary" className="justify-center" onClick={onRefresh} disabled={loading}>
+          <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+          Обновить
+        </Button>
       </div>
 
       {error ? <div className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
-      {aiError ? <div className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{aiError}</div> : null}
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <AnalyticsMetric label="Сейчас в кассе" value={`${formatMoney(forecast?.current_balance)} ₽`} note="Факт на сегодня" />
@@ -571,17 +559,6 @@ function CashForecastBlock({
         })}
       </div>
 
-      {aiAnalysis ? (
-        <div className="mt-4 rounded-[24px] border border-blue-100 bg-blue-50/70 px-4 py-4 text-slate-900">
-          <div className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-blue-600">
-            <Brain size={15} />
-            Прогноз Gemini
-          </div>
-          <div className="max-h-[320px] overflow-y-auto whitespace-pre-wrap text-sm font-semibold leading-7">
-            {aiAnalysis}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -621,9 +598,6 @@ export default function Finances() {
   const [cashForecastLoading, setCashForecastLoading] = useState(false);
   const [cashForecastError, setCashForecastError] = useState("");
   const [cashForecastRefreshKey, setCashForecastRefreshKey] = useState(0);
-  const [cashAiAnalysis, setCashAiAnalysis] = useState("");
-  const [cashAiLoading, setCashAiLoading] = useState(false);
-  const [cashAiError, setCashAiError] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -800,24 +774,6 @@ export default function Finances() {
         tab,
       },
     });
-  }
-
-  async function runCashAiForecast() {
-    setCashAiError("");
-    setCashAiAnalysis("");
-    setCashAiLoading(true);
-
-    try {
-      const data = await requestCashForecastAi(analyticsParams);
-      setCashAiAnalysis(data.analysis || "");
-      if (data.forecast) {
-        setCashForecast(data.forecast);
-      }
-    } catch (requestError) {
-      setCashAiError(extractApiErrorMessage(requestError, "Gemini не смог построить кассовый прогноз."));
-    } finally {
-      setCashAiLoading(false);
-    }
   }
 
   function resetFilters() {
@@ -1025,11 +981,7 @@ export default function Finances() {
               forecast={cashForecast}
               loading={cashForecastLoading}
               error={cashForecastError}
-              aiAnalysis={cashAiAnalysis}
-              aiError={cashAiError}
-              aiLoading={cashAiLoading}
               onRefresh={refreshCashForecast}
-              onAnalyze={runCashAiForecast}
               onProjectOpen={openProjectFromAnalytics}
             />
           )}

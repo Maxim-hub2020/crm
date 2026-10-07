@@ -31,9 +31,7 @@ from .finance_analytics import (
     build_cash_forecast,
     build_finance_overview,
     build_project_finance_analytics,
-    compact_cash_forecast_for_ai,
 )
-from .gemini_client import GeminiClient, GeminiConfigurationError, GeminiRequestError
 from .models import (
     Account,
     AuditLog,
@@ -60,11 +58,6 @@ from .models import (
 )
 from .permissions import IsAdmin, IsAuthenticatedAny
 from .phones import phone_search_digits
-from .production_drawings import (
-    ALLOWED_PRODUCTION_PLAN_MIME_TYPES,
-    MAX_PRODUCTION_PLAN_IMAGE_BYTES,
-    analyze_production_plan,
-)
 from .serializers import (
     AdminUserSerializer,
     AccountSerializer,
@@ -232,137 +225,6 @@ def _finance_scope(request):
         "search": search,
     }
     return project_queryset, payment_queryset, filters
-
-
-def _money_decimal(value):
-    try:
-        return Decimal(str(value or "0"))
-    except (InvalidOperation, ValueError, TypeError):
-        return Decimal("0")
-
-
-def _format_rubles(value):
-    amount = _money_decimal(value).quantize(Decimal("1"))
-    sign = "−" if amount < 0 else ""
-    return f"{sign}{int(abs(amount)):,}".replace(",", " ") + " ₽"
-
-
-def _project_cash_sentence(project):
-    title = project.get("title") or "проект"
-    expected_income = _money_decimal(project.get("expected_income"))
-    income_paid = _money_decimal(project.get("income_paid"))
-    receivable = _money_decimal(project.get("receivable"))
-    expense_total = _money_decimal(project.get("expense_total"))
-    remaining_expense = _money_decimal(project.get("estimated_remaining_expense"))
-
-    if receivable > 0 and remaining_expense > 0:
-        return (
-            f"{title}: оплачено {_format_rubles(income_paid)} из {_format_rubles(expected_income)}, "
-            f"ожидаем ещё {_format_rubles(receivable)}; прогноз расходников {_format_rubles(remaining_expense)}."
-        )
-    if receivable > 0:
-        return (
-            f"{title}: оплачено {_format_rubles(income_paid)} из {_format_rubles(expected_income)}, "
-            f"ожидаем поступление {_format_rubles(receivable)}."
-        )
-    if remaining_expense > 0:
-        return f"{title}: поступления закрыты, но по прогнозу ещё нужны расходники на {_format_rubles(remaining_expense)}."
-    return f"{title}: оплачено {_format_rubles(income_paid)}, внесённые расходники {_format_rubles(expense_total)}."
-
-
-def _fallback_cash_forecast_text(forecast):
-    current_balance = _money_decimal(forecast.get("current_balance"))
-    forecast_income = _money_decimal(forecast.get("forecast_income"))
-    forecast_expense = _money_decimal(forecast.get("forecast_expense"))
-    forecast_net = _money_decimal(forecast.get("forecast_net"))
-    projected_balance = _money_decimal(forecast.get("projected_balance_60_days"))
-    cash_gap_bucket = forecast.get("cash_gap_bucket")
-    projects = forecast.get("projects") or []
-
-    lines = [
-        (
-            f"1. Сейчас в кассе {_format_rubles(current_balance)}. "
-            f"За 60 дней ожидаем поступления {_format_rubles(forecast_income)} и расходы {_format_rubles(forecast_expense)}."
-        ),
-        (
-            f"2. Чистый прогноз: {_format_rubles(forecast_net)}. "
-            f"Если всё пройдёт по плану, баланс через 60 дней будет {_format_rubles(projected_balance)}."
-        ),
-    ]
-
-    if projects:
-        lines.append(f"3. По проектам: {_project_cash_sentence(projects[0])}")
-        next_action_index = 4
-    else:
-        lines.append("3. По проектам нет ожидаемых поступлений или расходников в текущей выборке.")
-        next_action_index = 4
-
-    if cash_gap_bucket:
-        lines.append(
-            f"{next_action_index}. Есть риск кассового разрыва в периоде «{cash_gap_bucket}»: сначала проверьте оплаты клиентов и обязательные расходники."
-        )
-    elif forecast_income > 0:
-        lines.append(
-            f"{next_action_index}. Разрыва не видно. Главный фокус: довести ожидаемые оплаты до фактических поступлений и не забыть расходники."
-        )
-    else:
-        lines.append(
-            f"{next_action_index}. Движений мало: внесите плановые оплаты и расходники, чтобы прогноз стал точнее."
-        )
-
-    return "\n".join(lines)
-
-
-def _cash_ai_text_is_incomplete(text):
-    clean = str(text or "").strip()
-    if len(clean) < 120:
-        return True
-    if "₽" not in clean:
-        return True
-    if clean[-1].isdigit() or clean[-1] in {",", "-", "−", ":"}:
-        return True
-    return False
-
-
-def _build_cash_forecast_ai_text(forecast):
-    compact_payload = compact_cash_forecast_for_ai(forecast)
-    client = GeminiClient()
-    response = client.generate_content(
-        model=client.fast_model,
-        system_instruction=(
-            "Ты финансовый аналитик CRM производства мебели и стекла. "
-            "Ответь по-русски обычным человеческим языком, но обязательно с точными цифрами в рублях. "
-            "CRM уже рассчитала прогноз на основе завершённых проектов, похожих проектов и обязательных статей расходов. "
-            "Не называй прогноз остатка расходников фактическим расходом. Объясняй, какие статьи ещё не закрыты: доставка, монтаж, комплектующие и другие. "
-            "Формат: 4 коротких пункта отдельными строками. "
-            "1) что сейчас в кассе; 2) что будет через 60 дней; "
-            "3) ситуация по главному проекту или проектам; 4) что сделать первым. "
-            "Не обрывай фразы и не начинай пункт, если не можешь его закончить. "
-            "Не придумывай цифры вне переданного JSON."
-        ),
-        contents=[
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "text": (
-                            "Проанализируй кассовый прогноз CRM: входящий поток, расходы, ожидаемые оплаты, "
-                            "будущий баланс и риски.\n\n"
-                            f"{json.dumps(compact_payload, ensure_ascii=False)}"
-                        )
-                    }
-                ],
-            }
-        ],
-        temperature=0.2,
-        max_output_tokens=900,
-    )
-    content = client.extract_candidate_content(response)
-    text = client.extract_text(content)
-    if _cash_ai_text_is_incomplete(text):
-        logger.warning("Gemini returned incomplete cash forecast text: %r", text)
-        return _fallback_cash_forecast_text(forecast)
-    return text
 
 
 def _project_result(project, score_label="Проект"):
@@ -623,38 +485,6 @@ def calculator_settings_view(request):
     return Response(serializer.data)
 
 
-@api_view(["POST"])
-@permission_classes([IsAdmin])
-@parser_classes([MultiPartParser, FormParser])
-def calculator_production_plan_view(request):
-    image = request.FILES.get("image")
-    if not image:
-        return Response({"detail": "Загрузите изображение вида сверху."}, status=drf_status.HTTP_400_BAD_REQUEST)
-    if image.size > MAX_PRODUCTION_PLAN_IMAGE_BYTES:
-        return Response({"detail": "Изображение должно быть не больше 10 МБ."}, status=drf_status.HTTP_400_BAD_REQUEST)
-    mime_type = str(getattr(image, "content_type", "") or "").lower()
-    if mime_type not in ALLOWED_PRODUCTION_PLAN_MIME_TYPES:
-        return Response(
-            {"detail": "Поддерживаются изображения JPEG, PNG и WebP."},
-            status=drf_status.HTTP_400_BAD_REQUEST,
-        )
-
-    try:
-        context = json.loads(str(request.data.get("context") or "{}"))
-    except json.JSONDecodeError:
-        return Response({"detail": "Неверный контекст расчёта."}, status=drf_status.HTTP_400_BAD_REQUEST)
-    if not isinstance(context, dict):
-        return Response({"detail": "Неверный контекст расчёта."}, status=drf_status.HTTP_400_BAD_REQUEST)
-
-    try:
-        result = analyze_production_plan(image.read(), mime_type, context)
-    except GeminiConfigurationError as exc:
-        return Response({"detail": str(exc)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
-    except GeminiRequestError as exc:
-        return Response({"detail": str(exc)}, status=drf_status.HTTP_502_BAD_GATEWAY)
-    return Response(result)
-
-
 def _calculator_quote_payloads(workspace):
     payloads = []
     records = CalculatorQuote.objects.filter(workspace=workspace, lead_deleted=False).order_by("-quote_created_at", "-id")
@@ -886,27 +716,6 @@ def cash_forecast_view(request):
             reference_projects_queryset=reference_queryset,
         )
     )
-
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticatedAny])
-def cash_forecast_ai_view(request):
-    project_queryset, payment_queryset, filters = _finance_scope(request)
-    reference_queryset = _visible_finance_projects(request.user)
-    forecast = build_cash_forecast(
-        project_queryset,
-        payment_queryset,
-        reference_projects_queryset=reference_queryset,
-    )
-
-    try:
-        analysis = _build_cash_forecast_ai_text(forecast)
-    except GeminiConfigurationError as exc:
-        return Response({"detail": str(exc)}, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
-    except GeminiRequestError as exc:
-        return Response({"detail": str(exc)}, status=drf_status.HTTP_502_BAD_GATEWAY)
-
-    return Response({"analysis": analysis, "forecast": forecast})
 
 
 @api_view(["GET"])

@@ -14,7 +14,7 @@
 - Has a `Чаты` module for Chatwoot unified inbox integration settings.
 - Separates company data through a workspace/tenant layer.
 - Supports `admin` and `manager` roles.
-- Includes finance analytics and cash forecast. Gemini/Vertex AI can be used only as an optional finance analytics engine.
+- Includes deterministic finance analytics and cash forecast.
 - Includes calculator settings and public calculator API.
 - The old voice/chat AI module has been removed.
 
@@ -75,24 +75,9 @@ Backend:
 - `GET/POST /api/calculator-quotes/`
 - `DELETE /api/calculator-quotes/<quote_id>/`
 - `GET/PATCH /api/yandex-disk/settings/`
-- `POST /api/finance-analytics/ai/`
-- `POST /api/cash-forecast/ai/`
 
 ## Integrations
 Dadata address suggestions are proxied through Django at `/api/address-suggestions/`, so the token must stay in backend `.env` as `DADATA_API_KEY`; it is not a frontend `VITE_*` key.
-
-Gemini/Vertex AI is optional and used for finance analytics/cash forecast only:
-
-```env
-GEMINI_BACKEND=vertex_ai
-VERTEX_AI_PROJECT_ID=your-google-cloud-project
-VERTEX_AI_LOCATION=global
-GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/vertex-sa.json
-GEMINI_MODEL=gemini-2.5-flash
-GEMINI_FAST_MODEL=gemini-2.5-flash-lite
-DADATA_API_KEY=
-DADATA_DEFAULT_REGION=Ростовская область
-```
 
 ## Testing
 Backend tests:

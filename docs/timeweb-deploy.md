@@ -59,17 +59,6 @@ YANDEX_DISK_CLIENT_SECRET=client_secret_приложения_яндекса
 YANDEX_DISK_REDIRECT_URI=https://oauth.yandex.ru/verification_code
 ```
 
-Если используете Gemini для финансовой аналитики, добавьте:
-
-```env
-GEMINI_BACKEND=vertex_ai
-VERTEX_AI_PROJECT_ID=your-google-cloud-project
-VERTEX_AI_LOCATION=global
-GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/vertex-sa.json
-GEMINI_MODEL=gemini-2.5-flash
-GEMINI_FAST_MODEL=gemini-2.5-flash-lite
-```
-
 Сгенерировать секрет Django можно так:
 
 ```bash
@@ -79,23 +68,7 @@ print(secrets.token_urlsafe(64))
 PY
 ```
 
-## 5. Положить JSON-ключ Vertex AI
-
-Нужно только если включаете Gemini-аналитику.
-
-```bash
-mkdir -p backend/secrets
-nano backend/secrets/vertex-sa.json
-chmod 600 backend/secrets/vertex-sa.json
-```
-
-В `.env` путь внутри контейнера должен быть:
-
-```env
-GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/vertex-sa.json
-```
-
-## 6. Подключить Яндекс.Диск
+## 5. Подключить Яндекс.Диск
 Создайте OAuth-приложение в Яндексе, включите доступ к Яндекс.Диску и используйте Redirect URI:
 
 ```text
@@ -104,7 +77,7 @@ https://oauth.yandex.ru/verification_code
 
 После деплоя откройте `Система -> Яндекс.Диск`, нажмите `Подключить CRM к Яндекс.Диску`, скопируйте код Яндекса в CRM и сохраните доступ.
 
-## 7. Запустить production
+## 6. Запустить production
 
 ```bash
 docker compose -p crm --env-file .env -f docker-compose.prod.yml up -d --build --remove-orphans
@@ -125,7 +98,7 @@ curl https://cehcrm.ru/api/health/
 docker compose -p crm --env-file .env -f docker-compose.prod.yml logs -f backend
 ```
 
-## 8. Автодеплой через GitHub Actions
+## 7. Автодеплой через GitHub Actions
 Workflow `.github/workflows/deploy-timeweb.yml` запускается при push в `codex/timeweb-production`.
 
 Обязательные GitHub Secrets:
@@ -143,9 +116,9 @@ TELEGRAM_CHAT_ID=ваш_chat_id
 TIMEWEB_PORT=22
 ```
 
-Workflow собирает Docker-образы на GitHub, загружает архивы на TimeWeb, сохраняет серверные `.env` и `backend/secrets`, затем запускает `db`, `backend`, `nginx` и `caddy`.
+Workflow собирает Docker-образы на GitHub, загружает архивы на TimeWeb, сохраняет серверный `.env`, затем запускает `db`, `backend`, `nginx` и `caddy`.
 
-## 9. Ручное обновление
+## 8. Ручное обновление
 
 ```bash
 cd /opt/crm
@@ -155,7 +128,7 @@ docker compose -p crm --env-file .env -f docker-compose.prod.yml up -d --build -
 docker compose -p crm --env-file .env -f docker-compose.prod.yml ps
 ```
 
-## 10. Бэкап базы
+## 9. Бэкап базы
 
 ```bash
 mkdir -p backups
@@ -168,7 +141,7 @@ docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T db pg_d
 cat backups/crm-YYYY-MM-DD-HHMM.sql | docker compose -p crm --env-file .env -f docker-compose.prod.yml exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_DB"
 ```
 
-## 11. Полезные команды
+## 10. Полезные команды
 
 ```bash
 docker compose -p crm --env-file .env -f docker-compose.prod.yml logs -f caddy nginx backend
@@ -183,6 +156,6 @@ docker compose -p crm --env-file .env -f docker-compose.prod.yml down -v
 ```
 
 ## Важные замечания
-- Не коммитьте `.env` и `backend/secrets/vertex-sa.json` в GitHub.
+- Не коммитьте `.env` в GitHub.
 - Если TimeWeb firewall включен, разрешите входящие `80/tcp` и `443/tcp`.
 - Если домен ещё не направлен на сервер, Caddy не сможет получить сертификат.

@@ -50,7 +50,6 @@ services:
     volumes:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
-      - ./backend/secrets:/app/secrets:ro
     expose:
       - "8000"
     healthcheck:

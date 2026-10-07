@@ -102,7 +102,6 @@ jobs:
             --exclude="site-notifier.env" \
             --exclude="backend/.venv" \
             --exclude="backend/.venv_test" \
-            --exclude="backend/secrets" \
             --exclude="backend/db.sqlite3" \
             --exclude="crm-ui/node_modules" \
             --exclude="crm-ui/dist" \
@@ -159,23 +158,16 @@ jobs:
             set -eu
             mkdir -p /tmp/crm-preserve
             cp /opt/crm/.env /tmp/crm-preserve/.env
-            if [ -d /opt/crm/backend/secrets ]; then
-              mkdir -p /tmp/crm-preserve/backend
-              cp -a /opt/crm/backend/secrets /tmp/crm-preserve/backend/secrets
-            fi
             find /opt/crm -mindepth 1 ! -name ".env" -exec rm -rf {} +
             tar -xzf /tmp/crm-files.tar.gz -C /opt/crm
             cp /tmp/crm-preserve/.env /opt/crm/.env
+            sed -i -E '/^(GEMINI_|VERTEX_AI_|GOOGLE_APPLICATION_CREDENTIALS=|GOOGLE_CLOUD_PROJECT=)/d' /opt/crm/.env
             cp /tmp/site-notifier.env /opt/crm/site-notifier.env
             if [ -f /opt/amalgama-notifier/.env ]; then
               grep -E "^(MAX_API_BASE_URL|MAX_BOT_TOKEN|MAX_USER_ID|MAX_CHAT_ID)=" \
                 /opt/amalgama-notifier/.env >> /opt/crm/site-notifier.env || true
             fi
             chmod 600 /opt/crm/site-notifier.env
-            if [ -d /tmp/crm-preserve/backend/secrets ]; then
-              mkdir -p /opt/crm/backend
-              cp -a /tmp/crm-preserve/backend/secrets /opt/crm/backend/secrets
-            fi
             docker image prune -af >/dev/null 2>&1 || true
             docker load < /tmp/crm-images.tar.gz
             rm -rf /tmp/crm-files.tar.gz /tmp/crm-images.tar.gz /tmp/site-notifier.env /tmp/crm-preserve

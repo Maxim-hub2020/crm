@@ -544,12 +544,6 @@ export async function fetchCashForecast(params = {}) {
   return data;
 }
 
-export async function requestCashForecastAi(payload = {}) {
-  initApiAuth();
-  const { data } = await api.post("/api/cash-forecast/ai/", payload);
-  return data;
-}
-
 export async function fetchTasks(params) {
   initApiAuth();
   const { data } = await api.get("/api/tasks/", {

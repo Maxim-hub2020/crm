@@ -1027,27 +1027,3 @@ def build_cash_forecast(projects_queryset, payments_queryset, reference_projects
         "projects": project_rows[:30],
         "planned_operation_count": len(future_payment_ids),
     }
-
-
-def compact_cash_forecast_for_ai(forecast):
-    return {
-        "current_balance": forecast.get("current_balance"),
-        "forecast_income": forecast.get("forecast_income"),
-        "forecast_expense": forecast.get("forecast_expense"),
-        "forecast_net": forecast.get("forecast_net"),
-        "projected_balance_60_days": forecast.get("projected_balance_60_days"),
-        "average_expense_percent": forecast.get("average_expense_percent"),
-        "cash_gap_bucket": forecast.get("cash_gap_bucket"),
-        "buckets": [
-            {
-                "label": bucket.get("label"),
-                "income": bucket.get("income"),
-                "expense": bucket.get("expense"),
-                "net": bucket.get("net"),
-                "projected_balance": bucket.get("projected_balance"),
-                "items": (bucket.get("items") or [])[:8],
-            }
-            for bucket in (forecast.get("buckets") or [])
-        ],
-        "projects": (forecast.get("projects") or [])[:12],
-    }
