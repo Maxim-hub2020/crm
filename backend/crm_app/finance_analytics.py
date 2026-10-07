@@ -878,7 +878,7 @@ def build_cash_forecast(projects_queryset, payments_queryset, reference_projects
                 "amount": amount,
                 "title": getattr(payment.category, "name", "") or ("Расход" if kind == FinanceCategory.Type.EXPENSE else "Доход"),
                 "project": payment.project_id,
-                "project_title": _project_label(payment.project),
+                "project_title": _project_label(payment.project) if payment.project_id else "Без проекта",
                 "comment": payment.comment or "",
             },
         )

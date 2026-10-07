@@ -95,7 +95,7 @@ function paymentSignedAmount(payment) {
 }
 
 function projectDisplayName(project) {
-  return project?.title || project?.client_name || `Проект #${project?.id || ""}`;
+  return project?.title || project?.client_name || (project?.id ? `Проект #${project.id}` : "Без проекта");
 }
 
 function paymentCategoryLabel(payment) {
@@ -865,10 +865,6 @@ export default function Finances() {
     setActionError("");
     setPaymentSaving(true);
     try {
-      if (!paymentForm.project) {
-        setActionError("Выберите проект для операции.");
-        return;
-      }
       if (!paymentForm.category_kind) {
         setActionError("Выберите тип операции: доход или расход.");
         return;
@@ -895,7 +891,7 @@ export default function Finances() {
       }
 
       const payload = {
-        project: paymentForm.project,
+        project: paymentForm.project || null,
         category: paymentForm.category,
         account: hasMultipleAccounts ? paymentForm.account : singleAccountId || null,
         amount: paymentForm.amount.trim(),
@@ -1238,9 +1234,9 @@ export default function Finances() {
         <form className="space-y-4" onSubmit={submitPaymentForm}>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2 md:col-span-2">
-              <Label>Проект</Label>
+              <Label>Проект (необязательно)</Label>
               <Select value={paymentForm.project} onChange={(event) => setPaymentForm((prev) => ({ ...prev, project: event.target.value }))}>
-                <option value="">Выберите проект</option>
+                <option value="">Без проекта</option>
                 {projects.map((project) => (
                   <option key={project.id} value={project.id}>
                     {projectDisplayName(project)}

@@ -715,6 +715,8 @@ class PaymentSerializer(serializers.ModelSerializer):
     account_name = serializers.CharField(source="account.name", read_only=True)
 
     def validate_project(self, project):
+        if project is None:
+            return None
         request = self.context.get("request")
         user = getattr(request, "user", None)
         workspace = current_workspace(user) if user and user.is_authenticated else None
@@ -795,6 +797,7 @@ class PaymentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_by", "created_at", "category_name", "category_type", "account_name"]
         extra_kwargs = {
+            "project": {"required": False, "allow_null": True},
             "category": {"required": True, "allow_null": False},
             "account": {"required": False, "allow_null": True},
             "comment": {"required": False, "allow_blank": True},

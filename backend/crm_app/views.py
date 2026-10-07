@@ -142,14 +142,28 @@ def _visible_finance_projects(user):
     return queryset.filter(manager=user)
 
 
+def _visible_payments(user):
+    workspace = current_workspace(user)
+    queryset = Payment.objects.filter(
+        Q(project__workspace=workspace)
+        | Q(project__isnull=True, created_by__workspace=workspace)
+    )
+    if user.is_admin():
+        return queryset
+    return queryset.filter(
+        Q(project__manager=user)
+        | Q(project__isnull=True, created_by=user)
+    )
+
+
 def _finance_scope(request):
     params = _request_params(request)
     project_queryset = _visible_finance_projects(request.user)
     project_id = str(params.get("project") or params.get("project_id") or "").strip()
+    payment_queryset = _visible_payments(request.user)
     if project_id and project_id != "all":
         project_queryset = project_queryset.filter(id=project_id)
-
-    payment_queryset = Payment.objects.filter(project__in=project_queryset)
+        payment_queryset = payment_queryset.filter(project_id=project_id)
 
     operation_kind = str(params.get("kind") or params.get("category_kind") or "").strip()
     if operation_kind in FinanceCategory.Type.values:
@@ -396,7 +410,7 @@ def _payment_result(payment):
         "project_id": payment.project_id,
         "title": f"{getattr(payment.category, 'name', '') or 'Операция'} · {payment.amount} ₽",
         "subtitle": " · ".join([value for value in [getattr(payment.project, "title", ""), payment.comment] if value]),
-        "route": "/projects",
+        "route": "/projects" if payment.project_id else "/finances",
         "tab": "finances",
         "label": "Финансы",
     }
@@ -987,7 +1001,7 @@ def global_search_view(request):
         | Q(project__client_name__icontains=query)
     ).order_by("status", "due_date")[:6])
 
-    payment_queryset = Payment.objects.select_related("project", "category").filter(project__in=project_queryset)
+    payment_queryset = _visible_payments(request.user).select_related("project", "category", "account")
     payments = list(
         payment_queryset.annotate(
             amount_text=Cast("amount", output_field=CharField()),
@@ -1499,23 +1513,22 @@ class PaymentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedAny]
 
     def get_queryset(self):
-        workspace = current_workspace(self.request.user)
-        qs = Payment.objects.select_related("project", "created_by", "category", "account").filter(project__workspace=workspace).order_by("-paid_at")
-        if self.request.user.is_admin():
-            return qs
-        return qs.filter(project__manager=self.request.user)
+        return _visible_payments(self.request.user).select_related(
+            "project", "created_by", "category", "account"
+        ).order_by("-paid_at")
 
     def perform_create(self, serializer):
         with transaction.atomic():
             payment = serializer.save(created_by=self.request.user)
-            ensure_project_bonus_accrual(payment.project, actor=self.request.user)
+            if payment.project_id:
+                ensure_project_bonus_accrual(payment.project, actor=self.request.user)
             create_audit_log(
                 self.request.user,
                 "payment",
                 payment.id,
                 "create",
                 after=snapshot_model(payment, ["id", "project_id", "category_id", "account_id", "paid_at", "amount", "type", "comment"]),
-                workspace=payment.project.workspace,
+                workspace=payment.project.workspace if payment.project_id else current_workspace(self.request.user),
             )
 
     def perform_update(self, serializer):
@@ -1534,13 +1547,13 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 "update",
                 before=before,
                 after=snapshot_model(payment, ["id", "project_id", "category_id", "account_id", "paid_at", "amount", "type", "comment"]),
-                workspace=payment.project.workspace,
+                workspace=payment.project.workspace if payment.project_id else current_workspace(self.request.user),
             )
 
     def perform_destroy(self, instance):
         payment_id = instance.id
         project_id = instance.project_id
-        workspace = instance.project.workspace
+        workspace = instance.project.workspace if instance.project_id else current_workspace(self.request.user)
         before = snapshot_model(instance, ["id", "project_id", "category_id", "account_id", "paid_at", "amount", "type", "comment"])
         with transaction.atomic():
             instance.delete()

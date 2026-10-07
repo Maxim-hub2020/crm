@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from django.test import TestCase, override_settings
 
-from .models import Client, Project, ProjectComment, ProjectCustomField, User, Workspace
+from .models import Account, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, User, Workspace
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
@@ -186,6 +186,45 @@ class RemoteMcpTests(TestCase):
             project=target,
             text="Быстрая запись без отдельного поиска",
         ).exists())
+
+    def test_general_income_and_expense_can_be_created_without_project(self):
+        expense_category = FinanceCategory.objects.create(
+            workspace=self.workspace,
+            name="Личные траты",
+            type=FinanceCategory.Type.EXPENSE,
+        )
+        income_category = FinanceCategory.objects.create(
+            workspace=self.workspace,
+            name="Прочий доход",
+            type=FinanceCategory.Type.INCOME,
+        )
+        account = Account.objects.create(workspace=self.workspace, name="Касса")
+        token = self.connect()
+
+        for category, amount, comment in [
+            (expense_category, "1000.00", "Личные траты без проекта"),
+            (income_category, "2500.00", "Доход без проекта"),
+        ]:
+            response = self.rpc("tools/call", {"name": "crm_create", "arguments": {
+                "resource": "payments",
+                "confirm": True,
+                "data": {
+                    "category": category.id,
+                    "account": account.id,
+                    "amount": amount,
+                    "comment": comment,
+                },
+            }}, token)
+            payload = response.json()["result"]
+            self.assertFalse(payload.get("isError", False), payload)
+
+        payments = Payment.objects.filter(created_by=self.user).order_by("amount")
+        self.assertEqual(payments.count(), 2)
+        self.assertTrue(all(payment.project_id is None for payment in payments))
+        self.assertEqual(
+            {payment.type for payment in payments},
+            {Payment.Type.CORRECTION, Payment.Type.ADVANCE},
+        )
 
     @patch("crm_app.views.sync_project_measurement_files_to_yandex", side_effect=RuntimeError("test sync failure"))
     @patch("crm_app.mcp_gateway.requests.get")

@@ -603,7 +603,13 @@ class Payment(models.Model):
         TRANSFER = "transfer", "Transfer"
         OTHER = "other", "Other"
 
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="payments")
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.SET_NULL,
+        related_name="payments",
+        blank=True,
+        null=True,
+    )
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="created_payments")
     category = models.ForeignKey(
         FinanceCategory,
