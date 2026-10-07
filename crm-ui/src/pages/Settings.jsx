@@ -206,6 +206,7 @@ export default function Settings() {
   const [stageDays, setStageDays] = useState("3");
   const [categoryName, setCategoryName] = useState("");
   const [categoryType, setCategoryType] = useState("expense");
+  const [categoryAffectsMargin, setCategoryAffectsMargin] = useState(true);
   const [accountName, setAccountName] = useState("");
   const [fieldName, setFieldName] = useState("");
   const [fieldType, setFieldType] = useState("text");
@@ -428,11 +429,26 @@ export default function Settings() {
     try {
       const typeRows = financeCategoriesByType[categoryType] || [];
       const nextOrder = typeRows.length > 0 ? Math.max(...typeRows.map((item) => Number(item.sort_order || 0))) + 10 : 10;
-      await createFinanceCategory({ name: categoryName.trim(), type: categoryType, sort_order: nextOrder });
+      await createFinanceCategory({
+        name: categoryName.trim(),
+        type: categoryType,
+        affects_margin: categoryType === "income" ? true : categoryAffectsMargin,
+        sort_order: nextOrder,
+      });
       setCategoryName("");
+      setCategoryAffectsMargin(true);
       await reload();
     } catch (requestError) {
       setError(extractApiErrorMessage(requestError, "Не удалось добавить категорию."));
+    }
+  }
+
+  async function toggleCategoryMargin(category) {
+    try {
+      await updateFinanceCategory(category.id, { affects_margin: !category.affects_margin });
+      await reload();
+    } catch (requestError) {
+      setError(extractApiErrorMessage(requestError, "Не удалось изменить влияние категории на маржинальность."));
     }
   }
 
@@ -1098,6 +1114,20 @@ export default function Settings() {
                           <GripVertical size={14} />
                         </button>
                         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-800">{category.name}</span>
+                        {category.type === "expense" ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleCategoryMargin(category)}
+                            className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wide transition ${
+                              category.affects_margin
+                                ? "bg-red-50 text-red-600 hover:bg-red-100"
+                                : "bg-amber-50 text-amber-700 hover:bg-amber-100"
+                            }`}
+                            title="Нажмите, чтобы изменить влияние категории на прибыль и маржинальность"
+                          >
+                            {category.affects_margin ? "В марже" : "Не влияет на маржу"}
+                          </button>
+                        ) : null}
                         <DeleteButton onClick={() => removeAndReload(deleteFinanceCategory, category.id, "Не удалось удалить категорию.")} />
                       </div>
                     ))
@@ -1109,14 +1139,42 @@ export default function Settings() {
             ))}
           </div>
           <div className="grid gap-2 border-t pt-4 sm:grid-cols-[minmax(0,1fr)_144px_auto] sm:items-center">
-            <Input value={categoryName} onChange={(event) => setCategoryName(event.target.value)} placeholder="Новая категория" />
-            <Select className="w-full sm:w-36" value={categoryType} onChange={(event) => setCategoryType(event.target.value)}>
+            <Input
+              value={categoryName}
+              onChange={(event) => {
+                const nextName = event.target.value;
+                setCategoryName(nextName);
+                if (categoryType === "expense" && nextName.trim().toLocaleLowerCase("ru-RU") === "личные траты") {
+                  setCategoryAffectsMargin(false);
+                }
+              }}
+              placeholder="Новая категория"
+            />
+            <Select
+              className="w-full sm:w-36"
+              value={categoryType}
+              onChange={(event) => {
+                setCategoryType(event.target.value);
+                if (event.target.value === "income") setCategoryAffectsMargin(true);
+              }}
+            >
               <option value="income">Доход</option>
               <option value="expense">Расход</option>
             </Select>
             <IconButton className="justify-self-end" onClick={handleAddCategory}>
               <Plus size={16} />
             </IconButton>
+            {categoryType === "expense" ? (
+              <label className="flex items-center gap-2 text-xs font-semibold text-gray-600 sm:col-span-3">
+                <input
+                  type="checkbox"
+                  checked={categoryAffectsMargin}
+                  onChange={(event) => setCategoryAffectsMargin(event.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                />
+                Учитывать эту категорию в прибыли и маржинальности
+              </label>
+            ) : null}
           </div>
         </SettingsCard>
 

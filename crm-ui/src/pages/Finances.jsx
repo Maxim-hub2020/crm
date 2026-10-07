@@ -194,7 +194,7 @@ function FinanceAnalyticsBlock({
           label="Маржа"
           value={formatPercent(summary.margin_percent)}
           tone={marginValue > 0 && marginValue < 30 ? "amber" : "slate"}
-          note={`${formatMoney(summary.margin_amount)} ₽`}
+          note={`${formatMoney(summary.margin_amount)} ₽${Number(summary.excluded_from_margin_total || 0) > 0 ? ` · без личных трат ${formatMoney(summary.excluded_from_margin_total)} ₽` : ""}`}
         />
         <AnalyticsMetric
           label="Проекты с риском"

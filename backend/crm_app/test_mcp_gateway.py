@@ -194,6 +194,7 @@ class RemoteMcpTests(TestCase):
             workspace=self.workspace,
             name="Личные траты",
             type=FinanceCategory.Type.EXPENSE,
+            affects_margin=False,
         )
         income_category = FinanceCategory.objects.create(
             workspace=self.workspace,
@@ -227,6 +228,35 @@ class RemoteMcpTests(TestCase):
             {payment.type for payment in payments},
             {Payment.Type.CORRECTION, Payment.Type.ADVANCE},
         )
+
+        api_client = APIClient()
+        api_client.force_authenticate(self.user)
+        analytics = api_client.get("/api/finance-analytics/")
+        self.assertEqual(analytics.status_code, 200)
+        self.assertEqual(analytics.json()["summary"]["income_total"], "2500.00")
+        self.assertEqual(analytics.json()["summary"]["expense_total"], "1000.00")
+        self.assertEqual(analytics.json()["summary"]["margin_expense_total"], "0.00")
+        self.assertEqual(analytics.json()["summary"]["excluded_from_margin_total"], "1000.00")
+        self.assertEqual(analytics.json()["summary"]["margin_amount"], "2500.00")
+        self.assertEqual(analytics.json()["summary"]["margin_percent"], "100.00")
+
+        forecast = api_client.get("/api/cash-forecast/")
+        self.assertEqual(forecast.status_code, 200)
+        self.assertEqual(forecast.json()["current_balance"], "1500.00")
+
+    def test_personal_expense_category_is_excluded_from_margin_by_default(self):
+        api_client = APIClient()
+        api_client.force_authenticate(self.user)
+
+        response = api_client.post(
+            "/api/finance-categories/",
+            {"name": "Личные траты", "type": FinanceCategory.Type.EXPENSE},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertFalse(response.data["affects_margin"])
+        self.assertFalse(FinanceCategory.objects.get(pk=response.data["id"]).affects_margin)
 
     def test_balance_adjustment_changes_cash_but_not_income_or_expense_analytics(self):
         income_category = FinanceCategory.objects.create(

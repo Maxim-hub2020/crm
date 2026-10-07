@@ -268,6 +268,10 @@ class FinanceCategory(models.Model):
     )
     name = models.CharField(max_length=120)
     type = models.CharField(max_length=20, choices=Type.choices, default=Type.EXPENSE, db_index=True)
+    affects_margin = models.BooleanField(
+        default=True,
+        help_text="Whether operations in this category affect profit and margin analytics.",
+    )
     sort_order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
