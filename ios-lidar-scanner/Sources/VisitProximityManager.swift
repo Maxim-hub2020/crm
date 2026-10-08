@@ -7,11 +7,11 @@ private struct VisitProject: Codable {
     let id: Int
     let title: String
     let address: String
+    let phone: String?
     let latitude: Double
     let longitude: Double
 
     var location: CLLocation { CLLocation(latitude: latitude, longitude: longitude) }
-    var regionID: String { "ceh-visit-\(id)" }
 }
 
 final class VisitProximityManager: NSObject, ObservableObject, CLLocationManagerDelegate, UNUserNotificationCenterDelegate {
@@ -25,35 +25,27 @@ final class VisitProximityManager: NSObject, ObservableObject, CLLocationManager
     private let notificationCenter = UNUserNotificationCenter.current()
     private let projectsKey = "ceh.visit.projects.v1"
     private let enabledKey = "ceh.visit.enabled.v1"
-    private let alertPrefix = "ceh.visit.lastAlert."
-    private let radius: CLLocationDistance = 180
+    private let alertPrefix = "ceh.visit.openAlert.v2."
+    private let radius: CLLocationDistance = 1_000
     private var projects: [VisitProject]
+    private var locationRequestPending = false
 
     private override init() {
-        isEnabled = UserDefaults.standard.bool(forKey: enabledKey)
-        projects = (UserDefaults.standard.data(forKey: projectsKey)
+        let defaults = UserDefaults.standard
+        isEnabled = defaults.object(forKey: enabledKey) == nil ? true : defaults.bool(forKey: enabledKey)
+        projects = (defaults.data(forKey: projectsKey)
             .flatMap { try? JSONDecoder().decode([VisitProject].self, from: $0) }) ?? []
         super.init()
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
         notificationCenter.delegate = self
-        if isEnabled { refreshMonitoring() }
+        stopLegacyBackgroundMonitoring()
     }
 
     func setEnabled(_ enabled: Bool) {
         isEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: enabledKey)
-        if !enabled {
-            stopMonitoring()
-            return
-        }
-        notificationCenter.requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
-        switch locationManager.authorizationStatus {
-        case .notDetermined: locationManager.requestWhenInUseAuthorization()
-        case .authorizedWhenInUse: locationManager.requestAlwaysAuthorization()
-        case .authorizedAlways: refreshMonitoring()
-        default: break
-        }
+        if enabled { checkNearbyOnAppOpen() }
     }
 
     func sync(_ rows: [[String: Any]]) {
@@ -65,116 +57,102 @@ final class VisitProximityManager: NSObject, ObservableObject, CLLocationManager
                   let longitude = row["lon"] as? Double,
                   latitude.isFinite, longitude.isFinite,
                   (-90...90).contains(latitude), (-180...180).contains(longitude) else { return nil }
+            let phone = (row["phone"] as? String).map { String($0.prefix(50)) }
             return VisitProject(id: id, title: String(title.prefix(100)),
-                                address: String(address.prefix(300)), latitude: latitude, longitude: longitude)
+                                address: String(address.prefix(300)), phone: phone,
+                                latitude: latitude, longitude: longitude)
         }
-        if let data = try? JSONEncoder().encode(projects) { UserDefaults.standard.set(data, forKey: projectsKey) }
-        if isEnabled, locationManager.authorizationStatus == .authorizedAlways { locationManager.requestLocation() }
-        refreshMonitoring()
+        if let data = try? JSONEncoder().encode(projects) {
+            UserDefaults.standard.set(data, forKey: projectsKey)
+        }
+        checkNearbyOnAppOpen()
     }
 
     func clear() {
         projects = []
         UserDefaults.standard.removeObject(forKey: projectsKey)
-        stopMonitoring()
+        locationRequestPending = false
     }
 
-    private func stopMonitoring() {
+    func checkNearbyOnAppOpen() {
+        guard isEnabled, !projects.isEmpty, !locationRequestPending else { return }
+        notificationCenter.requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
+        switch locationManager.authorizationStatus {
+        case .notDetermined:
+            locationRequestPending = true
+            locationManager.requestWhenInUseAuthorization()
+        case .authorizedWhenInUse, .authorizedAlways:
+            locationRequestPending = true
+            locationManager.requestLocation()
+        default:
+            locationRequestPending = false
+        }
+    }
+
+    private func stopLegacyBackgroundMonitoring() {
         for region in locationManager.monitoredRegions where region.identifier.hasPrefix("ceh-visit-") {
             locationManager.stopMonitoring(for: region)
         }
         locationManager.stopMonitoringSignificantLocationChanges()
     }
 
-    private func refreshMonitoring() {
-        guard isEnabled, locationManager.authorizationStatus == .authorizedAlways,
-              CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else {
-            stopMonitoring()
-            return
-        }
-        guard !projects.isEmpty else {
-            stopMonitoring()
-            return
-        }
-        if CLLocationManager.significantLocationChangeMonitoringAvailable() {
-            locationManager.startMonitoringSignificantLocationChanges()
-        }
-        if locationManager.location == nil { locationManager.requestLocation() }
-        let origin = locationManager.location
-        // iOS allows at most 20 monitored regions per app. Keep the nearest current objects.
-        let selected = Array(projects.sorted {
-            (origin?.distance(from: $0.location) ?? 0) < (origin?.distance(from: $1.location) ?? 0)
-        }.prefix(20))
-        let wanted = Dictionary(uniqueKeysWithValues: selected.map { ($0.regionID, $0) })
-        var active = Set<String>()
-        for region in locationManager.monitoredRegions where region.identifier.hasPrefix("ceh-visit-") {
-            guard let project = wanted[region.identifier], let circular = region as? CLCircularRegion,
-                  abs(circular.center.latitude - project.latitude) < 0.000001,
-                  abs(circular.center.longitude - project.longitude) < 0.000001 else {
-                locationManager.stopMonitoring(for: region)
-                continue
-            }
-            active.insert(region.identifier)
-        }
-        for project in selected where !active.contains(project.regionID) {
-            let region = CLCircularRegion(center: CLLocationCoordinate2D(latitude: project.latitude,
-                                                                         longitude: project.longitude),
-                                          radius: radius, identifier: project.regionID)
-            region.notifyOnEntry = true
-            region.notifyOnExit = false
-            locationManager.startMonitoring(for: region)
-        }
-    }
-
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        if isEnabled, manager.authorizationStatus == .authorizedWhenInUse {
-            manager.requestAlwaysAuthorization()
+        guard isEnabled else {
+            locationRequestPending = false
+            return
         }
-        refreshMonitoring()
+        switch manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            locationRequestPending = true
+            manager.requestLocation()
+        case .notDetermined:
+            break
+        default:
+            locationRequestPending = false
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        refreshMonitoring()
-        guard isEnabled, manager.authorizationStatus == .authorizedAlways,
-              let location = locations.last, location.horizontalAccuracy >= 0,
-              location.horizontalAccuracy <= 100 else { return }
-        if let nearby = projects.min(by: { location.distance(from: $0.location) < location.distance(from: $1.location) }),
-           location.distance(from: nearby.location) <= radius {
-            notifyIfNeeded(nearby)
-        }
+        locationRequestPending = false
+        guard isEnabled, let location = locations.last, location.horizontalAccuracy >= 0 else { return }
+        guard let nearby = projects.min(by: {
+            location.distance(from: $0.location) < location.distance(from: $1.location)
+        }) else { return }
+        guard location.distance(from: nearby.location) <= radius else { return }
+        showNearbyProject(nearby)
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        // Existing geofences remain active even when a one-shot location fix fails.
+        locationRequestPending = false
     }
 
-    func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
-        guard isEnabled, let project = projects.first(where: { $0.regionID == region.identifier }) else { return }
-        notifyIfNeeded(project)
-    }
-
-    private func notifyIfNeeded(_ project: VisitProject) {
-        guard isEnabled else { return }
-        notificationCenter.getNotificationSettings { settings in
-            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
-            DispatchQueue.main.async { self.scheduleNotificationIfNeeded(project) }
-        }
-    }
-
-    private func scheduleNotificationIfNeeded(_ project: VisitProject) {
-        guard isEnabled else { return }
+    private func showNearbyProject(_ project: VisitProject) {
         let key = alertPrefix + String(project.id)
         let now = Date()
         if let previous = UserDefaults.standard.object(forKey: key) as? Date,
-           now.timeIntervalSince(previous) < 12 * 60 * 60 { return }
+           now.timeIntervalSince(previous) < 30 * 60 { return }
         UserDefaults.standard.set(now, forKey: key)
-        let content = UNMutableNotificationContent()
-        content.title = "Вы рядом с объектом"
-        content.body = "\(project.title) · \(project.address)"
-        content.sound = .default
-        content.userInfo = ["visitProjectID": project.id]
-        notificationCenter.add(UNNotificationRequest(identifier: "ceh-visit-\(project.id)-\(Int(now.timeIntervalSince1970))",
-                                                     content: content, trigger: nil))
+
+        DispatchQueue.main.async {
+            self.pendingProjectID = project.id
+            self.visitOpenSequence += 1
+        }
+
+        notificationCenter.getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
+            let content = UNMutableNotificationContent()
+            content.title = project.title
+            let phone = project.phone?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let phoneLine = phone.isEmpty ? "Телефон не указан" : "Телефон: \(phone)"
+            content.body = "\(phoneLine)\nАдрес: \(project.address)"
+            content.sound = .default
+            content.userInfo = ["visitProjectID": project.id]
+            self.notificationCenter.add(UNNotificationRequest(
+                identifier: "ceh-visit-open-\(project.id)-\(Int(now.timeIntervalSince1970))",
+                content: content,
+                trigger: nil
+            ))
+        }
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,

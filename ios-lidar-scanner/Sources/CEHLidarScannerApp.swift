@@ -31,7 +31,7 @@ struct CRMAppView: View {
                 Menu {
                     Text("Версия \(CRMWebView.versionLabel)")
                     Button("Вернуться в CRM / обновить экран", systemImage: "arrow.clockwise") { reloadID += 1 }
-                    Button(visitAlerts.isEnabled ? "Выключить уведомления у объектов" : "Уведомлять рядом с объектом",
+                    Button(visitAlerts.isEnabled ? "Выключить подсказку ближайшего объекта" : "Включить подсказку ближайшего объекта",
                            systemImage: visitAlerts.isEnabled ? "location.slash" : "location") {
                         visitAlerts.setEnabled(!visitAlerts.isEnabled)
                     }
@@ -52,6 +52,9 @@ struct CRMAppView: View {
             CRMWebView(reloadID: reloadID, visitProjectID: visitAlerts.pendingProjectID,
                        visitOpenSequence: visitAlerts.visitOpenSequence) { request = $0 }
         }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { visitAlerts.checkNearbyOnAppOpen() }
+            }
             .sheet(isPresented: Binding(get: { request != nil }, set: { if !$0 { request = nil } })) {
                 NavigationStack {
                     Group {
