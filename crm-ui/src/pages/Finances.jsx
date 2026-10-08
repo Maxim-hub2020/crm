@@ -1084,7 +1084,7 @@ export default function Finances() {
                 <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-widest text-gray-500">Счет</th>
               ) : null}
               <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-widest text-gray-500">Комментарий</th>
-              <th className="min-w-[250px] px-6 py-3 text-right text-xs font-black uppercase tracking-widest text-gray-500">Действия</th>
+              <th className="w-[120px] px-6 py-3 text-right text-xs font-black uppercase tracking-widest text-gray-500">Действия</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -1111,27 +1111,25 @@ export default function Finances() {
                     <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{payment.account_name || "—"}</td>
                   ) : null}
                   <td className="max-w-xs truncate px-6 py-4 text-sm text-gray-500">{payment.comment || "—"}</td>
-                  <td className="min-w-[250px] whitespace-nowrap px-6 py-4 text-right text-sm">
+                  <td className="w-[120px] whitespace-nowrap px-6 py-4 text-right text-sm">
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
-                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 font-bold text-white shadow-sm transition hover:bg-blue-700"
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
                         onClick={() => openPaymentEdit(payment)}
                         title="Редактировать"
                         aria-label="Редактировать операцию"
                       >
                         <Pencil size={16} />
-                        <span>Редактировать</span>
                       </button>
                       <button
                         type="button"
-                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 font-bold text-white shadow-sm transition hover:bg-red-700"
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-red-600 text-white shadow-sm transition hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
                         onClick={() => removePayment(payment.id)}
                         title="Удалить"
                         aria-label="Удалить операцию"
                       >
                         <Trash2 size={16} />
-                        <span>Удалить</span>
                       </button>
                     </div>
                   </td>
@@ -1171,15 +1169,25 @@ export default function Finances() {
                 <p className="font-semibold text-gray-800">{projectDisplayName(projectMap.get(payment.project))}</p>
                 {hasMultipleAccounts ? <p>{payment.account_name || "Счет не указан"}</p> : null}
                 <p className="truncate">{payment.comment || "Без комментария"}</p>
-                <div className="flex gap-2 pt-2">
-                  <Button type="button" variant="secondary" className="flex-1 justify-center" onClick={() => openPaymentEdit(payment)}>
-                    <Pencil size={16} />
-                    Редактировать
-                  </Button>
-                  <Button type="button" variant="danger" className="flex-1 justify-center" onClick={() => removePayment(payment.id)}>
-                    <Trash2 size={16} />
-                    Удалить
-                  </Button>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm transition active:scale-95"
+                    onClick={() => openPaymentEdit(payment)}
+                    title="Редактировать"
+                    aria-label="Редактировать операцию"
+                  >
+                    <Pencil size={18} />
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-red-600 text-white shadow-sm transition active:scale-95"
+                    onClick={() => removePayment(payment.id)}
+                    title="Удалить"
+                    aria-label="Удалить операцию"
+                  >
+                    <Trash2 size={18} />
+                  </button>
                 </div>
               </div>
             </div>
