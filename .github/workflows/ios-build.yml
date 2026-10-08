@@ -1,0 +1,87 @@
+name: iOS build check
+on:
+  push:
+    branches:
+      - codex/ios-appstore-build
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'ios-lidar-scanner/**'
+      - '.github/workflows/ios-build.yml'
+permissions:
+  contents: read
+jobs:
+  device:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Xcode project
+        working-directory: ios-lidar-scanner
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Build unsigned iPhone application
+        working-directory: ios-lidar-scanner
+        run: >-
+          xcodebuild -project CEHLidarScanner.xcodeproj -scheme CEHLidarScanner
+          -configuration Release -sdk iphoneos -destination 'generic/platform=iOS'
+          -derivedDataPath device-build CODE_SIGNING_ALLOWED=NO build
+      - name: Package IPA for local signing
+        working-directory: ios-lidar-scanner
+        run: |
+          APP_INFO="device-build/Build/Products/Release-iphoneos/CEH CRM.app/Info.plist"
+          test -n "$(plutil -extract NSCameraUsageDescription raw -o - "$APP_INFO")"
+          test "$(plutil -extract CFBundleVersion raw -o - "$APP_INFO")" = "11"
+          mkdir -p package/Payload
+          ditto "device-build/Build/Products/Release-iphoneos/CEH CRM.app" "package/Payload/CEH CRM.app"
+          lipo "package/Payload/CEH CRM.app/CEH CRM" -verify_arch arm64
+          cd package
+          ditto -c -k --keepParent Payload ../CEH-CRM-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CEH-CRM-unsigned-iphone
+          path: ios-lidar-scanner/CEH-CRM-unsigned.ipa
+          retention-days: 14
+  simulator:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install project generator
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: ios-lidar-scanner
+        run: xcodegen generate
+      - name: Compile without distribution credentials
+        working-directory: ios-lidar-scanner
+        run: >-
+          xcodebuild -project CEHLidarScanner.xcodeproj -scheme CEHLidarScanner
+          -sdk iphonesimulator -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath build CODE_SIGNING_ALLOWED=NO build-for-testing
+      - name: Select available iPhone simulator
+        run: |
+          DEVICE_ID=$(xcrun simctl list devices available --json | ruby -rjson -e 'devices = JSON.parse(STDIN.read)["devices"].values.flatten; device = devices.find { |d| d["name"].start_with?("iPhone") }; abort "No iPhone simulator installed" unless device; puts device["udid"]')
+          echo "IOS_TEST_DEVICE=$DEVICE_ID" >> "$GITHUB_ENV"
+      - name: Package simulator application
+        working-directory: ios-lidar-scanner
+        run: ditto -c -k --keepParent "build/Build/Products/Debug-iphonesimulator/CEH CRM.app" CEH-CRM-simulator.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CEH-CRM-simulator
+          path: ios-lidar-scanner/CEH-CRM-simulator.zip
+          retention-days: 7
+      - name: Run native tests
+        working-directory: ios-lidar-scanner
+        run: >-
+          xcodebuild -project CEHLidarScanner.xcodeproj -scheme CEHLidarScanner
+          -destination "platform=iOS Simulator,id=$IOS_TEST_DEVICE"
+          -derivedDataPath build -resultBundlePath TestResults.xcresult
+          CODE_SIGNING_ALLOWED=NO test-without-building
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-test-results
+          path: ios-lidar-scanner/TestResults.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
