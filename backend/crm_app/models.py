@@ -598,6 +598,7 @@ class Payment(models.Model):
     class OperationKind(models.TextChoices):
         STANDARD = "standard", "Standard"
         BALANCE_ADJUSTMENT = "balance_adjustment", "Balance adjustment"
+        ACCOUNT_TRANSFER = "account_transfer", "Account transfer"
 
     class AdjustmentDirection(models.TextChoices):
         INCREASE = "increase", "Increase"
@@ -646,6 +647,13 @@ class Payment(models.Model):
         Account,
         on_delete=models.SET_NULL,
         related_name="payments",
+        blank=True,
+        null=True,
+    )
+    destination_account = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        related_name="incoming_transfers",
         blank=True,
         null=True,
     )

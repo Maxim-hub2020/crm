@@ -5,7 +5,7 @@ from math import ceil
 
 from django.utils import timezone
 
-from .models import FinanceCategory, Payment, ProjectStatus
+from .models import Account, FinanceCategory, Payment, ProjectStatus
 
 
 MARGIN_WARNING_PERCENT = Decimal("30")
@@ -313,7 +313,8 @@ def _project_label(project):
 def _serialize_payment_for_analytics(payment):
     kind = _payment_kind(payment)
     amount = _money(payment.amount)
-    signed_amount = -amount if kind == FinanceCategory.Type.EXPENSE else amount
+    is_transfer = payment.operation_kind == Payment.OperationKind.ACCOUNT_TRANSFER
+    signed_amount = Decimal("0") if is_transfer else (-amount if kind == FinanceCategory.Type.EXPENSE else amount)
     project = getattr(payment, "project", None)
     return {
         "id": payment.id,
@@ -325,12 +326,16 @@ def _serialize_payment_for_analytics(payment):
         "category_name": (
             "Корректировка баланса"
             if payment.operation_kind == Payment.OperationKind.BALANCE_ADJUSTMENT
+            else "Перевод между счетами"
+            if is_transfer
             else getattr(payment.category, "name", "") or "Без категории"
         ),
-        "category_type": kind,
-        "category_affects_margin": _payment_affects_margin(payment),
+        "category_type": "transfer" if is_transfer else kind,
+        "category_affects_margin": False if is_transfer else _payment_affects_margin(payment),
         "account": payment.account_id,
         "account_name": getattr(payment.account, "name", "") or "",
+        "destination_account": payment.destination_account_id,
+        "destination_account_name": getattr(payment.destination_account, "name", "") or "",
         "amount": _decimal_string(amount),
         "signed_amount": _decimal_string(signed_amount),
         "comment": payment.comment or "",
@@ -663,14 +668,17 @@ def build_finance_overview(projects_queryset, payments_queryset, filters=None, r
     reference_queryset = reference_projects_queryset if reference_projects_queryset is not None else projects_queryset
     reference_projects = list(reference_queryset.select_related("client").order_by("-created_at", "-id"))
     payments = list(
-        payments_queryset.select_related("project", "category", "account").order_by("-paid_at", "-id")
+        payments_queryset.select_related("project", "category", "account", "destination_account").order_by("-paid_at", "-id")
     )
     current_payments = [payment for payment in payments if not payment.paid_at or payment.paid_at <= now]
     future_payments = [payment for payment in payments if payment.paid_at and payment.paid_at > now]
     analytical_payments = [
         payment
         for payment in current_payments
-        if payment.operation_kind != Payment.OperationKind.BALANCE_ADJUSTMENT
+        if payment.operation_kind not in {
+            Payment.OperationKind.BALANCE_ADJUSTMENT,
+            Payment.OperationKind.ACCOUNT_TRANSFER,
+        }
     ]
     income_payments = [payment for payment in analytical_payments if _payment_kind(payment) == FinanceCategory.Type.INCOME]
     expense_payments = [payment for payment in analytical_payments if _payment_kind(payment) == FinanceCategory.Type.EXPENSE]
@@ -875,17 +883,57 @@ def _add_cash_item(bucket, item):
     bucket["items"].append({**item, "amount": _decimal_string(amount)})
 
 
-def build_cash_forecast(projects_queryset, payments_queryset, reference_projects_queryset=None):
+def _account_balance_rows(workspace, payments, now, selected_account_id=None):
+    accounts = Account.objects.filter(workspace=workspace).order_by("name", "id") if workspace else Account.objects.none()
+    if selected_account_id:
+        accounts = accounts.filter(pk=selected_account_id)
+    balances = {account.id: Decimal("0") for account in accounts}
+    account_names = {account.id: account.name for account in accounts}
+
+    for payment in payments:
+        if payment.paid_at and payment.paid_at > now:
+            continue
+        amount = _money(payment.amount)
+        if payment.operation_kind == Payment.OperationKind.ACCOUNT_TRANSFER:
+            if payment.account_id in balances:
+                balances[payment.account_id] -= amount
+            if payment.destination_account_id in balances:
+                balances[payment.destination_account_id] += amount
+            continue
+        if payment.account_id in balances:
+            kind = _payment_kind(payment)
+            balances[payment.account_id] += -amount if kind == FinanceCategory.Type.EXPENSE else amount
+
+    return [
+        {"id": account_id, "name": account_names[account_id], "balance": _decimal_string(balance)}
+        for account_id, balance in balances.items()
+    ]
+
+
+def build_cash_forecast(
+    projects_queryset,
+    payments_queryset,
+    reference_projects_queryset=None,
+    selected_account_id=None,
+    workspace=None,
+):
     now = timezone.now()
     today = timezone.localdate()
     first_project = projects_queryset.first()
-    workspace = getattr(first_project, "workspace", None)
-    statuses = list(ProjectStatus.objects.filter(workspace=workspace).order_by("sort_order", "id"))
     projects = list(projects_queryset.select_related("client").prefetch_related("payments").order_by("-created_at", "-id"))
     reference_source = reference_projects_queryset if reference_projects_queryset is not None else projects_queryset
     reference_projects = list(reference_source.select_related("client").prefetch_related("payments"))
     reference_candidates = _build_reference_candidates(reference_projects)
-    payments = list(payments_queryset.select_related("project", "category", "account").order_by("paid_at", "id"))
+    payments = list(
+        payments_queryset.select_related("project", "category", "account", "destination_account", "created_by")
+        .order_by("paid_at", "id")
+    )
+    workspace = workspace or getattr(first_project, "workspace", None)
+    if workspace is None and payments:
+        workspace = getattr(payments[0].account, "workspace", None) or getattr(payments[0].created_by, "workspace", None)
+    statuses = list(ProjectStatus.objects.filter(workspace=workspace).order_by("sort_order", "id"))
+    selected_account_id = int(selected_account_id) if selected_account_id else None
+    account_balances = _account_balance_rows(workspace, payments, now, selected_account_id)
 
     buckets = {
         "today": _empty_cash_bucket("today", "Сегодня", 0),
@@ -898,13 +946,26 @@ def build_cash_forecast(projects_queryset, payments_queryset, reference_projects
     future_payment_ids = set()
     for payment in payments:
         amount = _money(payment.amount)
+        is_transfer = payment.operation_kind == Payment.OperationKind.ACCOUNT_TRANSFER
         kind = _payment_kind(payment)
-        signed = -amount if kind == FinanceCategory.Type.EXPENSE else amount
+        if is_transfer:
+            if selected_account_id == payment.account_id:
+                signed = -amount
+            elif selected_account_id == payment.destination_account_id:
+                signed = amount
+            else:
+                signed = Decimal("0")
+        else:
+            signed = -amount if kind == FinanceCategory.Type.EXPENSE else amount
         if not payment.paid_at or payment.paid_at <= now:
             current_balance += signed
             continue
 
         future_payment_ids.add(payment.id)
+        if is_transfer and not selected_account_id:
+            continue
+        if is_transfer:
+            kind = FinanceCategory.Type.EXPENSE if signed < 0 else FinanceCategory.Type.INCOME
         paid_date = timezone.localtime(payment.paid_at).date()
         bucket = buckets[_bucket_key_for_date(paid_date, today)]
         _add_cash_item(
@@ -917,6 +978,8 @@ def build_cash_forecast(projects_queryset, payments_queryset, reference_projects
                 "title": (
                     "Корректировка баланса"
                     if payment.operation_kind == Payment.OperationKind.BALANCE_ADJUSTMENT
+                    else f"Перевод: {getattr(payment.account, 'name', '')} → {getattr(payment.destination_account, 'name', '')}"
+                    if is_transfer
                     else getattr(payment.category, "name", "") or ("Расход" if kind == FinanceCategory.Type.EXPENSE else "Доход")
                 ),
                 "project": payment.project_id,
@@ -1027,6 +1090,7 @@ def build_cash_forecast(projects_queryset, payments_queryset, reference_projects
     return {
         "generated_at": now.isoformat(),
         "current_balance": _decimal_string(current_balance),
+        "account_balances": account_balances,
         "forecast_income": _decimal_string(total_income),
         "forecast_expense": _decimal_string(total_expense),
         "forecast_net": _decimal_string(total_income - total_expense),

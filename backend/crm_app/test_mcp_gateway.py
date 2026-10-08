@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+from decimal import Decimal
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
@@ -293,6 +294,28 @@ class RemoteMcpTests(TestCase):
         self.assertTrue(payload["isError"])
         self.assertIn("уточните у пользователя счет", payload["content"][0]["text"])
         self.assertFalse(Payment.objects.exists())
+
+    def test_mcp_can_transfer_money_between_accounts(self):
+        cashless = Account.objects.create(workspace=self.workspace, name="Безнал")
+        cash = Account.objects.create(workspace=self.workspace, name="Наличные")
+        token = self.connect()
+
+        response = self.rpc("tools/call", {"name": "crm_transfer_money", "arguments": {
+            "source_account_id": cashless.id,
+            "destination_account_id": cash.id,
+            "amount": 5000,
+            "comment": "Снятие наличных",
+            "confirm": True,
+        }}, token)
+
+        payload = response.json()["result"]
+        self.assertFalse(payload.get("isError", False), payload)
+        transfer = Payment.objects.get(operation_kind=Payment.OperationKind.ACCOUNT_TRANSFER)
+        self.assertEqual(transfer.account_id, cashless.id)
+        self.assertEqual(transfer.destination_account_id, cash.id)
+        self.assertEqual(transfer.amount, Decimal("5000.00"))
+        self.assertIsNone(transfer.project_id)
+        self.assertIsNone(transfer.category_id)
 
     def test_finance_overview_keeps_personal_expenses_out_of_margin(self):
         personal_category = FinanceCategory.objects.create(

@@ -717,6 +717,7 @@ class PaymentSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     category_type = serializers.CharField(source="category.type", read_only=True)
     account_name = serializers.CharField(source="account.name", read_only=True)
+    destination_account_name = serializers.CharField(source="destination_account.name", read_only=True)
 
     def validate_project(self, project):
         if project is None:
@@ -747,6 +748,13 @@ class PaymentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Счет относится к другой компании.")
         return account
 
+    def validate_destination_account(self, account):
+        request = self.context.get("request")
+        workspace = current_workspace(getattr(request, "user", None))
+        if account and account.workspace_id != getattr(workspace, "id", None):
+            raise serializers.ValidationError("Счет назначения относится к другой компании.")
+        return account
+
     def validate(self, attrs):
         request = self.context.get("request")
         workspace = current_workspace(getattr(request, "user", None))
@@ -755,8 +763,29 @@ class PaymentSerializer(serializers.ModelSerializer):
             "operation_kind",
             getattr(self.instance, "operation_kind", Payment.OperationKind.STANDARD),
         )
+        amount = attrs.get("amount", getattr(self.instance, "amount", None))
+        if amount is not None and amount <= 0:
+            raise serializers.ValidationError({"amount": "Сумма должна быть больше нуля."})
         category = attrs.get("category", getattr(self.instance, "category", None))
-        if operation_kind == Payment.OperationKind.BALANCE_ADJUSTMENT:
+        if operation_kind == Payment.OperationKind.ACCOUNT_TRANSFER:
+            source_account = attrs.get("account", getattr(self.instance, "account", None))
+            destination_account = attrs.get(
+                "destination_account",
+                getattr(self.instance, "destination_account", None),
+            )
+            if not source_account:
+                raise serializers.ValidationError({"account": "Выберите счет списания."})
+            if not destination_account:
+                raise serializers.ValidationError({"destination_account": "Выберите счет зачисления."})
+            if source_account.pk == destination_account.pk:
+                raise serializers.ValidationError({"destination_account": "Счета списания и зачисления должны отличаться."})
+            if attrs.get("project", getattr(self.instance, "project", None)) is not None:
+                raise serializers.ValidationError({"project": "Перевод между счетами не привязывается к проекту."})
+            attrs["category"] = None
+            attrs["project"] = None
+            attrs["adjustment_direction"] = ""
+            attrs["type"] = Payment.Type.ADDITIONAL
+        elif operation_kind == Payment.OperationKind.BALANCE_ADJUSTMENT:
             direction = attrs.get(
                 "adjustment_direction",
                 getattr(self.instance, "adjustment_direction", ""),
@@ -767,6 +796,7 @@ class PaymentSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"project": "Корректировка баланса не привязывается к проекту."})
             attrs["category"] = None
             attrs["project"] = None
+            attrs["destination_account"] = None
             attrs["type"] = (
                 Payment.Type.ADVANCE
                 if direction == Payment.AdjustmentDirection.INCREASE
@@ -776,6 +806,7 @@ class PaymentSerializer(serializers.ModelSerializer):
             if not category:
                 raise serializers.ValidationError({"category": "Выберите категорию операции."})
             attrs["adjustment_direction"] = ""
+            attrs["destination_account"] = None
             attrs["type"] = Payment.Type.CORRECTION if category.type == FinanceCategory.Type.EXPENSE else Payment.Type.ADVANCE
         attrs["method"] = attrs.get("method") or getattr(self.instance, "method", Payment.Method.TRANSFER) or Payment.Method.TRANSFER
 
@@ -814,6 +845,8 @@ class PaymentSerializer(serializers.ModelSerializer):
             "category_type",
             "account",
             "account_name",
+            "destination_account",
+            "destination_account_name",
             "paid_at",
             "amount",
             "type",
@@ -822,7 +855,14 @@ class PaymentSerializer(serializers.ModelSerializer):
             "attachment_url",
             "created_at",
         ]
-        read_only_fields = ["created_by", "created_at", "category_name", "category_type", "account_name"]
+        read_only_fields = [
+            "created_by",
+            "created_at",
+            "category_name",
+            "category_type",
+            "account_name",
+            "destination_account_name",
+        ]
         extra_kwargs = {
             "project": {"required": False, "allow_null": True},
             "operation_kind": {"required": False},

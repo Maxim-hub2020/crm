@@ -170,7 +170,9 @@ def _finance_scope(request):
 
     account_id = str(params.get("account") or "").strip()
     if account_id and account_id != "all":
-        payment_queryset = payment_queryset.filter(account_id=account_id)
+        payment_queryset = payment_queryset.filter(
+            Q(account_id=account_id) | Q(destination_account_id=account_id)
+        )
 
     date_from = parse_date(str(params.get("date_from") or "").strip())
     if date_from:
@@ -198,6 +200,7 @@ def _finance_scope(request):
             | Q(comment__icontains=search)
             | Q(category__name__icontains=search)
             | Q(account__name__icontains=search)
+            | Q(destination_account__name__icontains=search)
         )
 
     has_payment_filters = any(
@@ -271,14 +274,21 @@ def _payment_result(payment):
     title = (
         "Корректировка баланса"
         if payment.operation_kind == Payment.OperationKind.BALANCE_ADJUSTMENT
+        else "Перевод между счетами"
+        if payment.operation_kind == Payment.OperationKind.ACCOUNT_TRANSFER
         else getattr(payment.category, "name", "") or "Операция"
+    )
+    account_route = (
+        f"{getattr(payment.account, 'name', '')} → {getattr(payment.destination_account, 'name', '')}"
+        if payment.operation_kind == Payment.OperationKind.ACCOUNT_TRANSFER
+        else ""
     )
     return {
         "type": "payment",
         "id": payment.id,
         "project_id": payment.project_id,
         "title": f"{title} · {payment.amount} ₽",
-        "subtitle": " · ".join([value for value in [getattr(payment.project, "title", ""), payment.comment] if value]),
+        "subtitle": " · ".join([value for value in [account_route, getattr(payment.project, "title", ""), payment.comment] if value]),
         "route": "/projects" if payment.project_id else "/finances",
         "tab": "finances",
         "label": "Финансы",
@@ -716,6 +726,8 @@ def cash_forecast_view(request):
             project_queryset,
             payment_queryset,
             reference_projects_queryset=reference_queryset,
+            selected_account_id=(filters.get("account") if filters.get("account") != "all" else None),
+            workspace=current_workspace(request.user),
         )
     )
 
@@ -817,7 +829,7 @@ def global_search_view(request):
         | Q(project__client_name__icontains=query)
     ).order_by("status", "due_date")[:6])
 
-    payment_queryset = _visible_payments(request.user).select_related("project", "category", "account")
+    payment_queryset = _visible_payments(request.user).select_related("project", "category", "account", "destination_account")
     payments = list(
         payment_queryset.annotate(
             amount_text=Cast("amount", output_field=CharField()),
@@ -828,6 +840,7 @@ def global_search_view(request):
             | Q(project__client_name__icontains=query)
             | Q(category__name__icontains=query)
             | Q(account__name__icontains=query)
+            | Q(destination_account__name__icontains=query)
             | Q(type__icontains=query)
             | Q(method__icontains=query)
             | Q(amount_text__icontains=query)
@@ -1330,7 +1343,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return _visible_payments(self.request.user).select_related(
-            "project", "created_by", "category", "account"
+            "project", "created_by", "category", "account", "destination_account"
         ).order_by("-paid_at")
 
     def perform_create(self, serializer):
@@ -1343,13 +1356,13 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 "payment",
                 payment.id,
                 "create",
-                after=snapshot_model(payment, ["id", "project_id", "operation_kind", "adjustment_direction", "category_id", "account_id", "paid_at", "amount", "type", "comment"]),
+                after=snapshot_model(payment, ["id", "project_id", "operation_kind", "adjustment_direction", "category_id", "account_id", "destination_account_id", "paid_at", "amount", "type", "comment"]),
                 workspace=payment.project.workspace if payment.project_id else current_workspace(self.request.user),
             )
 
     def perform_update(self, serializer):
         previous_project_id = serializer.instance.project_id
-        before = snapshot_model(serializer.instance, ["id", "project_id", "operation_kind", "adjustment_direction", "category_id", "account_id", "paid_at", "amount", "type", "comment"])
+        before = snapshot_model(serializer.instance, ["id", "project_id", "operation_kind", "adjustment_direction", "category_id", "account_id", "destination_account_id", "paid_at", "amount", "type", "comment"])
         with transaction.atomic():
             payment = serializer.save()
             project_ids = {previous_project_id, payment.project_id}
@@ -1362,7 +1375,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 payment.id,
                 "update",
                 before=before,
-                after=snapshot_model(payment, ["id", "project_id", "operation_kind", "adjustment_direction", "category_id", "account_id", "paid_at", "amount", "type", "comment"]),
+                after=snapshot_model(payment, ["id", "project_id", "operation_kind", "adjustment_direction", "category_id", "account_id", "destination_account_id", "paid_at", "amount", "type", "comment"]),
                 workspace=payment.project.workspace if payment.project_id else current_workspace(self.request.user),
             )
 
@@ -1370,7 +1383,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
         payment_id = instance.id
         project_id = instance.project_id
         workspace = instance.project.workspace if instance.project_id else current_workspace(self.request.user)
-        before = snapshot_model(instance, ["id", "project_id", "operation_kind", "adjustment_direction", "category_id", "account_id", "paid_at", "amount", "type", "comment"])
+        before = snapshot_model(instance, ["id", "project_id", "operation_kind", "adjustment_direction", "category_id", "account_id", "destination_account_id", "paid_at", "amount", "type", "comment"])
         with transaction.atomic():
             instance.delete()
             if project_id:

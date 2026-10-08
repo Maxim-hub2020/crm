@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowUpCircle, CheckCircle2, Pencil, Plus, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, ArrowUpCircle, CheckCircle2, Pencil, Plus, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -23,6 +23,7 @@ const moneyFormatter = new Intl.NumberFormat("ru-RU", {
 });
 
 function paymentKind(payment) {
+  if (payment?.operation_kind === "account_transfer") return "account_transfer";
   if (payment?.operation_kind === "balance_adjustment") return "balance_adjustment";
   if (payment?.category_type === "expense" || payment?.category_type === "income") return payment.category_type;
   return payment?.type === "refund" || payment?.type === "correction" ? "expense" : "income";
@@ -73,13 +74,16 @@ function isFuturePayment(payment) {
 function createPaymentForm(payment = {}) {
   const categoryKind = payment?.operation_kind === "balance_adjustment"
     ? `balance_adjustment_${payment.adjustment_direction || "increase"}`
-    : payment.id ? paymentKind(payment) : "";
+    : payment?.operation_kind === "account_transfer"
+      ? "account_transfer"
+      : payment.id ? paymentKind(payment) : "";
 
   return {
     project: payment.project ? String(payment.project) : "",
     category_kind: categoryKind,
     category: payment.category ? String(payment.category) : "",
     account: payment.account ? String(payment.account) : "",
+    destination_account: payment.destination_account ? String(payment.destination_account) : "",
     amount: payment.amount ? String(payment.amount) : "",
     comment: payment.comment || "",
     paid_at: toDateInputValue(payment.paid_at),
@@ -88,6 +92,7 @@ function createPaymentForm(payment = {}) {
 
 function paymentDisplaySignedAmount(payment) {
   const amount = Number(payment?.amount || 0);
+  if (payment?.operation_kind === "account_transfer") return 0;
   if (payment?.operation_kind === "balance_adjustment") {
     return payment.adjustment_direction === "decrease" ? -amount : amount;
   }
@@ -104,11 +109,13 @@ function projectDisplayName(project) {
 }
 
 function paymentCategoryLabel(payment) {
+  if (payment?.operation_kind === "account_transfer") return "Перевод между счетами";
   if (payment?.operation_kind === "balance_adjustment") return "Корректировка баланса";
   return payment?.category_name || "Без категории";
 }
 
 function paymentCategoryBadgeClass(payment) {
+  if (payment?.operation_kind === "account_transfer") return "bg-blue-50 text-blue-700";
   if (payment?.operation_kind === "balance_adjustment") return "bg-amber-50 text-amber-700";
   return paymentKind(payment) === "expense" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600";
 }
@@ -503,6 +510,25 @@ function CashForecastBlock({
         />
       </div>
 
+      {(forecast?.account_balances || []).length ? (
+        <div className="mt-4">
+          <div className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-slate-400">Остатки по счетам</div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {forecast.account_balances.map((accountBalance) => {
+              const balance = Number(accountBalance.balance || 0);
+              return (
+                <div key={accountBalance.id} className="rounded-[22px] bg-blue-50 px-4 py-3 ring-1 ring-blue-100">
+                  <div className="text-xs font-black uppercase tracking-wide text-blue-600">{accountBalance.name}</div>
+                  <div className={`mt-1 text-2xl font-black ${balance < 0 ? "text-red-600" : "text-slate-950"}`}>
+                    {formatMoney(balance)} ₽
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
       <div className="mt-4 grid gap-4 xl:grid-cols-4">
         {buckets.map((bucket) => {
           const net = Number(bucket.net || 0);
@@ -737,13 +763,18 @@ export default function Finances() {
     return payments.filter((payment) => {
       const kind = paymentKind(payment);
       const signedAmount = paymentSignedAmount(payment);
-      const absoluteAmount = Math.abs(signedAmount);
+      const absoluteAmount = payment.operation_kind === "account_transfer"
+        ? Number(payment.amount || 0)
+        : Math.abs(signedAmount);
       const paidTime = payment.paid_at ? new Date(payment.paid_at).getTime() : null;
 
       const matchesProject = projectFilter === "all" || String(payment.project || "") === projectFilter;
       const matchesKind = kindFilter === "all" || kind === kindFilter;
       const matchesCategory = category === "all" || String(payment.category || "") === category;
-      const matchesAccount = account === "all" || String(payment.account || "") === account;
+      const matchesAccount =
+        account === "all" ||
+        String(payment.account || "") === account ||
+        String(payment.destination_account || "") === account;
       const matchesAmountFrom = minAmount === null || absoluteAmount >= minAmount;
       const matchesAmountTo = maxAmount === null || absoluteAmount <= maxAmount;
       const matchesDateFrom = fromTime === null || (paidTime !== null && paidTime >= fromTime);
@@ -834,11 +865,12 @@ export default function Finances() {
     setPaymentSaving(true);
     try {
       if (!paymentForm.category_kind) {
-        setActionError("Выберите тип операции: доход или расход.");
+        setActionError("Выберите тип операции.");
         return;
       }
       const isBalanceAdjustment = paymentForm.category_kind.startsWith("balance_adjustment_");
-      if (!isBalanceAdjustment && !paymentForm.category) {
+      const isAccountTransfer = paymentForm.category_kind === "account_transfer";
+      if (!isBalanceAdjustment && !isAccountTransfer && !paymentForm.category) {
         setActionError("Выберите категорию операции.");
         return;
       }
@@ -854,19 +886,28 @@ export default function Finances() {
         setActionError("Нельзя поставить операцию задним числом.");
         return;
       }
-      if (hasMultipleAccounts && !paymentForm.account) {
+      if ((hasMultipleAccounts || isAccountTransfer) && !paymentForm.account) {
         setActionError("Выберите счет для операции.");
+        return;
+      }
+      if (isAccountTransfer && !paymentForm.destination_account) {
+        setActionError("Выберите счет зачисления.");
+        return;
+      }
+      if (isAccountTransfer && paymentForm.account === paymentForm.destination_account) {
+        setActionError("Счета списания и зачисления должны отличаться.");
         return;
       }
 
       const payload = {
-        project: isBalanceAdjustment ? null : paymentForm.project || null,
-        operation_kind: isBalanceAdjustment ? "balance_adjustment" : "standard",
+        project: isBalanceAdjustment || isAccountTransfer ? null : paymentForm.project || null,
+        operation_kind: isAccountTransfer ? "account_transfer" : isBalanceAdjustment ? "balance_adjustment" : "standard",
         adjustment_direction: isBalanceAdjustment
           ? paymentForm.category_kind.replace("balance_adjustment_", "")
           : "",
-        category: isBalanceAdjustment ? null : paymentForm.category,
+        category: isBalanceAdjustment || isAccountTransfer ? null : paymentForm.category,
         account: hasMultipleAccounts ? paymentForm.account : singleAccountId || null,
+        destination_account: isAccountTransfer ? paymentForm.destination_account : null,
         amount: paymentForm.amount.trim(),
         comment: paymentForm.comment.trim(),
         paid_at: toPaymentDateTime(paymentForm.paid_at),
@@ -1028,9 +1069,10 @@ export default function Finances() {
                   setCategory("all");
                 }}
               >
-                <option value="all">Доходы и расходы</option>
+                <option value="all">Все операции</option>
                 <option value="income">Доход</option>
                 <option value="expense">Расход</option>
+                <option value="account_transfer">Перевод между счетами</option>
                 <option value="balance_adjustment">Корректировка баланса</option>
               </Select>
             </div>
@@ -1097,6 +1139,7 @@ export default function Finances() {
           <tbody className="divide-y divide-gray-100">
             {filteredPayments.map((payment) => {
               const signedAmount = paymentDisplaySignedAmount(payment);
+              const isAccountTransfer = payment.operation_kind === "account_transfer";
               const futurePayment = isFuturePayment(payment);
               return (
                 <tr key={payment.id} className="transition hover:bg-gray-50/50">
@@ -1104,10 +1147,10 @@ export default function Finances() {
                   <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-gray-800">
                     {projectDisplayName(projectMap.get(payment.project))}
                   </td>
-                  <td className={`whitespace-nowrap px-6 py-4 text-sm font-bold ${signedAmount < 0 ? "text-red-600" : "text-green-600"}`}>
+                  <td className={`whitespace-nowrap px-6 py-4 text-sm font-bold ${isAccountTransfer ? "text-blue-600" : signedAmount < 0 ? "text-red-600" : "text-green-600"}`}>
                     <span className="inline-flex items-center gap-2">
-                      <ArrowUpCircle size={16} />
-                      {signedAmount < 0 ? "−" : "+"} {formatMoney(Math.abs(signedAmount))} ₽
+                      {isAccountTransfer ? <ArrowRightLeft size={16} /> : <ArrowUpCircle size={16} />}
+                      {isAccountTransfer ? "" : signedAmount < 0 ? "−" : "+"} {formatMoney(isAccountTransfer ? payment.amount : Math.abs(signedAmount))} ₽
                     </span>
                     <div className="mt-2">
                       <Badge className={paymentCategoryBadgeClass(payment)}>{paymentCategoryLabel(payment)}</Badge>
@@ -1115,7 +1158,11 @@ export default function Finances() {
                     </div>
                   </td>
                   {hasMultipleAccounts ? (
-                    <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{payment.account_name || "—"}</td>
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                      {isAccountTransfer
+                        ? `${payment.account_name || "—"} → ${payment.destination_account_name || "—"}`
+                        : payment.account_name || "—"}
+                    </td>
                   ) : null}
                   <td className="max-w-xs truncate px-6 py-4 text-sm text-gray-500">{payment.comment || "—"}</td>
                   <td className="w-[120px] whitespace-nowrap px-6 py-4 text-right text-sm">
@@ -1157,13 +1204,14 @@ export default function Finances() {
       <div className="space-y-4 md:hidden">
         {filteredPayments.map((payment) => {
           const signedAmount = paymentDisplaySignedAmount(payment);
+          const isAccountTransfer = payment.operation_kind === "account_transfer";
           const futurePayment = isFuturePayment(payment);
           return (
             <div key={payment.id} className="space-y-2 rounded-2xl bg-white p-4 shadow-lg">
               <div className="flex items-start justify-between">
                 <div>
-                  <div className={`text-xl font-bold ${signedAmount < 0 ? "text-red-600" : "text-green-600"}`}>
-                    {signedAmount < 0 ? "−" : "+"} {formatMoney(Math.abs(signedAmount))} ₽
+                  <div className={`text-xl font-bold ${isAccountTransfer ? "text-blue-600" : signedAmount < 0 ? "text-red-600" : "text-green-600"}`}>
+                    {isAccountTransfer ? "" : signedAmount < 0 ? "−" : "+"} {formatMoney(isAccountTransfer ? payment.amount : Math.abs(signedAmount))} ₽
                   </div>
                   <div className="mt-1">
                     <Badge className={paymentCategoryBadgeClass(payment)}>{paymentCategoryLabel(payment)}</Badge>
@@ -1174,7 +1222,13 @@ export default function Finances() {
               </div>
               <div className="border-t pt-2 text-sm text-gray-600">
                 <p className="font-semibold text-gray-800">{projectDisplayName(projectMap.get(payment.project))}</p>
-                {hasMultipleAccounts ? <p>{payment.account_name || "Счет не указан"}</p> : null}
+                {hasMultipleAccounts ? (
+                  <p>
+                    {isAccountTransfer
+                      ? `${payment.account_name || "Счет не указан"} → ${payment.destination_account_name || "Счет не указан"}`
+                      : payment.account_name || "Счет не указан"}
+                  </p>
+                ) : null}
                 <p className="truncate">{payment.comment || "Без комментария"}</p>
                 <div className="flex justify-end gap-2 pt-2">
                   <button
@@ -1211,6 +1265,7 @@ export default function Finances() {
       <Modal open={paymentModalOpen} title={editingPayment ? "Редактировать операцию" : "Добавить операцию"} onClose={closePaymentModal} widthClassName="max-w-2xl">
         <form className="space-y-4" onSubmit={submitPaymentForm}>
           <div className="grid gap-4 md:grid-cols-2">
+            {paymentForm.category_kind !== "account_transfer" && !paymentForm.category_kind.startsWith("balance_adjustment_") ? (
             <div className="space-y-2 md:col-span-2">
               <Label>Проект (необязательно)</Label>
               <Select value={paymentForm.project} onChange={(event) => setPaymentForm((prev) => ({ ...prev, project: event.target.value }))}>
@@ -1222,6 +1277,7 @@ export default function Finances() {
                 ))}
               </Select>
             </div>
+            ) : null}
             <div className="space-y-2">
               <Label>Доход / расход</Label>
               <Select
@@ -1233,18 +1289,20 @@ export default function Finances() {
                     ...prev,
                     category_kind: nextKind,
                     category: firstCategory ? String(firstCategory.id) : "",
-                    project: nextKind.startsWith("balance_adjustment_") ? "" : prev.project,
+                    project: nextKind.startsWith("balance_adjustment_") || nextKind === "account_transfer" ? "" : prev.project,
+                    destination_account: nextKind === "account_transfer" ? prev.destination_account : "",
                   }));
                 }}
               >
                 <option value="">Выберите тип</option>
                 <option value="income">Доход</option>
                 <option value="expense">Расход</option>
+                <option value="account_transfer">Перевод между счетами</option>
                 <option value="balance_adjustment_increase">Корректировка: увеличить баланс</option>
                 <option value="balance_adjustment_decrease">Корректировка: уменьшить баланс</option>
               </Select>
             </div>
-            {paymentForm.category_kind && !paymentForm.category_kind.startsWith("balance_adjustment_") ? (
+            {paymentForm.category_kind && paymentForm.category_kind !== "account_transfer" && !paymentForm.category_kind.startsWith("balance_adjustment_") ? (
               <div className="space-y-2">
                 <Label>{paymentForm.category_kind === "expense" ? "Категория расхода" : "Категория дохода"}</Label>
                 <Select value={paymentForm.category} onChange={(event) => setPaymentForm((prev) => ({ ...prev, category: event.target.value }))}>
@@ -1257,13 +1315,29 @@ export default function Finances() {
                 </Select>
               </div>
             ) : null}
-            {hasMultipleAccounts ? (
+            {hasMultipleAccounts || paymentForm.category_kind === "account_transfer" ? (
               <div className="space-y-2">
-                <Label>Счет</Label>
+                <Label>{paymentForm.category_kind === "account_transfer" ? "Списать со счета" : "Счет"}</Label>
                 <Select value={paymentForm.account} onChange={(event) => setPaymentForm((prev) => ({ ...prev, account: event.target.value }))}>
                   <option value="">Выберите счет</option>
                   {accounts.map((item) => (
                     <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            ) : null}
+            {paymentForm.category_kind === "account_transfer" ? (
+              <div className="space-y-2">
+                <Label>Зачислить на счет</Label>
+                <Select
+                  value={paymentForm.destination_account}
+                  onChange={(event) => setPaymentForm((prev) => ({ ...prev, destination_account: event.target.value }))}
+                >
+                  <option value="">Выберите счет</option>
+                  {accounts.map((item) => (
+                    <option key={item.id} value={item.id} disabled={String(item.id) === paymentForm.account}>
                       {item.name}
                     </option>
                   ))}

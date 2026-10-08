@@ -156,6 +156,21 @@ TOOLS = [
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
     },
     {
+        "name": "crm_transfer_money",
+        "title": "Перевести деньги между счетами",
+        "description": "Перевести деньги между счетами CRM, например с безнала в наличные или обратно. Перевод изменяет остатки обоих счетов, но не считается доходом, расходом, прибылью или затратой проекта. Перед вызовом уточните оба счета, сумму и получите подтверждение.",
+        "inputSchema": {"type": "object", "properties": {
+            "source_account_id": {"type": "integer", "minimum": 1, "description": "Счет, с которого списываются деньги."},
+            "destination_account_id": {"type": "integer", "minimum": 1, "description": "Счет, на который зачисляются деньги."},
+            "amount": {"type": "number", "exclusiveMinimum": 0, "description": "Сумма перевода в рублях."},
+            "comment": {"type": "string", "maxLength": 500, "description": "Необязательный комментарий к переводу."},
+            "paid_at": {"type": "string", "format": "date-time", "description": "Дата и время перевода; если не передано, используется текущее время."},
+            "confirm": {"type": "boolean", "const": True},
+        }, "required": ["source_account_id", "destination_account_id", "amount", "confirm"], "additionalProperties": False},
+        "securitySchemes": [OAUTH_SCHEME],
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
         "name": "crm_update",
         "title": "Изменить объект CRM",
         "description": "Частично изменить существующий объект CRM. Для resource=projects можно передать номер заказа, адрес, клиента или телефон в project_query вместо внутреннего id. Перед финансовым или административным изменением подтвердить итог с пользователем.",
@@ -632,6 +647,21 @@ def _execute_tool(user, token_record, name, args):
         if args.get("paid_at"):
             data["paid_at"] = args["paid_at"]
         return _dispatch_viewset(user, "payments", "create", data=data)
+    if name == "crm_transfer_money":
+        if not args.get("confirm"):
+            raise ValueError("Перевод между счетами требует confirm=true после подтверждения пользователя")
+        if int(args["source_account_id"]) == int(args["destination_account_id"]):
+            raise ValueError("Счета списания и зачисления должны отличаться")
+        data = {
+            "operation_kind": "account_transfer",
+            "account": args["source_account_id"],
+            "destination_account": args["destination_account_id"],
+            "amount": args["amount"],
+            "comment": args.get("comment", ""),
+        }
+        if args.get("paid_at"):
+            data["paid_at"] = args["paid_at"]
+        return _dispatch_viewset(user, "payments", "create", data=data)
     if name == "crm_update":
         sensitive = args["resource"] in {"payments", "accounts", "users", "project-statuses", "finance-categories"}
         if sensitive and not args.get("confirm"):
@@ -727,7 +757,7 @@ def mcp_view(request):
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {"listChanged": False}, "resources": {}, "extensions": {"io.modelcontextprotocol/skills": {}}},
             "serverInfo": {"name": "ceh-crm-production", "version": "1.0.0"},
-            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. Use crm_finance_overview for company or project financial health; it returns deterministic CRM analytics and cash forecast without external AI. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. Create general income or expenses not tied to an order as payments without project and without project_query. Before every financial create or update, always list accounts and explicitly ask the user which account is used, even if only one account exists; never infer cash versus cashless. The categories 'Личные доходы' and 'Личные траты' must have affects_margin=false: they change the selected account and cash forecast but never business profit or margin. Use crm_adjust_balance only for a confirmed reconciliation difference: it changes cash balance but never monthly income, expenses, profit, or margin. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
+            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. Use crm_finance_overview for company or project financial health; it returns deterministic CRM analytics and cash forecast without external AI. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. Create general income or expenses not tied to an order as payments without project and without project_query. Before every financial create or update, always list accounts and explicitly ask the user which account is used, even if only one account exists; never infer cash versus cashless. For transfers, explicitly ask for both source and destination accounts and use crm_transfer_money; transfers change account balances but never income, expense, profit, margin, or project costs. The categories 'Личные доходы' and 'Личные траты' must have affects_margin=false: they change the selected account and cash forecast but never business profit or margin. Use crm_adjust_balance only for a confirmed reconciliation difference: it changes cash balance but never monthly income, expenses, profit, or margin. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
         })
     if method in {"notifications/initialized", "ping"}:
         return _rpc_result(message_id, {})

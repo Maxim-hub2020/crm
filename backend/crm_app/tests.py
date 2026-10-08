@@ -1401,6 +1401,55 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["category_type"], FinanceCategory.Type.INCOME)
         self.assertEqual(response.data["account_name"], self.account.name)
 
+    def test_account_transfer_moves_balance_without_changing_financial_results(self):
+        cash_account = Account.objects.create(workspace=self.manager.workspace, name="Наличные")
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/payments/",
+            {
+                "operation_kind": Payment.OperationKind.ACCOUNT_TRANSFER,
+                "account": self.account.id,
+                "destination_account": cash_account.id,
+                "amount": "3000.00",
+                "comment": "Снятие наличных",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertIsNone(response.data["project"])
+        self.assertIsNone(response.data["category"])
+        self.assertEqual(response.data["destination_account"], cash_account.id)
+
+        analytics = client.get("/api/finance-analytics/")
+        forecast = client.get("/api/cash-forecast/")
+        self.assertEqual(analytics.status_code, status.HTTP_200_OK)
+        self.assertEqual(analytics.data["summary"]["income_total"], "15000.00")
+        self.assertEqual(analytics.data["summary"]["expense_total"], "0.00")
+        self.assertEqual(forecast.status_code, status.HTTP_200_OK)
+        self.assertEqual(forecast.data["current_balance"], "15000.00")
+        balances = {row["name"]: row["balance"] for row in forecast.data["account_balances"]}
+        self.assertEqual(balances[self.account.name], "12000.00")
+        self.assertEqual(balances[cash_account.name], "3000.00")
+
+    def test_account_transfer_rejects_same_source_and_destination(self):
+        client = self.auth_client_for(self.manager)
+
+        response = client.post(
+            "/api/payments/",
+            {
+                "operation_kind": Payment.OperationKind.ACCOUNT_TRANSFER,
+                "account": self.account.id,
+                "destination_account": self.account.id,
+                "amount": "1000.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("destination_account", response.data)
+
     def test_bonus_is_accrued_once_after_advance_for_large_project(self):
         project_client = Client.objects.create(
             workspace=self.manager.workspace,
