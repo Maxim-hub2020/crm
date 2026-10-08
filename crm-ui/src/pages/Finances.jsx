@@ -187,13 +187,20 @@ function FinanceAnalyticsBlock({
       {error ? <div className="mt-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <AnalyticsMetric label="Доходы" value={`${formatMoney(summary.income_total)} ₽`} tone="green" note={`${summary.income_operation_count || 0} операций`} />
+        <AnalyticsMetric
+          label="Доходы"
+          value={`${formatMoney(summary.income_total)} ₽`}
+          tone="green"
+          note={Number(summary.excluded_income_from_margin_total || 0) > 0
+            ? `В марже ${formatMoney(summary.margin_income_total)} ₽ · личные ${formatMoney(summary.excluded_income_from_margin_total)} ₽`
+            : `${summary.income_operation_count || 0} операций`}
+        />
         <AnalyticsMetric label="Расходы" value={`${formatMoney(summary.expense_total)} ₽`} tone="red" note={`${summary.expense_operation_count || 0} операций`} />
         <AnalyticsMetric
           label="Маржа"
           value={formatPercent(summary.margin_percent)}
           tone={marginValue > 0 && marginValue < 30 ? "amber" : "slate"}
-          note={`${formatMoney(summary.margin_amount)} ₽${Number(summary.excluded_from_margin_total || 0) > 0 ? ` · без личных трат ${formatMoney(summary.excluded_from_margin_total)} ₽` : ""}`}
+          note={`${formatMoney(summary.margin_amount)} ₽${Number(summary.excluded_income_from_margin_total || 0) > 0 ? ` · без личных доходов ${formatMoney(summary.excluded_income_from_margin_total)} ₽` : ""}${Number(summary.excluded_from_margin_total || 0) > 0 ? ` · без личных трат ${formatMoney(summary.excluded_from_margin_total)} ₽` : ""}`}
         />
         <AnalyticsMetric
           label="Проекты с риском"

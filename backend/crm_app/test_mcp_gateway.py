@@ -259,6 +259,41 @@ class RemoteMcpTests(TestCase):
         self.assertFalse(response.data["affects_margin"])
         self.assertFalse(FinanceCategory.objects.get(pk=response.data["id"]).affects_margin)
 
+    def test_personal_income_category_is_excluded_from_margin_by_default(self):
+        api_client = APIClient()
+        api_client.force_authenticate(self.user)
+
+        response = api_client.post(
+            "/api/finance-categories/",
+            {"name": "Личные доходы", "type": FinanceCategory.Type.INCOME},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertFalse(response.data["affects_margin"])
+        self.assertFalse(FinanceCategory.objects.get(pk=response.data["id"]).affects_margin)
+
+    def test_mcp_payment_requires_explicit_account(self):
+        category = FinanceCategory.objects.create(
+            workspace=self.workspace,
+            name="Продажи",
+            type=FinanceCategory.Type.INCOME,
+        )
+        Account.objects.create(workspace=self.workspace, name="Наличные")
+        Account.objects.create(workspace=self.workspace, name="Безнал")
+        token = self.connect()
+
+        response = self.rpc("tools/call", {"name": "crm_create", "arguments": {
+            "resource": "payments",
+            "confirm": True,
+            "data": {"category": category.id, "amount": "1000.00", "comment": "Без счета"},
+        }}, token)
+
+        payload = response.json()["result"]
+        self.assertTrue(payload["isError"])
+        self.assertIn("уточните у пользователя счет", payload["content"][0]["text"])
+        self.assertFalse(Payment.objects.exists())
+
     def test_finance_overview_keeps_personal_expenses_out_of_margin(self):
         personal_category = FinanceCategory.objects.create(
             workspace=self.workspace,
@@ -271,12 +306,25 @@ class RemoteMcpTests(TestCase):
             name="Продажи",
             type=FinanceCategory.Type.INCOME,
         )
+        personal_income_category = FinanceCategory.objects.create(
+            workspace=self.workspace,
+            name="Личные доходы",
+            type=FinanceCategory.Type.INCOME,
+            affects_margin=False,
+        )
         account = Account.objects.create(workspace=self.workspace, name="Касса")
         Payment.objects.create(
             created_by=self.user,
             category=income_category,
             account=account,
             amount="2500.00",
+            type=Payment.Type.ADVANCE,
+        )
+        Payment.objects.create(
+            created_by=self.user,
+            category=personal_income_category,
+            account=account,
+            amount="600.00",
             type=Payment.Type.ADVANCE,
         )
         Payment.objects.create(
@@ -296,13 +344,15 @@ class RemoteMcpTests(TestCase):
         self.assertFalse(payload.get("isError", False), payload)
         overview = payload["structuredContent"]
         summary = overview["analytics"]["summary"]
-        self.assertEqual(summary["income_total"], "2500.00")
+        self.assertEqual(summary["income_total"], "3100.00")
+        self.assertEqual(summary["margin_income_total"], "2500.00")
+        self.assertEqual(summary["excluded_income_from_margin_total"], "600.00")
         self.assertEqual(summary["expense_total"], "1000.00")
         self.assertEqual(summary["margin_expense_total"], "0.00")
         self.assertEqual(summary["excluded_from_margin_total"], "1000.00")
         self.assertEqual(summary["margin_amount"], "2500.00")
         self.assertEqual(summary["margin_percent"], "100.00")
-        self.assertEqual(overview["cash_forecast"]["current_balance"], "1500.00")
+        self.assertEqual(overview["cash_forecast"]["current_balance"], "2100.00")
         self.assertIn("период аналитики не обрезает", overview["cash_scope"])
 
     def test_balance_adjustment_changes_cash_but_not_income_or_expense_analytics(self):

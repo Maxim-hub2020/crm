@@ -196,18 +196,21 @@ def build_project_finance_analytics(project):
     future_payments = [payment for payment in all_payments if payment.paid_at > now]
 
     income_payments = [payment for payment in current_payments if _payment_kind(payment) == FinanceCategory.Type.INCOME]
+    margin_income_payments = [payment for payment in income_payments if _payment_affects_margin(payment)]
     all_expense_payments = [payment for payment in current_payments if _payment_kind(payment) == FinanceCategory.Type.EXPENSE]
     expense_payments = [payment for payment in all_expense_payments if _payment_affects_margin(payment)]
 
     income_paid = _money(sum((payment.amount for payment in income_payments), Decimal("0")))
+    margin_income_paid = _money(sum((payment.amount for payment in margin_income_payments), Decimal("0")))
+    excluded_income_from_margin_total = _money(income_paid - margin_income_paid)
     expense_total = _money(sum((payment.amount for payment in expense_payments), Decimal("0")))
     excluded_from_margin_total = _money(
         sum((payment.amount for payment in all_expense_payments if not _payment_affects_margin(payment)), Decimal("0"))
     )
-    margin_amount = _money(income_paid - expense_total)
+    margin_amount = _money(margin_income_paid - expense_total)
     margin_percent = None
-    if income_paid > 0:
-        margin_percent = (margin_amount / income_paid * Decimal("100")).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+    if margin_income_paid > 0:
+        margin_percent = (margin_amount / margin_income_paid * Decimal("100")).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
     project_margin_amount = _money(expected_income - expense_total)
     project_margin_percent = None
@@ -274,6 +277,8 @@ def build_project_finance_analytics(project):
         "project": project.id,
         "expected_income": _decimal_string(expected_income),
         "income_paid": _decimal_string(income_paid),
+        "margin_income_paid": _decimal_string(margin_income_paid),
+        "excluded_income_from_margin_total": _decimal_string(excluded_income_from_margin_total),
         "expense_total": _decimal_string(expense_total),
         "excluded_from_margin_total": _decimal_string(excluded_from_margin_total),
         "margin_amount": _decimal_string(margin_amount),
@@ -669,16 +674,19 @@ def build_finance_overview(projects_queryset, payments_queryset, filters=None, r
     ]
     income_payments = [payment for payment in analytical_payments if _payment_kind(payment) == FinanceCategory.Type.INCOME]
     expense_payments = [payment for payment in analytical_payments if _payment_kind(payment) == FinanceCategory.Type.EXPENSE]
+    margin_income_payments = [payment for payment in income_payments if _payment_affects_margin(payment)]
     margin_expense_payments = [payment for payment in expense_payments if _payment_affects_margin(payment)]
 
     income_total = _money(sum((payment.amount for payment in income_payments), Decimal("0")))
     expense_total = _money(sum((payment.amount for payment in expense_payments), Decimal("0")))
+    margin_income_total = _money(sum((payment.amount for payment in margin_income_payments), Decimal("0")))
     margin_expense_total = _money(sum((payment.amount for payment in margin_expense_payments), Decimal("0")))
+    excluded_income_from_margin_total = _money(income_total - margin_income_total)
     excluded_from_margin_total = _money(expense_total - margin_expense_total)
-    margin_amount = _money(income_total - margin_expense_total)
+    margin_amount = _money(margin_income_total - margin_expense_total)
     margin_percent = None
-    if income_total > 0:
-        margin_percent = (margin_amount / income_total * Decimal("100")).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+    if margin_income_total > 0:
+        margin_percent = (margin_amount / margin_income_total * Decimal("100")).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
     categories = {}
     for payment in analytical_payments:
@@ -778,6 +786,8 @@ def build_finance_overview(projects_queryset, payments_queryset, filters=None, r
         "summary": {
             "income_total": _decimal_string(income_total),
             "expense_total": _decimal_string(expense_total),
+            "margin_income_total": _decimal_string(margin_income_total),
+            "excluded_income_from_margin_total": _decimal_string(excluded_income_from_margin_total),
             "margin_expense_total": _decimal_string(margin_expense_total),
             "excluded_from_margin_total": _decimal_string(excluded_from_margin_total),
             "margin_amount": _decimal_string(margin_amount),

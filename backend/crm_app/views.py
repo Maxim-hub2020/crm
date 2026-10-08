@@ -153,7 +153,9 @@ def _finance_scope(request):
     params = _request_params(request)
     project_queryset = _visible_finance_projects(request.user)
     project_id = str(params.get("project") or params.get("project_id") or "").strip()
-    payment_queryset = _visible_payments(request.user)
+    payment_queryset = _visible_payments(request.user).filter(
+        Q(project__isnull=True) | Q(project_id__in=project_queryset.values("id"))
+    )
     if project_id and project_id != "all":
         project_queryset = project_queryset.filter(id=project_id)
         payment_queryset = payment_queryset.filter(project_id=project_id)

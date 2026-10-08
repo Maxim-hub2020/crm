@@ -102,7 +102,7 @@ TOOLS = [
     {
         "name": "crm_finance_overview",
         "title": "Финансовое состояние компании",
-        "description": "Получить рассчитанную CRM финансовую сводку и кассовый прогноз без внешнего ИИ: остаток, доходы, расходы, личные траты вне маржи, прибыль, маржинальность, будущий денежный поток и проблемные проекты.",
+        "description": "Получить рассчитанную CRM финансовую сводку и кассовый прогноз без внешнего ИИ: остаток по счетам, доходы, расходы, личные доходы и траты вне маржи, прибыль, маржинальность, будущий денежный поток и проблемные проекты.",
         "inputSchema": {"type": "object", "properties": {
             "project_query": {"type": "string", "minLength": 1, "description": "Необязательно: номер заказа, адрес, клиент, телефон или название для анализа одного проекта."},
             "date_from": {"type": "string", "format": "date", "description": "Начало периода аналитики YYYY-MM-DD."},
@@ -130,7 +130,7 @@ TOOLS = [
     {
         "name": "crm_create",
         "title": "Создать объект CRM",
-        "description": "Создать проект, клиента, задачу, платёж, комментарий, замер или другой разрешённый объект CRM. Для объекта существующего проекта передайте известный пользователю номер, адрес, клиента или телефон в project_query: сервер сам найдёт внутренний project_id за один вызов. Доход или расход без проекта создавайте как payments без project и без project_query.",
+        "description": "Создать проект, клиента, задачу, платёж, комментарий, замер или другой разрешённый объект CRM. Для объекта существующего проекта передайте известный пользователю номер, адрес, клиента или телефон в project_query: сервер сам найдёт внутренний project_id за один вызов. Доход или расход без проекта создавайте как payments без project и без project_query. Для любого платежа сначала явно уточните счёт и передайте account; CRM не выбирает наличные или безнал автоматически.",
         "inputSchema": {"type": "object", "properties": {
             "resource": {"type": "string", "enum": _resource_enum()},
             "project_query": {"type": "string", "minLength": 1, "description": "Номер заказа, адрес, клиент, телефон или название проекта. Используйте для project-comments, проектных payments, tasks, production-plans и measurement-sheets вместо предварительного поиска. Для общего дохода или расхода без проекта не передавайте."},
@@ -614,6 +614,10 @@ def _execute_tool(user, token_record, name, args):
             if data.get("project") and int(data["project"]) != resolved_id:
                 raise ValueError("Поле project не соответствует project_query")
             data["project"] = resolved_id
+        if args["resource"] == "payments" and not data.get("account"):
+            raise ValueError(
+                "Перед финансовой операцией уточните у пользователя счет и передайте его в поле account"
+            )
         return _dispatch_viewset(user, args["resource"], "create", data=data)
     if name == "crm_adjust_balance":
         if not args.get("confirm"):
@@ -723,7 +727,7 @@ def mcp_view(request):
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {"listChanged": False}, "resources": {}, "extensions": {"io.modelcontextprotocol/skills": {}}},
             "serverInfo": {"name": "ceh-crm-production", "version": "1.0.0"},
-            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. Use crm_finance_overview for company or project financial health; it returns deterministic CRM analytics and cash forecast without external AI. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. Create general income or expenses not tied to an order as payments without project and without project_query. The expense category 'Личные траты' must have affects_margin=false: it reduces cash but never profit or margin. Use crm_adjust_balance only for a confirmed reconciliation difference: it changes cash balance but never monthly income, expenses, profit, or margin. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
+            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. Use crm_finance_overview for company or project financial health; it returns deterministic CRM analytics and cash forecast without external AI. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. Create general income or expenses not tied to an order as payments without project and without project_query. Before every financial create or update, always list accounts and explicitly ask the user which account is used, even if only one account exists; never infer cash versus cashless. The categories 'Личные доходы' and 'Личные траты' must have affects_margin=false: they change the selected account and cash forecast but never business profit or margin. Use crm_adjust_balance only for a confirmed reconciliation difference: it changes cash balance but never monthly income, expenses, profit, or margin. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
         })
     if method in {"notifications/initialized", "ping"}:
         return _rpc_result(message_id, {})

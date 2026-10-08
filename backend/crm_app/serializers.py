@@ -502,9 +502,7 @@ class FinanceCategorySerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         category_type = attrs.get("type", getattr(self.instance, "type", FinanceCategory.Type.EXPENSE))
         category_name = attrs.get("name", getattr(self.instance, "name", ""))
-        if category_type == FinanceCategory.Type.INCOME:
-            attrs["affects_margin"] = True
-        elif category_name.strip().casefold() == "личные траты":
+        if category_name.strip().casefold() in {"личные траты", "личные доходы", "личный доход"}:
             attrs["affects_margin"] = False
 
         if self.instance is None and "sort_order" not in attrs:
