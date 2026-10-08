@@ -26,7 +26,7 @@ final class VisitProximityManager: NSObject, ObservableObject, CLLocationManager
     private let projectsKey = "ceh.visit.projects.v1"
     private let enabledKey = "ceh.visit.enabled.v1"
     private let alertPrefix = "ceh.visit.openAlert.v2."
-    private let radius: CLLocationDistance = 1_000
+    private let radius: CLLocationDistance = 3_000
     private var projects: [VisitProject]
     private var locationRequestPending = false
 
