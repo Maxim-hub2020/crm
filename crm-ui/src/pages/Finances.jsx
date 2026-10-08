@@ -715,9 +715,6 @@ export default function Finances() {
       }
     }, 250);
 
-    setCashAiAnalysis("");
-    setCashAiError("");
-
     return () => {
       active = false;
       window.clearTimeout(timer);
