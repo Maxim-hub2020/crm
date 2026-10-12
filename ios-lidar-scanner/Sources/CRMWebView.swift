@@ -9,6 +9,14 @@ enum CRMOrigin {
     }
 }
 
+enum CalculatorOrigin {
+    static let home = URL(string: "https://calc.cehcrm.ru")!
+    static func allows(_ url: URL) -> Bool {
+        url.scheme == "https" && url.host == home.host && (url.port == nil || url.port == 443)
+            && url.user == nil && url.password == nil
+    }
+}
+
 struct YandexRouteLink {
     let webURL: URL
     let mapsURL: URL
@@ -224,6 +232,10 @@ struct CRMWebView: UIViewRepresentable {
                 return
             }
             if CRMOrigin.allows(url) || url.scheme == "about" || url.scheme == "blob" {
+                decisionHandler(.allow)
+                return
+            }
+            if CalculatorOrigin.allows(url), action.targetFrame?.isMainFrame != true {
                 decisionHandler(.allow)
                 return
             }

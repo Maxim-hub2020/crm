@@ -49,7 +49,7 @@ final class NativeBridgeTests: XCTestCase {
     func testAppDeclaresCameraPermission() {
         let description = Bundle.main.object(forInfoDictionaryKey: "NSCameraUsageDescription") as? String
         XCTAssertFalse(description?.isEmpty ?? true)
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "13")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "14")
     }
 
     func testMobileConfigurationAnnouncesNativeBridgeBeforePageScripts() {
@@ -74,6 +74,12 @@ final class NativeBridgeTests: XCTestCase {
         XCTAssertTrue(link.appURLs.contains(where: { $0.absoluteString == "yadisk://" }))
         XCTAssertNil(YandexDiskLink(webURL: URL(string: "https://example.com/client/disk/CRM")!))
         XCTAssertNil(YandexDiskLink(webURL: URL(string: "http://disk.yandex.ru/client/disk/CRM")!))
+    }
+
+    func testCalculatorOriginOnlyAllowsTrustedHTTPSHost() {
+        XCTAssertTrue(CalculatorOrigin.allows(URL(string: "https://calc.cehcrm.ru/?embedded=crm")!))
+        XCTAssertFalse(CalculatorOrigin.allows(URL(string: "http://calc.cehcrm.ru/")!))
+        XCTAssertFalse(CalculatorOrigin.allows(URL(string: "https://example.com/")!))
     }
 
     func testYandexRouteBridgeAcceptsOnlyExpectedDestinationAndSchemes() {

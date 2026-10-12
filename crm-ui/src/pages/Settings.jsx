@@ -73,6 +73,7 @@ const FIELD_TYPE_LABELS = {
 
 const MENU_SECTION_OPTIONS = [
   { key: "dashboard", label: "Дашборд" },
+  { key: "calculator", label: "Калькулятор" },
   { key: "chats", label: "Чаты" },
   { key: "finances", label: "Финансы" },
   { key: "tasks", label: "Задачи" },

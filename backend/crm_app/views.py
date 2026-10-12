@@ -103,7 +103,15 @@ from .yandex_disk import (
 
 logger = logging.getLogger(__name__)
 
-MENU_SECTION_KEYS = {"dashboard", "chats", "finances", "tasks", "clients", "requests"}
+MENU_SECTION_KEYS = {
+    "dashboard",
+    "calculator",
+    "chats",
+    "finances",
+    "tasks",
+    "clients",
+    "requests",
+}
 
 
 def phone_digits_expression(field_name):

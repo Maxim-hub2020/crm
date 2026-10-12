@@ -38,6 +38,23 @@ document.addEventListener("focusout", () => {
   }, 220);
 });
 
+let revealFocusedControlTimer;
+document.addEventListener("focusin", (event) => {
+  const control = event.target;
+  if (!(control instanceof HTMLElement) || !control.matches("input, textarea, [contenteditable='true']") || window.innerWidth > 639) return;
+  window.clearTimeout(revealFocusedControlTimer);
+  revealFocusedControlTimer = window.setTimeout(() => {
+    if (document.activeElement !== control) return;
+    const viewport = window.visualViewport;
+    const viewportTop = viewport?.offsetTop || 0;
+    const viewportBottom = viewportTop + (viewport?.height || window.innerHeight);
+    const rect = control.getBoundingClientRect();
+    if (rect.top < viewportTop + 12 || rect.bottom > viewportBottom - 12) {
+      control.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+    }
+  }, 180);
+});
+
 if ("serviceWorker" in navigator && import.meta.env.PROD) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => {});

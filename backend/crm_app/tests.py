@@ -175,7 +175,7 @@ class TestWorkspaceIsolation(AuthenticatedApiMixin, APITestCase):
 
         update_response = api_a.patch(
             "/api/menu-settings/",
-            {"hidden_sections": ["chats", "tasks", "settings", "unknown"]},
+            {"hidden_sections": ["calculator", "chats", "tasks", "settings", "unknown"]},
             format="json",
         )
         read_a = api_a.get("/api/menu-settings/")
@@ -183,9 +183,9 @@ class TestWorkspaceIsolation(AuthenticatedApiMixin, APITestCase):
         me_a = api_a.get("/api/me/")
 
         self.assertEqual(update_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(read_a.data["hidden_sections"], ["chats", "tasks"])
+        self.assertEqual(read_a.data["hidden_sections"], ["calculator", "chats", "tasks"])
         self.assertEqual(read_b.data["hidden_sections"], [])
-        self.assertEqual(me_a.data["workspace"]["hidden_menu_sections"], ["chats", "tasks"])
+        self.assertEqual(me_a.data["workspace"]["hidden_menu_sections"], ["calculator", "chats", "tasks"])
 
     def test_manager_can_read_but_not_update_menu_settings(self):
         self.workspace_a.hidden_menu_sections = ["requests"]

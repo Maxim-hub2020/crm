@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Briefcase, FolderKanban, Home, ListTodo, LogOut, Menu, MessageCircle, Search, Settings, ShieldQuestion, Users, Wallet, X } from "lucide-react";
+import { Briefcase, Calculator, FolderKanban, Home, ListTodo, LogOut, Menu, MessageCircle, Search, Settings, ShieldQuestion, Users, Wallet, X } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { clearToken, fetchGlobalSearch, fetchMe, fetchProjects, getUser, isAdminUser } from "../api";
@@ -9,6 +9,7 @@ import { clearNativeVisitLocations, syncNativeVisitLocations } from "../utils/vi
 const ROUTE_META = {
   "/": { title: "Дашборд", icon: Home },
   "/projects": { title: "Проекты", icon: FolderKanban },
+  "/calculator": { title: "Калькулятор", icon: Calculator },
   "/chats": { title: "Чаты", icon: MessageCircle },
   "/finances": { title: "Финансы", icon: Wallet },
   "/clients": { title: "Клиенты", icon: Users },
@@ -186,6 +187,7 @@ export default function Layout({ children }) {
         <nav className="mt-4 flex flex-1 flex-col px-3">
           {!hiddenMenuSectionSet.has("dashboard") && <NavItem to="/" icon={Home} label="Дашборд" onClick={closeSidebar} />}
           <NavItem to="/projects" icon={FolderKanban} label="Проекты" onClick={closeSidebar} />
+          {!hiddenMenuSectionSet.has("calculator") && <NavItem to="/calculator" icon={Calculator} label="Калькулятор" onClick={closeSidebar} />}
           {!hiddenMenuSectionSet.has("chats") && <NavItem to="/chats" icon={MessageCircle} label="Чаты" onClick={closeSidebar} />}
           {isAdmin && !hiddenMenuSectionSet.has("finances") && <NavItem to="/finances" icon={Wallet} label="Финансы" onClick={closeSidebar} />}
           {!hiddenMenuSectionSet.has("tasks") && <NavItem to="/tasks" icon={ListTodo} label="Задачи" onClick={closeSidebar} />}
@@ -275,7 +277,7 @@ export default function Layout({ children }) {
 
         </header>
 
-        <main className="no-scrollbar flex-1 overflow-auto relative p-4 sm:p-6">{children}</main>
+        <main className={`no-scrollbar relative min-h-0 flex-1 overflow-auto ${location.pathname === "/calculator" ? "p-0" : "p-4 sm:p-6"}`}>{children}</main>
       </div>
     </div>
   );

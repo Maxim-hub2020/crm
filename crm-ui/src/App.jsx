@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-route
 import { fetchMe, getToken, getUser, initApiAuth, isAdminUser } from "./api";
 import Layout from "./components/Layout";
 import Chats from "./pages/Chats";
+import Calculator from "./pages/Calculator";
 import Clients from "./pages/Clients";
 import Dashboard from "./pages/Dashboard";
 import Finances from "./pages/Finances";
@@ -90,6 +91,16 @@ export default function App() {
             <Private>
               <Layout>
                 <Projects />
+              </Layout>
+            </Private>
+          }
+        />
+        <Route
+          path="/calculator"
+          element={
+            <Private>
+              <Layout>
+                <Calculator />
               </Layout>
             </Private>
           }
