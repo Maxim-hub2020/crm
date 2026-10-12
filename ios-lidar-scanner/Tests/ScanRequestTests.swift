@@ -49,7 +49,7 @@ final class NativeBridgeTests: XCTestCase {
     func testAppDeclaresCameraPermission() {
         let description = Bundle.main.object(forInfoDictionaryKey: "NSCameraUsageDescription") as? String
         XCTAssertFalse(description?.isEmpty ?? true)
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "12")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "13")
     }
 
     func testMobileConfigurationAnnouncesNativeBridgeBeforePageScripts() {
@@ -61,7 +61,19 @@ final class NativeBridgeTests: XCTestCase {
         XCTAssertEqual(script?.isForMainFrameOnly, true)
         XCTAssertTrue(script?.source.contains("CEHCRMNative") == true)
         XCTAssertTrue(script?.source.contains("route: true") == true)
+        XCTAssertTrue(script?.source.contains("yandexDisk: true") == true)
         XCTAssertTrue(script?.source.contains("location.origin !== info.origin") == true)
+    }
+
+    func testYandexDiskBridgeBuildsAppCandidatesAndRejectsOtherHosts() throws {
+        let webURL = try XCTUnwrap(URL(string: "https://disk.yandex.ru/client/disk/CRM/%D0%9F%D1%80%D0%BE%D0%B5%D0%BA%D1%82"))
+        let link = try XCTUnwrap(YandexDiskLink(webURL: webURL))
+        XCTAssertEqual(link.webURL, webURL)
+        XCTAssertEqual(link.appURLs.first?.scheme, "yadisk")
+        XCTAssertEqual(link.appURLs.first?.path, webURL.path)
+        XCTAssertTrue(link.appURLs.contains(where: { $0.absoluteString == "yadisk://" }))
+        XCTAssertNil(YandexDiskLink(webURL: URL(string: "https://example.com/client/disk/CRM")!))
+        XCTAssertNil(YandexDiskLink(webURL: URL(string: "http://disk.yandex.ru/client/disk/CRM")!))
     }
 
     func testYandexRouteBridgeAcceptsOnlyExpectedDestinationAndSchemes() {

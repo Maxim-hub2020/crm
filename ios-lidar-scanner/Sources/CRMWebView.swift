@@ -39,6 +39,29 @@ struct YandexRouteLink {
     }
 }
 
+struct YandexDiskLink {
+    let webURL: URL
+    let appURLs: [URL]
+
+    init?(webURL: URL) {
+        let allowedHosts = ["disk.yandex.ru", "disk.yandex.com", "yadi.sk"]
+        guard webURL.scheme == "https", allowedHosts.contains(webURL.host ?? ""),
+              webURL.port == nil, webURL.user == nil, webURL.password == nil else { return nil }
+
+        var direct = URLComponents(url: webURL, resolvingAgainstBaseURL: false)
+        direct?.scheme = "yadisk"
+
+        var pathOnly = URLComponents()
+        pathOnly.scheme = "yadisk"
+        pathOnly.path = webURL.path
+        pathOnly.query = webURL.query
+        pathOnly.fragment = webURL.fragment
+
+        self.webURL = webURL
+        self.appURLs = [direct?.url, pathOnly.url, URL(string: "yadisk://")].compactMap { $0 }
+    }
+}
+
 struct CRMWebView: UIViewRepresentable {
     var reloadID = 0
     var visitProjectID: Int?
@@ -65,7 +88,7 @@ struct CRMWebView: UIViewRepresentable {
           if (location.origin !== info.origin) return;
           window.CEHCRMNative = Object.freeze({
             version: info.version,
-            capabilities: Object.freeze({route: true, visitAlerts: true}),
+            capabilities: Object.freeze({route: true, yandexDisk: true, visitAlerts: true}),
             postMessage: (message) => window.webkit.messageHandlers.cehCRM.postMessage(message)
           });
           document.addEventListener('DOMContentLoaded', () => {
@@ -165,18 +188,28 @@ struct CRMWebView: UIViewRepresentable {
         }
 
         private func openExternal(_ url: URL, from webView: WKWebView) {
+            if let diskLink = YandexDiskLink(webURL: url) {
+                openDiskCandidate(diskLink.appURLs, index: 0, fallback: diskLink.webURL)
+                return
+            }
             UIApplication.shared.open(url, options: [.universalLinksOnly: true]) { opened in
                 guard !opened else { return }
                 DispatchQueue.main.async {
-                    guard ["disk.yandex.ru", "disk.yandex.com", "yadi.sk"].contains(url.host ?? "") else {
-                        UIApplication.shared.open(url)
-                        return
+                    UIApplication.shared.open(url)
+                }
+            }
+        }
+
+        private func openDiskCandidate(_ candidates: [URL], index: Int, fallback: URL) {
+            guard index < candidates.count else {
+                UIApplication.shared.open(fallback)
+                return
+            }
+            UIApplication.shared.open(candidates[index]) { opened in
+                if !opened {
+                    DispatchQueue.main.async {
+                        self.openDiskCandidate(candidates, index: index + 1, fallback: fallback)
                     }
-                    let alert = UIAlertController(title: "Не удалось открыть папку в приложении Диска",
-                        message: "Яндекс.Диск не принял эту ссылку. Для закрытых папок переход может быть недоступен. Открыть ту же папку в браузере?", preferredStyle: .alert)
-                    alert.addAction(UIAlertAction(title: "Остаться в CRM", style: .cancel))
-                    alert.addAction(UIAlertAction(title: "Открыть в браузере", style: .default) { _ in UIApplication.shared.open(url) })
-                    self.presenter(for: webView)?.present(alert, animated: true)
                 }
             }
         }
