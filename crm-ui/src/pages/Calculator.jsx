@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Calculator as CalculatorIcon, ExternalLink, LoaderCircle } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 
 const CALCULATOR_URL = "https://calc.cehcrm.ru/?embedded=crm";
 
@@ -27,16 +27,6 @@ export default function Calculator() {
         onLoad={() => setLoaded(true)}
       />
 
-      <a
-        href={CALCULATOR_URL}
-        target="_blank"
-        rel="noreferrer"
-        className="absolute bottom-4 right-4 z-20 inline-flex items-center gap-2 rounded-full bg-slate-950 px-4 py-2.5 text-xs font-black text-white shadow-xl transition hover:bg-blue-600"
-      >
-        <CalculatorIcon size={15} />
-        Открыть отдельно
-        <ExternalLink size={14} />
-      </a>
     </section>
   );
 }
