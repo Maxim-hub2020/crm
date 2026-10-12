@@ -25,10 +25,11 @@ final class VisitProximityManager: NSObject, ObservableObject, CLLocationManager
     private let notificationCenter = UNUserNotificationCenter.current()
     private let projectsKey = "ceh.visit.projects.v1"
     private let enabledKey = "ceh.visit.enabled.v1"
-    private let alertPrefix = "ceh.visit.openAlert.v2."
     private let radius: CLLocationDistance = 3_000
     private var projects: [VisitProject]
     private var locationRequestPending = false
+    private var lastPresentedProjectID: Int?
+    private var lastPresentedAt: Date?
 
     private override init() {
         let defaults = UserDefaults.standard
@@ -127,11 +128,13 @@ final class VisitProximityManager: NSObject, ObservableObject, CLLocationManager
     }
 
     private func showNearbyProject(_ project: VisitProject) {
-        let key = alertPrefix + String(project.id)
         let now = Date()
-        if let previous = UserDefaults.standard.object(forKey: key) as? Date,
-           now.timeIntervalSince(previous) < 30 * 60 { return }
-        UserDefaults.standard.set(now, forKey: key)
+        // Avoid the duplicate check caused by page sync + scene activation, but
+        // show the visit card again on the next real app opening.
+        if lastPresentedProjectID == project.id, let previous = lastPresentedAt,
+           now.timeIntervalSince(previous) < 60 { return }
+        lastPresentedProjectID = project.id
+        lastPresentedAt = now
 
         DispatchQueue.main.async {
             self.pendingProjectID = project.id

@@ -86,6 +86,7 @@ struct CRMWebView: UIViewRepresentable {
         view.navigationDelegate = context.coordinator
         view.uiDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = true
+        view.scrollView.keyboardDismissMode = .interactive
         view.load(URLRequest(url: CRMOrigin.home, cachePolicy: .reloadRevalidatingCacheData))
         return view
     }

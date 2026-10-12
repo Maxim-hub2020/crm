@@ -12,6 +12,7 @@ from django.utils.dateparse import parse_date
 from django.utils.text import slugify
 
 from .bonuses import apply_project_bonus_promo_code, ensure_project_bonus_accrual, normalize_bonus_promo_code, promo_code_for_phone
+from .dadata import suggest_dadata_address
 from .models import (
     Account,
     AuditLog,
@@ -315,6 +316,17 @@ class ProjectSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if "custom_fields" in attrs:
             attrs["custom_fields"] = self._normalize_custom_fields(attrs.get("custom_fields"))
+        address = str(attrs.get("object_address", getattr(self.instance, "object_address", "")) or "").strip()
+        latitude = str(attrs.get("object_lat", getattr(self.instance, "object_lat", "")) or "").strip()
+        longitude = str(attrs.get("object_lon", getattr(self.instance, "object_lon", "")) or "").strip()
+        if address and (not latitude or not longitude):
+            suggestions = suggest_dadata_address(address, count=1)
+            data = suggestions[0].get("data", {}) if suggestions else {}
+            geo_lat = str(data.get("geo_lat") or "").strip()
+            geo_lon = str(data.get("geo_lon") or "").strip()
+            if geo_lat and geo_lon:
+                attrs["object_lat"] = geo_lat
+                attrs["object_lon"] = geo_lon
         is_detaching_client = self.instance is not None and "client" in attrs and attrs.get("client") is None
         if is_detaching_client:
             return attrs

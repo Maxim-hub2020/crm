@@ -19,6 +19,54 @@ from .mcp_oauth import authenticate_mcp_request, canonical_resource
 SKILL_ROOT = Path(__file__).resolve().parent / "mcp_skills"
 MAX_MCP_FILE_SIZE = 8 * 1024 * 1024
 
+
+class McpToolError(Exception):
+    def __init__(self, payload):
+        self.payload = payload
+        super().__init__(payload.get("message") or "Операция CRM не выполнена")
+
+
+def _api_error_payload(status, detail):
+    if status in {400, 409, 422}:
+        return {
+            "error_type": "invalid_input",
+            "status": status,
+            "message": "CRM отклонила параметры операции. Подключение и доступ остаются активными.",
+            "details": detail,
+            "retryable": True,
+            "connection_active": True,
+            "recovery": "Исправьте указанные поля, при необходимости заново прочитайте справочник CRM и повторите исходную операцию.",
+        }
+    if status == 403:
+        return {
+            "error_type": "permission_denied",
+            "status": status,
+            "message": "Текущая роль не разрешает именно эту операцию. Подключение CRM не заблокировано.",
+            "details": detail,
+            "retryable": False,
+            "connection_active": True,
+            "recovery": "Не переподключайте CRM. Используйте разрешённую операцию или сообщите, какое конкретно действие требует роли администратора.",
+        }
+    if status == 404:
+        return {
+            "error_type": "not_found",
+            "status": status,
+            "message": "Объект CRM не найден, но подключение остаётся активным.",
+            "details": detail,
+            "retryable": True,
+            "connection_active": True,
+            "recovery": "Заново найдите объект через CRM, получите актуальный идентификатор и повторите действие.",
+        }
+    return {
+        "error_type": "temporary_error",
+        "status": status,
+        "message": "CRM временно не выполнила операцию. Доступ не заблокирован.",
+        "details": detail,
+        "retryable": status >= 500,
+        "connection_active": True,
+        "recovery": "Повторите действие один раз с теми же подтверждёнными параметрами; при повторной ошибке сообщите её детали.",
+    }
+
 OPENAI_FILE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -298,7 +346,7 @@ def _dispatch_viewset(user, resource, operation, object_id=None, data=None, filt
     kwargs = {"pk": object_id} if object_id else {}
     response = _viewset(resource).as_view(mapping)(req, **kwargs)
     if response.status_code >= 400:
-        raise ValueError({"status": response.status_code, "detail": response.data})
+        raise McpToolError(_api_error_payload(response.status_code, response.data))
     return {"status": response.status_code, "data": getattr(response, "data", None)}
 
 
@@ -757,7 +805,7 @@ def mcp_view(request):
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {"listChanged": False}, "resources": {}, "extensions": {"io.modelcontextprotocol/skills": {}}},
             "serverInfo": {"name": "ceh-crm-production", "version": "1.0.0"},
-            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. Use crm_finance_overview for company or project financial health; it returns deterministic CRM analytics and cash forecast without external AI. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. Create general income or expenses not tied to an order as payments without project and without project_query. Before every financial create or update, always list accounts and explicitly ask the user which account is used, even if only one account exists; never infer cash versus cashless. For transfers, explicitly ask for both source and destination accounts and use crm_transfer_money; transfers change account balances but never income, expense, profit, margin, or project costs. The categories 'Личные доходы' and 'Личные траты' must have affects_margin=false: they change the selected account and cash forecast but never business profit or margin. Use crm_adjust_balance only for a confirmed reconciliation difference: it changes cash balance but never monthly income, expenses, profit, or margin. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
+            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. Use crm_finance_overview for company or project financial health; it returns deterministic CRM analytics and cash forecast without external AI. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. Create general income or expenses not tied to an order as payments without project and without project_query. Before every financial create or update, always list accounts and explicitly ask the user which account is used, even if only one account exists; never infer cash versus cashless. For transfers, explicitly ask for both source and destination accounts and use crm_transfer_money; transfers change account balances but never income, expense, profit, margin, or project costs. The categories 'Личные доходы' and 'Личные траты' must have affects_margin=false: they change the selected account and cash forecast but never business profit or margin. Use crm_adjust_balance only for a confirmed reconciliation difference: it changes cash balance but never monthly income, expenses, profit, or margin. Tool errors do not revoke CRM access. For retryable invalid_input or not_found errors, inspect details, refresh the relevant CRM directory, correct the parameters, and retry the original action. If a payment category is invalid, list finance-categories and use an existing category instead of creating one. Only invalid_token requires reconnecting. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
         })
     if method in {"notifications/initialized", "ping"}:
         return _rpc_result(message_id, {})
@@ -791,7 +839,20 @@ def mcp_view(request):
     try:
         value = _execute_tool(token_record.user, token_record, params.get("name"), dict(params.get("arguments") or {}))
         return _rpc_result(message_id, _tool_output(value))
+    except McpToolError as exc:
+        return _rpc_result(message_id, _tool_output(exc.payload, is_error=True))
     except PermissionError as exc:
-        return _rpc_result(message_id, _tool_output({"error": str(exc)}, is_error=True))
+        return _rpc_result(message_id, _tool_output({
+            "error_type": "scope_denied",
+            "message": str(exc),
+            "retryable": False,
+            "connection_active": True,
+        }, is_error=True))
     except Exception as exc:
-        return _rpc_result(message_id, _tool_output({"error": str(exc)}, is_error=True))
+        return _rpc_result(message_id, _tool_output({
+            "error_type": "operation_error",
+            "message": str(exc),
+            "retryable": True,
+            "connection_active": True,
+            "recovery": "Проверьте параметры по справочникам CRM и повторите исходную операцию после исправления.",
+        }, is_error=True))

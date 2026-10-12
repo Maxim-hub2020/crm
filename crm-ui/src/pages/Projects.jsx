@@ -1148,6 +1148,11 @@ export default function Projects() {
   const [createBonusPreview, setCreateBonusPreview] = useState(null);
   const [createBonusPreviewError, setCreateBonusPreviewError] = useState("");
   const [createBonusPreviewLoading, setCreateBonusPreviewLoading] = useState(false);
+  const [createAddressOpen, setCreateAddressOpen] = useState(false);
+  const [createAddressSuggestions, setCreateAddressSuggestions] = useState([]);
+  const [createAddressSuggestLoading, setCreateAddressSuggestLoading] = useState(false);
+  const [createAddressSuggestError, setCreateAddressSuggestError] = useState("");
+  const selectedCreateAddressValueRef = useRef("");
 
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [visitProjectId, setVisitProjectId] = useState(null);
@@ -1798,6 +1803,47 @@ export default function Projects() {
   }, [activeProjectId]);
 
   useEffect(() => {
+    if (!openCreate || !createAddressOpen || !hasDadataAddressSuggestions()) {
+      setCreateAddressSuggestions([]);
+      setCreateAddressSuggestLoading(false);
+      setCreateAddressSuggestError("");
+      return;
+    }
+
+    const query = createForm.object_address.trim();
+    if (query.length < 3 || query === selectedCreateAddressValueRef.current) {
+      setCreateAddressSuggestions([]);
+      setCreateAddressSuggestLoading(false);
+      setCreateAddressSuggestError("");
+      return;
+    }
+
+    let cancelled = false;
+    setCreateAddressSuggestLoading(true);
+    const timerId = window.setTimeout(async () => {
+      try {
+        const suggestions = await fetchAddressSuggestions(query);
+        if (!cancelled) {
+          setCreateAddressSuggestions(suggestions);
+          setCreateAddressSuggestError(suggestions.length ? "" : "Адрес не найден. Уточните улицу, дом или город.");
+        }
+      } catch (requestError) {
+        if (!cancelled) {
+          setCreateAddressSuggestions([]);
+          setCreateAddressSuggestError(requestError?.message || "Не удалось загрузить подсказки Dadata.");
+        }
+      } finally {
+        if (!cancelled) setCreateAddressSuggestLoading(false);
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+    };
+  }, [openCreate, createAddressOpen, createForm.object_address]);
+
+  useEffect(() => {
     if (!activeProjectId || !addressDetailsOpen || !hasDadataAddressSuggestions()) {
       setAddressSuggestions([]);
       setAddressSuggestLoading(false);
@@ -1851,6 +1897,10 @@ export default function Projects() {
     setCreateBonusPreview(null);
     setCreateBonusPreviewError("");
     setCreateBonusPreviewLoading(false);
+    setCreateAddressOpen(false);
+    setCreateAddressSuggestions([]);
+    setCreateAddressSuggestError("");
+    selectedCreateAddressValueRef.current = "";
     setCreateForm(createEmptyProjectForm(status));
     setOpenCreate(true);
   }
@@ -1859,6 +1909,10 @@ export default function Projects() {
     setOpenCreate(false);
     setCreateError("");
     setCreateBonusEnabled(false);
+    setCreateAddressOpen(false);
+    setCreateAddressSuggestions([]);
+    setCreateAddressSuggestError("");
+    selectedCreateAddressValueRef.current = "";
     setCreateBonusPreview(null);
     setCreateBonusPreviewError("");
     setCreateBonusPreviewLoading(false);
@@ -1866,6 +1920,7 @@ export default function Projects() {
   }
 
   function applyClientFromSearch(client) {
+    selectedCreateAddressValueRef.current = String(client.object_address || "").trim();
     setCreateForm((prev) => ({
       ...prev,
       client: client.client_id || "",
@@ -2265,6 +2320,23 @@ export default function Projects() {
     setAddressSuggestions([]);
     setAddressSuggestLoading(false);
     setAddressSuggestError("");
+  }
+
+  function applyCreateAddressSuggestion(suggestion) {
+    const selectedAddress = suggestion.value || suggestion.unrestrictedValue || createForm.object_address;
+    selectedCreateAddressValueRef.current = String(selectedAddress || "").trim();
+    setCreateForm((prev) => ({
+      ...prev,
+      object_address: selectedAddress || prev.object_address,
+      object_lat: suggestion.lat || "",
+      object_lon: suggestion.lon || "",
+      apartment: suggestion.apartment || prev.apartment,
+      floor: suggestion.floor || prev.floor,
+    }));
+    setCreateAddressSuggestions([]);
+    setCreateAddressSuggestLoading(false);
+    setCreateAddressSuggestError("");
+    setCreateAddressOpen(false);
   }
 
   function handlePaymentCategoryChange(categoryId) {
@@ -3468,12 +3540,44 @@ export default function Projects() {
                 )}
               </div>
             )}
-            <div className="space-y-2 md:col-span-2">
+            <div className="relative space-y-2 md:col-span-2">
               <Label>Адрес объекта</Label>
               <Input
                 value={createForm.object_address}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, object_address: event.target.value }))}
+                onFocus={() => setCreateAddressOpen(true)}
+                onClick={() => setCreateAddressOpen(true)}
+                onChange={(event) => {
+                  selectedCreateAddressValueRef.current = "";
+                  setCreateAddressOpen(true);
+                  setCreateForm((prev) => ({
+                    ...prev,
+                    object_address: event.target.value,
+                    object_lat: "",
+                    object_lon: "",
+                  }));
+                }}
+                placeholder="Начните вводить город, улицу и дом"
               />
+              {createAddressOpen && (createAddressSuggestLoading || createAddressSuggestions.length > 0 || createAddressSuggestError) ? (
+                <div className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
+                  {createAddressSuggestLoading ? (
+                    <div className="px-3 py-2 text-sm font-semibold text-slate-400">Ищем адрес...</div>
+                  ) : null}
+                  {createAddressSuggestions.map((suggestion) => (
+                    <button
+                      key={`${suggestion.value}-${suggestion.lat}-${suggestion.lon}`}
+                      type="button"
+                      className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
+                      onClick={() => applyCreateAddressSuggestion(suggestion)}
+                    >
+                      {suggestion.value}
+                    </button>
+                  ))}
+                  {createAddressSuggestError ? (
+                    <div className="rounded-xl bg-red-50 px-3 py-2 text-sm font-semibold text-red-600">{createAddressSuggestError}</div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
             <div className="space-y-2 md:col-span-2">
               <Label>Статус</Label>
@@ -4359,6 +4463,7 @@ export default function Projects() {
                         <div className="space-y-2">
                           <Label>Сумма</Label>
                           <Input
+                            inputMode="decimal"
                             value={paymentForm.amount}
                             onChange={(event) => setPaymentForm((prev) => ({ ...prev, amount: event.target.value }))}
                             placeholder="25000"

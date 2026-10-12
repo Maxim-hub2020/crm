@@ -38,10 +38,16 @@ export function Button({ variant = "primary", className = "", ...props }) {
   return <button className={`${base} ${styles} ${className}`} {...props} />;
 }
 
-export function Input({ className = "", ...props }) {
+export function Input({ className = "", onKeyDown, enterKeyHint, ...props }) {
+  const numeric = props.inputMode === "numeric" || props.inputMode === "decimal";
   return (
     <input
       className={`w-full rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500/20 ${className}`}
+      enterKeyHint={enterKeyHint || (numeric ? "done" : undefined)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && numeric) event.currentTarget.blur();
+        onKeyDown?.(event);
+      }}
       {...props}
     />
   );

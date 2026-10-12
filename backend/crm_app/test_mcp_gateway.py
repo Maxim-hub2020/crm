@@ -140,6 +140,24 @@ class RemoteMcpTests(TestCase):
         }}, token)
         self.assertTrue(finance_rejected.json()["result"]["isError"])
 
+    def test_validation_error_is_retryable_and_does_not_report_blocked_access(self):
+        account = Account.objects.create(workspace=self.workspace, name="Наличные")
+        token = self.connect()
+
+        response = self.rpc("tools/call", {"name": "crm_create", "arguments": {
+            "resource": "payments",
+            "confirm": True,
+            "data": {"category": 999999, "account": account.id, "amount": "1000.00"},
+        }}, token)
+
+        result = response.json()["result"]
+        self.assertTrue(result["isError"])
+        error = result["structuredContent"]
+        self.assertEqual(error["error_type"], "invalid_input")
+        self.assertTrue(error["retryable"])
+        self.assertTrue(error["connection_active"])
+        self.assertIn("category", str(error["details"]))
+
     def test_project_resolver_never_treats_order_number_as_internal_id(self):
         Project.objects.create(
             id=44,

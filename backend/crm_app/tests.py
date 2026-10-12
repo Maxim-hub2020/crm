@@ -516,6 +516,29 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["entrance"], "3")
         self.assertEqual(response.data["floor"], "7")
 
+    @patch("crm_app.serializers.suggest_dadata_address")
+    def test_project_recovers_missing_coordinates_from_address(self, mocked_suggest):
+        mocked_suggest.return_value = [{
+            "value": "г Ростов-на-Дону, ул Рыльского, д 1",
+            "data": {"geo_lat": "47.300100", "geo_lon": "39.700200"},
+        }]
+        self.manager_project.object_address = "г. Ростов-на-Дону, ул. Рыльского, д. 1"
+        self.manager_project.object_lat = None
+        self.manager_project.object_lon = None
+        self.manager_project.save(update_fields=["object_address", "object_lat", "object_lon"])
+        client = self.auth_client_for(self.manager)
+
+        response = client.patch(
+            f"/api/projects/{self.manager_project.id}/",
+            {"object_address": self.manager_project.object_address},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data["object_lat"], "47.300100")
+        self.assertEqual(response.data["object_lon"], "39.700200")
+        mocked_suggest.assert_called_once_with(self.manager_project.object_address, count=1)
+
     def test_project_can_be_created_without_phone(self):
         client = self.auth_client_for(self.manager)
 

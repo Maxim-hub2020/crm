@@ -1346,7 +1346,7 @@ export default function Finances() {
             ) : null}
             <div className="space-y-2">
               <Label>Сумма</Label>
-              <Input value={paymentForm.amount} onChange={(event) => setPaymentForm((prev) => ({ ...prev, amount: event.target.value }))} />
+              <Input inputMode="decimal" value={paymentForm.amount} onChange={(event) => setPaymentForm((prev) => ({ ...prev, amount: event.target.value }))} />
             </div>
             <div className="space-y-2">
               <Label>Дата</Label>

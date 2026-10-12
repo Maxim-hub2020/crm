@@ -129,6 +129,7 @@ export default function ClientAddressFields({
         <div className="space-y-2">
           <Label>Квартира</Label>
           <Input
+            inputMode="numeric"
             value={form.apartment}
             onChange={(event) => setForm((prev) => ({ ...prev, apartment: event.target.value }))}
             placeholder="12"
@@ -137,6 +138,7 @@ export default function ClientAddressFields({
         <div className="space-y-2">
           <Label>Этаж</Label>
           <Input
+            inputMode="numeric"
             value={form.floor}
             onChange={(event) => setForm((prev) => ({ ...prev, floor: event.target.value }))}
             placeholder="7"
