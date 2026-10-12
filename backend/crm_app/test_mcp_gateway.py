@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
-from .models import Account, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, User, Workspace
+from .models import Account, CalculatorQuote, CalculatorSettings, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, User, Workspace
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
@@ -86,6 +86,9 @@ class RemoteMcpTests(TestCase):
         self.assertIn("crm_resolve_project", {item["name"] for item in tool_items})
         self.assertIn("crm_finance_overview", {item["name"] for item in tool_items})
         self.assertIn("crm_adjust_balance", {item["name"] for item in tool_items})
+        self.assertIn("crm_calculator_catalog", {item["name"] for item in tool_items})
+        self.assertIn("crm_calculate_product", {item["name"] for item in tool_items})
+        self.assertIn("crm_save_calculator_quote", {item["name"] for item in tool_items})
         upload_tool = next(item for item in tool_items if item["name"] == "crm_upload_file")
         self.assertEqual(upload_tool["_meta"]["openai/fileParams"], ["file"])
         file_schema = upload_tool["inputSchema"]["$defs"]["OpenAIFile"]
@@ -108,6 +111,108 @@ class RemoteMcpTests(TestCase):
         self.assertEqual(fetched.json()["result"]["skill"], production)
         resource = self.rpc("resources/read", {"uri": production["uri"]})
         self.assertIn("# Технолог производства", resource.json()["result"]["contents"][0]["text"])
+
+    def test_calculator_tools_use_connected_workspace_catalog(self):
+        CalculatorSettings.objects.create(
+            workspace=self.workspace,
+            shower_catalog={
+                "constructions": [{
+                    "id": "partition",
+                    "title": "Душевая перегородка",
+                    "installationPrice": 5000,
+                    "hardwareComponents": [
+                        {"hardwareItemId": "hinge", "quantity": 2, "glassThickness": 8},
+                        {"hardwareItemId": "handle", "quantity": 1},
+                    ],
+                    "fields": [
+                        {"key": "HEIGHT_0", "label": "Высота", "defaultValue": 2000},
+                        {"key": "WIDTH_0", "label": "Ширина", "defaultValue": 1000},
+                    ],
+                }],
+                "glass": [{"id": "clear", "label": "Бесцветное 8 мм", "price": 6200, "thickness": 8}],
+                "hardware": [{"id": "chrome", "label": "Хром", "price": 0}],
+                "hardwareClass": [{"id": "standard", "label": "Стандарт", "price": 0}],
+                "hardwareItems": [
+                    {"id": "hinge", "label": "Петля 8 мм", "price": 1200},
+                    {"id": "handle", "label": "Ручка", "price": 600},
+                ],
+                "services": {"deliveryBase": 1500, "deliveryKmRate": 50},
+            },
+            mirror_catalog={
+                "materials": [{"id": "silver", "label": "Серебро", "price": 2250}],
+                "services": [],
+                "settings": {"materialMarkupPercent": 30, "serviceMarkupPercent": 0},
+            },
+        )
+        token = self.connect()
+
+        catalog_response = self.rpc("tools/call", {
+            "name": "crm_calculator_catalog",
+            "arguments": {},
+        }, token).json()["result"]
+        self.assertFalse(catalog_response.get("isError", False), catalog_response)
+        catalog = catalog_response["structuredContent"]
+        self.assertEqual(catalog["shower"]["constructions"][0]["id"], "partition")
+        self.assertNotIn("price", catalog["shower"]["glass"][0])
+
+        calculation_response = self.rpc("tools/call", {
+            "name": "crm_calculate_product",
+            "arguments": {
+                "product": "shower",
+                "configuration": {
+                    "constructionId": "partition",
+                    "dimensions": {"HEIGHT_0": 2000, "WIDTH_0": 1000},
+                    "glassId": "clear",
+                    "hardwareId": "chrome",
+                    "hardwareClassId": "standard",
+                    "installation": True,
+                },
+                "delivery": {"enabled": True, "zone": "outside", "km": 10},
+            },
+        }, token).json()["result"]
+        self.assertFalse(calculation_response.get("isError", False), calculation_response)
+        calculation = calculation_response["structuredContent"]
+        self.assertEqual(calculation["item_amount"], 20400)
+        self.assertEqual(calculation["delivery_amount"], 2000)
+        self.assertEqual(calculation["amount"], 22400)
+        self.assertEqual(calculation["selection"]["construction"], "Душевая перегородка")
+
+        save_arguments = {
+            "project_query": "Зеркало",
+            "product": "shower",
+            "configuration": {
+                "constructionId": "partition",
+                "dimensions": {"HEIGHT_0": 2000, "WIDTH_0": 1000},
+                "glassId": "clear",
+                "hardwareId": "chrome",
+                "hardwareClassId": "standard",
+                "installation": True,
+            },
+            "delivery": {"enabled": True, "zone": "outside", "km": 10},
+        }
+        rejected_save = self.rpc("tools/call", {
+            "name": "crm_save_calculator_quote",
+            "arguments": save_arguments,
+        }, token).json()["result"]
+        self.assertTrue(rejected_save["isError"])
+        self.assertFalse(CalculatorQuote.objects.exists())
+
+        saved_quote = self.rpc("tools/call", {
+            "name": "crm_save_calculator_quote",
+            "arguments": {**save_arguments, "confirm": True},
+        }, token).json()["result"]
+        self.assertFalse(saved_quote.get("isError", False), saved_quote)
+        self.assertEqual(saved_quote["structuredContent"]["amount"], 22400)
+        self.assertEqual(CalculatorQuote.objects.filter(project=self.project).count(), 1)
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.total_amount, Decimal("22400.00"))
+
+        repeated_save = self.rpc("tools/call", {
+            "name": "crm_save_calculator_quote",
+            "arguments": {**save_arguments, "confirm": True},
+        }, token).json()["result"]
+        self.assertFalse(repeated_save.get("isError", False), repeated_save)
+        self.assertEqual(CalculatorQuote.objects.filter(project=self.project).count(), 1)
 
     def test_authenticated_read_write_and_delete_confirmation(self):
         token = self.connect()

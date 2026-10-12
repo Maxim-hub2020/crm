@@ -165,6 +165,58 @@ TOOLS = [
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     },
     {
+        "name": "crm_calculator_catalog",
+        "title": "Каталог калькулятора изделий",
+        "description": "Получить доступные типы душевых, поля размеров, стекло, фурнитуру, материалы зеркал и услуги из калькулятора текущей компании. Вызывайте перед расчётом, не придумывайте идентификаторы вариантов.",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "securitySchemes": [OAUTH_SCHEME],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
+        "name": "crm_calculate_product",
+        "title": "Рассчитать изделие",
+        "description": "Рассчитать предварительную стоимость душевой или зеркала по действующим настройкам калькулятора текущей компании. Сначала получите каталог через crm_calculator_catalog и используйте только его идентификаторы.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "product": {"type": "string", "enum": ["shower", "mirror"]},
+                "configuration": {
+                    "type": "object",
+                    "description": "Для shower: constructionId, dimensions, glassId, hardwareId, hardwareClassId, installation и при необходимости скидка. Для mirror: width, height, materialId и options с serviceId/quantity.",
+                    "additionalProperties": True,
+                },
+                "delivery": {
+                    "type": "object",
+                    "description": "Доставка: enabled, zone=inside|outside и km для выезда за город.",
+                    "additionalProperties": True,
+                },
+            },
+            "required": ["product", "configuration"],
+            "additionalProperties": False,
+        },
+        "securitySchemes": [OAUTH_SCHEME],
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
+        "name": "crm_save_calculator_quote",
+        "title": "Сохранить расчёт в проект",
+        "description": "Создать или обновить связанное КП калькулятора у существующего проекта и установить рассчитанную стоимость проекта. Вызывайте только после показа итога и явного подтверждения пользователя.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_query": {"type": "string", "minLength": 1, "description": "Номер заказа, адрес, клиент, телефон или название проекта."},
+                "product": {"type": "string", "enum": ["shower", "mirror"]},
+                "configuration": {"type": "object", "additionalProperties": True},
+                "delivery": {"type": "object", "additionalProperties": True},
+                "confirm": {"type": "boolean", "const": True},
+            },
+            "required": ["project_query", "product", "configuration", "confirm"],
+            "additionalProperties": False,
+        },
+        "securitySchemes": [OAUTH_SCHEME],
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    },
+    {
         "name": "crm_get",
         "title": "Карточка объекта CRM",
         "description": "Получить одну карточку CRM по внутреннему идентификатору. Для проекта сначала вызовите crm_resolve_project: никогда не передавайте номер заказа в поле id.",
@@ -411,6 +463,118 @@ def _call_finance_overview(user, args):
     return result
 
 
+def _calculator_context(user):
+    from .public_calculator import calculator_catalog_for_workspace
+    from .tenancy import current_workspace
+
+    workspace = current_workspace(user)
+    settings_record, shower, mirror = calculator_catalog_for_workspace(workspace)
+    return workspace, settings_record, shower, mirror
+
+
+def _call_calculator_catalog(user):
+    from .public_calculator import _price_version, _public_config
+
+    _workspace, settings_record, shower, mirror = _calculator_context(user)
+    return _public_config(shower, mirror, _price_version(settings_record))
+
+
+def _call_calculate_product(user, args):
+    from .public_calculator import calculate_product_for_workspace
+
+    workspace, _settings_record, _shower, _mirror = _calculator_context(user)
+    return calculate_product_for_workspace(
+        workspace,
+        args.get("product"),
+        args.get("configuration"),
+        args.get("delivery"),
+    )
+
+
+def _call_save_calculator_quote(user, args):
+    from types import SimpleNamespace
+    import uuid
+
+    from django.db import transaction
+    from django.utils import timezone
+
+    from .models import CalculatorQuote, Project
+    from .public_calculator import (
+        _build_public_quote_payload,
+        _next_quote_number,
+        calculate_product_for_workspace,
+    )
+    from .tenancy import current_workspace
+
+    if not args.get("confirm"):
+        raise ValueError("Сохранение КП требует confirm=true после подтверждения пользователя")
+    if not user.is_admin():
+        raise PermissionError("Сохранять КП калькулятора может только администратор")
+
+    workspace = current_workspace(user)
+    project_id = _resolve_project_id(user, args["project_query"])
+    project = Project.objects.filter(workspace=workspace, pk=project_id).first()
+    if not project:
+        raise ValueError("Проект не найден")
+
+    calculation = calculate_product_for_workspace(
+        workspace,
+        args.get("product"),
+        args.get("configuration"),
+        args.get("delivery"),
+    )
+    settings_record, shower, mirror = _calculator_context(user)[1:]
+    now = timezone.now()
+
+    with transaction.atomic():
+        quote = CalculatorQuote.objects.select_for_update().filter(project=project).first()
+        quote_id = quote.quote_id if quote else f"assistant-{uuid.uuid4().hex}"
+        quote_number = quote.number if quote and quote.number else _next_quote_number(workspace)
+        lead = SimpleNamespace(client_name=project.client_name, client_phone=project.client_phone)
+        payload = _build_public_quote_payload(
+            quote_id,
+            calculation,
+            shower,
+            mirror,
+            lead,
+            quote_number,
+            quote.quote_created_at if quote else now,
+        )
+        payload["id"] = quote_id
+        payload["updatedAt"] = now.isoformat()
+        payload["customer"]["note"] = "Расчёт сохранён через навык CEH CRM"
+
+        if quote:
+            quote.payload = payload
+            quote.updated_by = user
+            quote.lead_deleted = False
+            quote.project_sync_disabled = False
+            quote.save(update_fields=["payload", "updated_by", "lead_deleted", "project_sync_disabled", "updated_at"])
+        else:
+            quote = CalculatorQuote.objects.create(
+                workspace=workspace,
+                quote_id=quote_id,
+                project=project,
+                number=quote_number,
+                payload=payload,
+                quote_created_at=now,
+                created_by=user,
+                updated_by=user,
+            )
+
+        _dispatch_viewset(user, "projects", "update", project.id, {"total_amount": calculation["amount"]})
+
+    return {
+        "project_id": project.id,
+        "order_number": project.order_number,
+        "quote_id": quote.quote_id,
+        "quote_number": quote.number,
+        "amount": calculation["amount"],
+        "price_version": calculation["price_version"],
+        "saved": True,
+    }
+
+
 def _project_candidate(project):
     return {
         "project_id": project.id,
@@ -642,7 +806,16 @@ def _call_upload(user, args):
 
 def _execute_tool(user, token_record, name, args):
     scopes = set(token_record.scope.split())
-    read_tools = {"crm_profile", "crm_list", "crm_resolve_project", "crm_finance_overview", "crm_get", "crm_search"}
+    read_tools = {
+        "crm_profile",
+        "crm_list",
+        "crm_resolve_project",
+        "crm_finance_overview",
+        "crm_calculator_catalog",
+        "crm_calculate_product",
+        "crm_get",
+        "crm_search",
+    }
     if name in read_tools and "crm.read" not in scopes:
         raise PermissionError("Токен не имеет области crm.read")
     if name not in read_tools and "crm.write" not in scopes:
@@ -662,6 +835,12 @@ def _execute_tool(user, token_record, name, args):
         return _call_resolve_project(user, args["query"])
     if name == "crm_finance_overview":
         return _call_finance_overview(user, args)
+    if name == "crm_calculator_catalog":
+        return _call_calculator_catalog(user)
+    if name == "crm_calculate_product":
+        return _call_calculate_product(user, args)
+    if name == "crm_save_calculator_quote":
+        return _call_save_calculator_quote(user, args)
     if name == "crm_get":
         return _dispatch_viewset(user, args["resource"], "retrieve", int(args["id"]))
     if name == "crm_create":
@@ -805,7 +984,7 @@ def mcp_view(request):
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {"listChanged": False}, "resources": {}, "extensions": {"io.modelcontextprotocol/skills": {}}},
             "serverInfo": {"name": "ceh-crm-production", "version": "1.0.0"},
-            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. Use crm_finance_overview for company or project financial health; it returns deterministic CRM analytics and cash forecast without external AI. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. Create general income or expenses not tied to an order as payments without project and without project_query. Before every financial create or update, always list accounts and explicitly ask the user which account is used, even if only one account exists; never infer cash versus cashless. For transfers, explicitly ask for both source and destination accounts and use crm_transfer_money; transfers change account balances but never income, expense, profit, margin, or project costs. The categories 'Личные доходы' and 'Личные траты' must have affects_margin=false: they change the selected account and cash forecast but never business profit or margin. Use crm_adjust_balance only for a confirmed reconciliation difference: it changes cash balance but never monthly income, expenses, profit, or margin. Tool errors do not revoke CRM access. For retryable invalid_input or not_found errors, inspect details, refresh the relevant CRM directory, correct the parameters, and retry the original action. If a payment category is invalid, list finance-categories and use an existing category instead of creating one. Only invalid_token requires reconnecting. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
+            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. Use crm_finance_overview for company or project financial health; it returns deterministic CRM analytics and cash forecast without external AI. For a shower or mirror price, call crm_calculator_catalog first and then crm_calculate_product with exact catalog IDs; never invent IDs or calculate the price manually. Save a calculation to a project with crm_save_calculator_quote only after showing the total and receiving explicit confirmation. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. Create general income or expenses not tied to an order as payments without project and without project_query. Before every financial create or update, always list accounts and explicitly ask the user which account is used, even if only one account exists; never infer cash versus cashless. For transfers, explicitly ask for both source and destination accounts and use crm_transfer_money; transfers change account balances but never income, expense, profit, margin, or project costs. The categories 'Личные доходы' and 'Личные траты' must have affects_margin=false: they change the selected account and cash forecast but never business profit or margin. Use crm_adjust_balance only for a confirmed reconciliation difference: it changes cash balance but never monthly income, expenses, profit, or margin. Tool errors do not revoke CRM access. For retryable invalid_input or not_found errors, inspect details, refresh the relevant CRM directory, correct the parameters, and retry the original action. If a payment category is invalid, list finance-categories and use an existing category instead of creating one. Only invalid_token requires reconnecting. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
         })
     if method in {"notifications/initialized", "ping"}:
         return _rpc_result(message_id, {})

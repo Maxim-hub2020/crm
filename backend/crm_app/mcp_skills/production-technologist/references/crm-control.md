@@ -10,6 +10,9 @@
 - `crm_search` — общий поиск по CRM.
 - `crm_list` — списки с фильтрами.
 - `crm_get` — одна карточка по внутреннему идентификатору. Номер заказа нельзя передавать как `id`.
+- `crm_calculator_catalog` — актуальные варианты и идентификаторы изделий, материалов, фурнитуры и услуг текущей компании.
+- `crm_calculate_product` — предварительный расчёт душевой или зеркала по ценам текущей компании без изменения CRM.
+- `crm_save_calculator_quote` — сохранить или обновить связанное КП и стоимость существующего проекта; требует подтверждения и административной роли.
 
 Ресурсы: `clients`, `projects`, `payments`, `project-comments`, `production-plans`, `measurement-sheets`, `measurement-scans`, `project-statuses`, `finance-categories`, `accounts`, `project-custom-fields`, `document-templates`, `tasks`, `task-templates`, `audit-logs`, `users`.
 

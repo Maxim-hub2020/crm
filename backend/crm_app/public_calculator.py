@@ -89,13 +89,18 @@ def _construction_hardware_price(catalog, construction, glass):
     return sum(components), bool(components)
 
 
-def _catalog_settings():
-    workspace = default_workspace()
+def calculator_catalog_for_workspace(workspace):
     settings, _ = CalculatorSettings.objects.get_or_create(workspace=workspace)
     shower = settings.shower_catalog if isinstance(settings.shower_catalog, dict) else {}
     mirror = settings.mirror_catalog if isinstance(settings.mirror_catalog, dict) else {}
     if not shower.get("constructions") or not mirror.get("materials"):
-        raise ValueError("Публичный калькулятор ещё не настроен администратором.")
+        raise ValueError("Калькулятор ещё не настроен администратором.")
+    return settings, shower, mirror
+
+
+def _catalog_settings():
+    workspace = default_workspace()
+    settings, shower, mirror = calculator_catalog_for_workspace(workspace)
     return workspace, settings, shower, mirror
 
 
@@ -215,6 +220,48 @@ def _delivery_price(catalog, delivery):
     if delivery.get("zone") == "outside":
         base += max(0, _number(delivery.get("km"))) * max(0, _number(services.get("deliveryKmRate")))
     return _ceil_hundred(base)
+
+
+def calculate_product_for_workspace(workspace, product, configuration, delivery=None):
+    config = configuration if isinstance(configuration, dict) else {}
+    delivery = delivery if isinstance(delivery, dict) else {}
+    if product not in {"shower", "mirror"}:
+        raise ValueError("Выберите тип изделия: shower или mirror.")
+
+    settings, shower, mirror = calculator_catalog_for_workspace(workspace)
+    item_amount = _calculate_shower(shower, config) if product == "shower" else _calculate_mirror(mirror, config)
+    delivery_amount = _delivery_price(shower, delivery)
+    amount = _ceil_hundred(item_amount + delivery_amount)
+
+    if product == "shower":
+        selection = {
+            "construction": _find(shower.get("constructions", []), config.get("constructionId"), "тип душевой").get("title"),
+            "glass": _find(shower.get("glass", []), config.get("glassId"), "стекло").get("label"),
+            "hardware": _find(shower.get("hardware", []), config.get("hardwareId"), "фурнитура").get("label"),
+            "hardware_class": _find(shower.get("hardwareClass", []), config.get("hardwareClassId"), "класс фурнитуры").get("label"),
+        }
+    else:
+        services = []
+        for option in config.get("options", []):
+            if isinstance(option, dict):
+                services.append(_find(mirror.get("services", []), option.get("serviceId"), "работа").get("label"))
+        selection = {
+            "material": _find(mirror.get("materials", []), config.get("materialId"), "материал").get("label"),
+            "services": services,
+        }
+
+    return {
+        "product": product,
+        "configuration": config,
+        "delivery": _quote_delivery(delivery),
+        "selection": selection,
+        "item_amount": item_amount,
+        "delivery_amount": delivery_amount,
+        "amount": amount,
+        "price_version": _price_version(settings),
+        "currency": "RUB",
+        "estimate_notice": "Предварительная стоимость. Производственные размеры подтверждаются после контрольного замера.",
+    }
 
 
 def _quote_result(product, delivery=0, glass_area=0):
@@ -477,31 +524,25 @@ def public_calculator_calculate_view(request):
     config = payload.get("configuration") if isinstance(payload.get("configuration"), dict) else {}
     delivery = payload.get("delivery") if isinstance(payload.get("delivery"), dict) else {}
     try:
-        if product not in {"shower", "mirror"}:
-            raise ValueError("Выберите тип изделия.")
-        _workspace, settings, shower, mirror = _catalog_settings()
-        item_amount = _calculate_shower(shower, config) if product == "shower" else _calculate_mirror(mirror, config)
-        delivery_amount = _delivery_price(shower, delivery)
-        amount = _ceil_hundred(item_amount + delivery_amount)
+        calculation = calculate_product_for_workspace(default_workspace(), product, config, delivery)
         calculation_id = uuid.uuid4().hex
-        price_version = _price_version(settings)
         cache.set(
             f"public-calc:result:{calculation_id}",
             {
                 "product": product,
                 "configuration": config,
                 "delivery": delivery,
-                "item_amount": item_amount,
-                "delivery_amount": delivery_amount,
-                "amount": amount,
-                "price_version": price_version,
+                "item_amount": calculation["item_amount"],
+                "delivery_amount": calculation["delivery_amount"],
+                "amount": calculation["amount"],
+                "price_version": calculation["price_version"],
             },
             1800,
         )
         return Response({
             "calculation_id": calculation_id,
-            "amount": amount,
-            "price_version": price_version,
+            "amount": calculation["amount"],
+            "price_version": calculation["price_version"],
             "message": (
                 "Это расчётная стоимость, максимально близкая к окончательной. "
                 "Если параметры указаны верно, после проверки и замера сумма обычно меняется не более чем на ±10%."
