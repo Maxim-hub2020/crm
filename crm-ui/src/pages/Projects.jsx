@@ -2966,8 +2966,12 @@ export default function Projects() {
 
   async function handleYandexDiskFolderOpen() {
     if (!activeProject?.id || yandexDiskPublishing) return;
+    openAppLink({
+      webUrl: activeProject.yandex_disk_web_url,
+      androidPackage: "ru.yandex.disk",
+      desktopNewTab: true,
+    });
     if (!activeProject.yandex_disk_public_url) {
-      openAppLink({ webUrl: activeProject.yandex_disk_web_url, androidPackage: "ru.yandex.disk" });
       return;
     }
     setYandexDiskPublishing(true);
@@ -2979,7 +2983,6 @@ export default function Projects() {
       setDetailError(extractApiErrorMessage(error, "Не удалось закрыть ранее созданную публичную ссылку на Яндекс.Диске."));
     } finally {
       setYandexDiskPublishing(false);
-      openAppLink({ webUrl: activeProject.yandex_disk_web_url, androidPackage: "ru.yandex.disk" });
     }
   }
 

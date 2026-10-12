@@ -1,6 +1,7 @@
 import { nativeAppAvailable, sendNativeAction } from "./nativeApp.js";
 
 const ANDROID_USER_AGENT = /Android/i;
+const MOBILE_USER_AGENT = /Android|iPhone|iPad|iPod/i;
 
 export function buildAndroidIntentUrl(webUrl, packageName) {
   const parsed = new URL(webUrl);
@@ -9,13 +10,21 @@ export function buildAndroidIntentUrl(webUrl, packageName) {
   return `intent://${target}#Intent;scheme=${scheme};package=${packageName};S.browser_fallback_url=${encodeURIComponent(webUrl)};end`;
 }
 
-export function openAppLink({ webUrl, nativeUrl = "", androidPackage = "" }) {
+export function openAppLink({ webUrl, nativeUrl = "", androidPackage = "", desktopNewTab = false }) {
   if (!webUrl || typeof window === "undefined") return;
   if (sendNativeAction("openExternal", webUrl)) return;
 
   if (androidPackage && ANDROID_USER_AGENT.test(window.navigator.userAgent)) {
     window.location.assign(buildAndroidIntentUrl(webUrl, androidPackage));
     return;
+  }
+
+  if (desktopNewTab && !MOBILE_USER_AGENT.test(window.navigator.userAgent)) {
+    const openedWindow = window.open(webUrl, "_blank");
+    if (openedWindow) {
+      openedWindow.opener = null;
+      return;
+    }
   }
 
   if (!nativeUrl) {

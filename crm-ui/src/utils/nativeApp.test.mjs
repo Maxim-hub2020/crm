@@ -14,6 +14,35 @@ test("browser without native handler uses the original link", () => {
   delete globalThis.window;
 });
 
+test("desktop can open an external link in a separate tab", () => {
+  let opened;
+  const openedWindow = { opener: "crm" };
+  globalThis.window = {
+    navigator: { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+    open(url, target) {
+      opened = { url, target };
+      return openedWindow;
+    },
+    location: { assign() { assert.fail("Must not replace the CRM tab"); } },
+  };
+  openAppLink({ webUrl: "https://disk.yandex.ru/client/disk/test", desktopNewTab: true });
+  assert.deepEqual(opened, { url: "https://disk.yandex.ru/client/disk/test", target: "_blank" });
+  assert.equal(openedWindow.opener, null);
+  delete globalThis.window;
+});
+
+test("desktop falls back to the current tab when a popup is blocked", () => {
+  let fallbackUrl;
+  globalThis.window = {
+    navigator: { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+    open() { return null; },
+    location: { assign(value) { fallbackUrl = value; } },
+  };
+  openAppLink({ webUrl: "https://disk.yandex.ru/client/disk/test", desktopNewTab: true });
+  assert.equal(fallbackUrl, "https://disk.yandex.ru/client/disk/test");
+  delete globalThis.window;
+});
+
 test("document-start bridge reports the build and launches the built-in scanner", () => {
   const messages = [];
   globalThis.window = { CEHCRMNative: { version: "1.0.0 (3)", postMessage(message) { messages.push(message); } } };
