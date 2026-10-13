@@ -1,42 +1,86 @@
-import json
-from unittest.mock import Mock, patch
-
+from django.core.cache import cache
 from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from .models import CalculatorSettings, default_workspace
 
+
+@override_settings(SECURE_SSL_REDIRECT=False)
 class PublicDesignerChatTests(APITestCase):
-    def test_config_reports_disabled_without_key(self):
-        with override_settings(OPENAI_API_KEY=""):
-            response = self.client.get("/api/public-production/chat/")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertFalse(response.data["enabled"])
-
-    @override_settings(OPENAI_API_KEY="test-key", OPENAI_CHATBOT_MODEL="gpt-test", CHATBOT_MCP_TOKEN="token", CHATBOT_MCP_URL="https://example.com/mcp")
-    @patch("crm_app.public_designer_chat.requests.post")
-    def test_chat_returns_structured_design_turn_and_restricts_mcp_tools(self, post):
-        result = {
-            "message": "Уточните ширину сверху и снизу.", "stage": "geometry", "progress": 30,
-            "facts": [], "missing": ["Ширина сверху", "Ширина снизу"],
-            "critical_checks": {"geometry": False, "levels": False, "opening": False, "glass": False, "hardware_docs": False, "client_confirmation": False},
-            "hardware": [], "ready_for_final": False, "documents_unlocked": False,
+    def setUp(self):
+        cache.clear()
+        catalog = {
+            "constructions": [{
+                "id": "6747", "title": "Перегородка", "shortTitle": "Перегородка", "sketch": "panel",
+                "fields": [
+                    {"key": "HEIGHT_0", "label": "Высота", "min": 1000, "max": 2500},
+                    {"key": "WIDTH_0", "label": "Ширина", "min": 200, "max": 2500},
+                ],
+                "hardwareComponents": [
+                    {"id": "hinge-6", "hardwareItemId": "hinge-6", "quantity": 2, "glassThickness": 6},
+                    {"id": "hinge-8", "hardwareItemId": "hinge-8", "quantity": 2, "glassThickness": 8},
+                    {"id": "handle", "hardwareItemId": "handle", "quantity": 1},
+                ],
+            }],
+            "hardware": [{"id": "chrome", "label": "Глянцевый хром"}, {"id": "black", "label": "Чёрный матовый"}],
+            "hardwareItems": [
+                {"id": "hinge-6", "label": "Петля 6 мм", "sourceUrl": "https://example.com/6"},
+                {"id": "hinge-8", "label": "Петля 8 мм", "sourceUrl": "https://example.com/8"},
+                {"id": "handle", "label": "Ручка", "sourceUrl": "https://example.com/handle"},
+            ],
         }
-        mocked = Mock()
-        mocked.raise_for_status.return_value = None
-        mocked.json.return_value = {"id": "resp_123", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(result)}]}]}
-        post.return_value = mocked
+        CalculatorSettings.objects.update_or_create(
+            workspace=default_workspace(), defaults={"shower_catalog": catalog, "mirror_catalog": {}}
+        )
 
-        response = self.client.post("/api/public-production/chat/", {"message": "Хочу угловую душевую"}, format="multipart")
+    def _answer(self, response, value):
+        return self.client.post(
+            "/api/public-production/chat/",
+            {"message": str(value), "option_value": str(value), "state_token": response.data["state_token"]},
+            format="multipart",
+        )
 
+    def test_config_is_enabled_without_external_ai_key(self):
+        response = self.client.get("/api/public-production/chat/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["stage"], "geometry")
-        self.assertTrue(response.data["mcp_connected"])
-        sent = post.call_args.kwargs["json"]
-        self.assertEqual(sent["tools"][0]["allowed_tools"], ["crm_calculator_catalog", "crm_calculate_product"])
-        self.assertFalse(response.data["documents_unlocked"])
+        self.assertTrue(response.data["enabled"])
+        self.assertEqual(response.data["mode"], "deterministic")
 
-    @override_settings(OPENAI_API_KEY="test-key", CHATBOT_MCP_TOKEN="")
-    def test_empty_turn_is_rejected(self):
-        response = self.client.post("/api/public-production/chat/", {}, format="multipart")
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+    def test_selected_model_starts_dimension_dialog(self):
+        response = self.client.post(
+            "/api/public-production/chat/",
+            {"message": "Начать проект", "selected_model": "6747"},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["question_key"], "HEIGHT_0")
+        self.assertEqual(response.data["project_title"], "Перегородка")
+
+    def test_engine_selects_hardware_by_construction_and_glass_thickness(self):
+        response = self.client.post("/api/public-production/chat/", {"option_value": "6747"}, format="multipart")
+        answers = ["2000", "900 905", "0 0", "0", "90", "center", "8", "clear", "black", "no", "yes"]
+        for answer in answers:
+            response = self._answer(response, answer)
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        labels = [row["label"] for row in response.data["hardware"]]
+        self.assertIn("Петля 8 мм", labels)
+        self.assertIn("Ручка", labels)
+        self.assertNotIn("Петля 6 мм", labels)
+        self.assertTrue(all("Чёрный матовый" in row["reason"] for row in response.data["hardware"]))
+        self.assertFalse(response.data["documents_unlocked"])
+        self.assertIn("Технические чертежи", response.data["missing"][0])
+
+    def test_invalid_measurement_keeps_current_question(self):
+        response = self.client.post("/api/public-production/chat/", {"option_value": "6747"}, format="multipart")
+        response = self._answer(response, "слишком высоко")
+        self.assertEqual(response.data["question_key"], "HEIGHT_0")
+        self.assertIn("одним числом", response.data["message"])
+
+    def test_tampered_state_is_discarded(self):
+        response = self.client.post(
+            "/api/public-production/chat/", {"message": "тест", "state_token": "tampered"}, format="multipart"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["question_key"], "construction")
