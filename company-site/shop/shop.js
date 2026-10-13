@@ -1,17 +1,27 @@
 (() => {
   const products = [
-    {id:"hinge-wall-90",category:"Петли",name:"Петля стекло — стена 90°",type:"hinge",desc:"Для распашной двери. Подбор по весу полотна и толщине стекла."},
-    {id:"hinge-glass-180",category:"Петли",name:"Петля стекло — стекло 180°",type:"hinge",desc:"Соединяет дверь с неподвижным стеклом в одной плоскости."},
-    {id:"connector-90",category:"Коннекторы",name:"Коннектор стекло — стена 90°",type:"connector",desc:"Точечное крепление неподвижного стекла без массивного профиля."},
-    {id:"connector-135",category:"Коннекторы",name:"Коннектор стекло — стекло 135°",type:"connector",desc:"Для многогранных и угловых стеклянных конструкций."},
-    {id:"handle-pull",category:"Ручки",name:"Ручка-скоба двусторонняя",type:"handle",desc:"Удобный хват с двух сторон двери. Длину и отделку уточним."},
-    {id:"handle-knob",category:"Ручки",name:"Ручка-кноб компактная",type:"handle",desc:"Минималистичная ручка для лёгких душевых дверей."},
-    {id:"stabilizer",category:"Штанги и профили",name:"Стабилизирующая штанга",type:"bar",desc:"Фиксирует неподвижное стекло. Подрезается под размер проекта."},
-    {id:"u-profile",category:"Штанги и профили",name:"П-образный профиль",type:"profile",desc:"Аккуратное крепление стекла к стене или полу по всей длине."},
-    {id:"bottom-seal",category:"Уплотнители",name:"Нижний водоотводящий уплотнитель",type:"seal",desc:"Снижает выход воды под дверью и направляет её внутрь душевой."},
-    {id:"magnetic-seal",category:"Уплотнители",name:"Магнитный уплотнитель",type:"seal",desc:"Плотное и мягкое закрывание двух стеклянных кромок."},
-    {id:"slider-straight",category:"Раздвижные системы",name:"Раздвижная система прямая",type:"slide",desc:"Комплект механики для прямой ниши с плавным ходом двери."},
-    {id:"slider-corner",category:"Раздвижные системы",name:"Раздвижная система угловая",type:"slide",desc:"Согласованный комплект роликов и направляющих для углового входа."}
+    {id:"av24-3382",category:"Петли",name:"Петля Бета FDP-20 · матовая",type:"hinge",desc:"Стена — стекло, боковое крепление. Для распашной двери; совместимость проверяется по массе полотна."},
+    {id:"av24-4794",category:"Петли",name:"Петля Бета FDP-20 · чёрная",type:"hinge",desc:"Стена — стекло, боковое крепление. Чёрное исполнение для стеклянной двери."},
+    {id:"av24-3489",category:"Коннекторы",name:"Коннектор FDK-24 90° · матовый",type:"connector",desc:"Соединение стекло — стекло под прямым углом. Применяется после проверки толщины и геометрии."},
+    {id:"av24-5110",category:"Коннекторы",name:"Коннектор FDK-24 90° · чёрный",type:"connector",desc:"Угловое соединение двух стекол в чёрной отделке."},
+    {id:"av24-4493",category:"Профили и треки",name:"Профиль FDPA-50.22 · матовый",type:"profile",desc:"П-образный алюминиевый профиль 20×12,5×2 мм, длина 2,2 м, для стекла 8 мм."},
+    {id:"av24-3975",category:"Профили и треки",name:"Профиль FDPA-50.22 · чёрный",type:"profile",desc:"Опорный П-профиль длиной 2,2 м для стекла 8 мм. Подрезается по карте реза проекта."},
+    {id:"av24-3997",category:"Профили и треки",name:"Трек FDT-352 · полированный",type:"bar",desc:"Труба 30×10×1,5 мм длиной 2 м для верхней стабилизации стекол."},
+    {id:"av24-4001",category:"Профили и треки",name:"Трек FDT-352 · чёрный",type:"bar",desc:"Труба 30×10×1,5 мм длиной 2 м. Итоговая длина задаётся картой реза."},
+    {id:"av24-2961",category:"Держатели",name:"Крепление FDC-30 · матовое",type:"connector",desc:"Концевое крепление трубы 30×10 мм к стене."},
+    {id:"av24-2956",category:"Держатели",name:"Держатель FDC-33 · матовый",type:"connector",desc:"Торцевой горизонтальный держатель трубы 30×10 мм на стекле."},
+    {id:"av24-2953",category:"Держатели",name:"Держатель FDC-35 · матовый",type:"connector",desc:"Сквозной горизонтальный держатель стекла для трубы 30×10 мм."},
+    {id:"av24-6876",category:"Держатели",name:"Крепёж FDA-41 для FDC-30",type:"connector",desc:"Настенный крепёж из нержавеющей стали с двумя отверстиями."},
+    {id:"av24-4489",category:"Ручки",name:"Ручка-кноб FDR-30 · матовая",type:"handle",desc:"Компактная квадратная ручка для стеклянной душевой двери."},
+    {id:"av24-4101",category:"Ручки",name:"Ручка-кноб FDR-30 · чёрная",type:"handle",desc:"Квадратная ручка-кноб в чёрном исполнении."},
+    {id:"av24-5573",category:"Уплотнение",name:"Нижний уплотнитель FDPP-406.8",type:"seal",desc:"Прозрачный нижний уплотнитель длиной 2,2 м для стекла 8 мм."},
+    {id:"av24-5724",category:"Уплотнение",name:"Нижний уплотнитель FDPP-406.8 · чёрный",type:"seal",desc:"Нижний профиль длиной 2,2 м для двери из стекла 8 мм."},
+    {id:"av24-8135",category:"Уплотнение",name:"Магнитный уплотнитель FDPP-202.8",type:"seal",desc:"Прозрачный магнитный профиль 90°/180°, длина 2,2 м, стекло 8 мм."},
+    {id:"av24-8136",category:"Уплотнение",name:"Магнитный уплотнитель FDPP-202.8 · чёрный",type:"seal",desc:"Чёрный магнитный профиль 90°/180° для стекла 8 мм."},
+    {id:"av24-4732",category:"Пороги",name:"Порог FDPP-10.2 · прозрачный",type:"profile",desc:"Акриловый порог 10×5 мм длиной 2 м для водозащитного контура."},
+    {id:"av24-4580",category:"Пороги",name:"Порог FDPA-40.22 · чёрный",type:"profile",desc:"Алюминиевый порог длиной 2,2 м в чёрной отделке."},
+    {id:"av24-12375",category:"Раздвижные системы",name:"Комплект Клио FDS-105 · матовый",type:"slide",desc:"Комплект с двумя рельсами для трубы 30×10 мм и стекла 8 мм. Трубы приобретаются отдельно."},
+    {id:"av24-8643",category:"Раздвижные системы",name:"Комплект Клио FDS-105 · чёрный",type:"slide",desc:"Раздвижная система с двумя рельсами в чёрном исполнении, без труб."}
   ];
   const categories = ["Все", ...new Set(products.map(p => p.category))];
   const symbols = {hinge:"◫",connector:"⌞",handle:"Ⅱ",bar:"╱",profile:"⊏",seal:"│",slide:"◉"};
@@ -56,6 +66,7 @@
   function openCart(){ cartRoot.classList.add("is-open"); cartRoot.setAttribute("aria-hidden","false"); document.body.classList.add("locked"); }
   function closeCart(){ cartRoot.classList.remove("is-open"); cartRoot.setAttribute("aria-hidden","true"); document.body.classList.remove("locked"); }
   function openRequest(projectOnly=false){
+    if(projectOnly){location.href='/project/';return;}
     closeCart();
     const selected = products.filter(p=>cart[p.id]);
     document.querySelector("[data-request-summary]").textContent = projectOnly || !selected.length ? "Подбор комплектующих по проекту" : `${cartTotal()} поз. в комплекте · проверим совместимость`;
@@ -87,11 +98,11 @@
     const selected=products.filter(p=>cart[p.id]);
     const list=selected.length?selected.map(p=>`${p.name} — ${cart[p.id]} шт.`).join("; "):"нужен подбор по проекту";
     const comment=form.elements.comment.value.trim();
-    const payload={name:form.elements.name.value.trim(),phone:phone.value,service:"Комплексный проект",message:`ЗАПРОС КОМПЛЕКТУЮЩИХ. ${list}${comment?`. Комментарий: ${comment}`:""}`,company:form.elements.company.value};
+    const payload=new FormData();payload.set('name',form.elements.name.value.trim());payload.set('phone',phone.value);payload.set('topology','other');payload.set('comment',`РУЧНОЙ КАТАЛОГ. ${list}${comment?`. Комментарий: ${comment}`:""}`);payload.set('company',form.elements.company.value);payload.set('cart',JSON.stringify(selected.map(p=>({id:p.id,quantity:cart[p.id]}))));
     try{
-      const response=await fetch("/api/site-leads",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-      if(!response.ok)throw new Error("send_failed");
-      status.textContent="Заявка отправлена. Мы проверим комплект и свяжемся с вами.";
+      const response=await fetch("/api/public-production/intake/",{method:"POST",body:payload,headers:{Accept:'application/json'}});const result=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error(result.detail||"send_failed");
+      status.textContent=`Проект №${result.project_number} создан. Проверим совместимость комплекта и свяжемся с вами.`;
       form.reset();phone.value="+7";cart={};renderCart();renderProducts();
     }catch(_){status.textContent="Не удалось отправить. Проверьте соединение и попробуйте ещё раз.";}
     finally{button.disabled=false;button.firstChild.textContent="Отправить запрос ";}

@@ -43,6 +43,7 @@ from .public_calculator import (
     public_calculator_config_view,
     public_calculator_lead_view,
 )
+from .public_production import public_production_intake_view
 from .mcp_gateway import mcp_view
 from .mcp_oauth import authorize as mcp_oauth_authorize, register_client as mcp_oauth_register, token as mcp_oauth_token
 
@@ -85,6 +86,7 @@ urlpatterns = [
     path("public-calculator/config/", public_calculator_config_view),
     path("public-calculator/calculate/", public_calculator_calculate_view),
     path("public-calculator/lead/", public_calculator_lead_view),
+    path("public-production/intake/", public_production_intake_view),
     path("calculator-leads/", calculator_leads_view),
     path("calculator-leads/<int:lead_id>/", calculator_lead_detail_view),
     path("yandex-disk-folders/", yandex_disk_folders_view),
