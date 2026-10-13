@@ -3,107 +3,47 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Проект душевой по вашему эскизу — AMALGAMA</title>
-  <meta name="description" content="Загрузите эскиз душевой, укажите размеры и получите проверяемый проект, чертежи и совместимый комплект фурнитуры для самостоятельной сборки." />
+  <title>AI-проектировщик душевых — AMALGAMA</title>
+  <meta name="description" content="Спроектируйте душевую в диалоге: загрузите эскиз, уточните размеры, получите проверочный проект и комплект совместимой фурнитуры." />
   <meta name="robots" content="index,follow,max-image-preview:large" />
   <link rel="canonical" href="https://amalgama.cehcrm.ru/project/" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="/project/project.css?v=20261013-1" />
+  <link rel="stylesheet" href="/project/project.css?v=20261013-chat1" />
 </head>
 <body>
-  <a class="skip" href="#project-form">К форме проекта</a>
-  <header class="project-header">
-    <a class="brand" href="/" aria-label="AMALGAMA — на главную">AMALGAMA</a>
-    <nav aria-label="Навигация">
-      <a href="/">3D-коллекция</a>
-      <a href="/shop/">Комплектующие</a>
-      <a href="/project/" aria-current="page">Проект по эскизу</a>
-    </nav>
-    <a class="header-link" href="/shop/">Ручной каталог <span>→</span></a>
-  </header>
-
-  <main>
-    <section class="project-intro">
-      <div>
-        <p class="eyebrow">ПРОЕКТ · КОМПЛЕКТ · САМОСТОЯТЕЛЬНАЯ СБОРКА</p>
-        <h1>Покажите пространство.<br /><em>Мы соберём решение.</em></h1>
-      </div>
-      <p>Загрузите эскиз или фотографии, укажите известные размеры. Проект появится в CRM и станет доступен производственному навыку через MCP. Если данных не хватает, мы запросим только необходимые уточнения.</p>
+  <header class="app-header"><a class="brand" href="/">AMALGAMA</a><nav><a href="/">3D-коллекция</a><a href="/shop/">Комплектующие</a></nav><div class="online"><i></i><span data-online-text>Проверяем подключение</span></div></header>
+  <main class="designer-app">
+    <aside class="progress-rail">
+      <div class="project-name"><span>Проект душевой</span><b data-project-type>Новая конструкция</b></div>
+      <ol data-progress>
+        <li class="active" data-step="intro"><i>1</i><div><b>Эскиз и тип</b><span>Начните с описания</span></div></li>
+        <li data-step="geometry"><i>2</i><div><b>Размеры</b><span>Проверка геометрии</span></div></li>
+        <li data-step="configuration"><i>3</i><div><b>Комплектация</b><span>Стекло и открывание</span></div></li>
+        <li data-step="hardware"><i>4</i><div><b>Фурнитура</b><span>Совместимый комплект</span></div></li>
+        <li data-step="complete"><i>5</i><div><b>Чертежи</b><span>После проверки данных</span></div></li>
+      </ol>
+      <div class="rail-note"><small>Текущий этап</small><strong data-current-stage>Начало проекта</strong><p>Если замер неоднозначен, проектировщик остановит расчёт и задаст точный вопрос.</p></div>
+      <a class="human-link" href="mailto:info@amalgama.ru">Нужна помощь технолога? <span>→</span></a>
+    </aside>
+    <section class="chat-workspace" aria-labelledby="chat-title">
+      <div class="chat-heading"><h1 id="chat-title">Спроектируем душевую <em>вместе</em></h1><p>Опишите задачу своими словами или сразу загрузите эскиз. Я проверю размеры, подберу фурнитуру и не пропущу данные, без которых нельзя выпускать стекло.</p></div>
+      <div class="messages" data-messages aria-live="polite"><article class="message assistant"><span class="avatar">A</span><div><p>Здравствуйте! Загрузите эскиз или фотографии места установки — либо расскажите, какую душевую хотите. Я начну с проверки понятности замера.</p><time>AI-технолог AMALGAMA</time></div></article></div>
+      <div class="quick-replies" data-quick-replies><button type="button">Угловая распашная</button><button type="button">Дверь в нишу</button><button type="button">Перегородка без двери</button><button type="button">Раздвижная</button></div>
+      <form class="composer" data-chat-form>
+        <label class="upload" title="Загрузить эскиз или фотографию"><input type="file" name="files" accept="image/jpeg,image/png,image/webp,application/pdf" multiple /><svg viewBox="0 0 24 24"><path d="M12 17V4m0 0L7 9m5-5 5 5M5 14v5h14v-5"/></svg><span data-file-label>Эскиз / фото</span></label>
+        <label class="message-input"><span class="sr-only">Сообщение проектировщику</span><textarea name="message" rows="2" placeholder="Напишите сообщение…"></textarea></label>
+        <button class="send" type="submit" aria-label="Отправить"><svg viewBox="0 0 24 24"><path d="m4 4 17 8-17 8 4-8-4-8Zm4 8h13"/></svg></button>
+      </form><p class="chat-status" data-chat-status role="status"></p>
     </section>
-
-    <section class="workflow" aria-label="Этапы работы">
-      <article><span>01</span><div><h2>Исходные данные</h2><p>Эскиз, фотографии и номинальные размеры.</p></div></article>
-      <article><span>02</span><div><h2>Проверка</h2><p>Геометрия, открывание и совместимость фурнитуры.</p></div></article>
-      <article><span>03</span><div><h2>Комплект</h2><p>Чертежи после проверки и готовая корзина деталей.</p></div></article>
-    </section>
-
-    <section class="project-shell" id="project-form">
-      <aside class="project-map">
-        <p class="eyebrow">ЧТО ПОДГОТОВИТЬ</p>
-        <h2>Достаточно начать с того, что уже есть.</h2>
-        <ol>
-          <li><b>Общий вид</b><span>Фото места установки целиком.</span></li>
-          <li><b>Размеры</b><span>Ширина, глубина и предполагаемая высота.</span></li>
-          <li><b>Препятствия</b><span>Смеситель, мебель, трубы и зона двери.</span></li>
-        </ol>
-        <p class="safety">Первичный результат — проверочный проект. Производственные размеры и DXF выпускаются только после закрытия вопросов технолога.</p>
-      </aside>
-
-      <div class="project-panel">
-        <form data-project-form novalidate>
-          <fieldset>
-            <legend><span>01</span><div><b>Конструкция и размеры</b><small>Укажите только то, в чём уверены.</small></div></legend>
-            <div class="form-grid">
-              <label class="wide"><span>Тип душевой</span><select name="topology" required><option value="">Выберите конструкцию</option><option value="partition">Перегородка без двери</option><option value="niche-door">Дверь в нишу</option><option value="niche-fixed">Дверь в нишу с неподвижным стеклом</option><option value="corner">Угловая распашная</option><option value="slider">Раздвижная</option><option value="other">Другая — покажу на эскизе</option></select></label>
-              <label><span>Ширина, мм</span><input name="width" type="number" min="100" max="5000" inputmode="numeric" placeholder="1000" /></label>
-              <label><span>Глубина, мм</span><input name="depth" type="number" min="100" max="5000" inputmode="numeric" placeholder="900" /></label>
-              <label><span>Высота, мм</span><input name="height" type="number" min="300" max="5000" inputmode="numeric" value="2000" /></label>
-              <label><span>Ширина порожка, мм</span><input name="ledge_width" type="number" min="20" max="300" inputmode="numeric" placeholder="90" /></label>
-              <label><span>Ось стекла</span><select name="tray_axis"><option value="center">По центру порожка</option><option value="tile-joint">По шву плитки</option><option value="custom">Другая привязка</option><option value="unknown">Пока не знаю</option></select></label>
-              <label><span>Открывание</span><select name="opening_direction"><option value="">Уточнить после проверки</option><option value="outward-left">Наружу влево</option><option value="outward-right">Наружу вправо</option><option value="inward-left">Внутрь влево</option><option value="inward-right">Внутрь вправо</option></select></label>
-              <label><span>Стекло</span><select name="glass_thickness"><option value="8">8 мм</option><option value="6">6 мм</option><option value="10">10 мм</option></select></label>
-              <label><span>Отделка фурнитуры</span><select name="finish"><option value="black">Чёрная матовая</option><option value="polished">Полированный хром</option><option value="brushed">Матовая сталь</option><option value="gold">Золото</option><option value="bronze">Бронза</option><option value="unknown">Подобрать</option></select></label>
-            </div>
-          </fieldset>
-
-          <fieldset>
-            <legend><span>02</span><div><b>Эскиз и фотографии</b><small>До 6 файлов JPG, PNG, WebP или PDF.</small></div></legend>
-            <label class="dropzone" data-dropzone>
-              <input type="file" name="files" accept="image/jpeg,image/png,image/webp,application/pdf" multiple />
-              <span class="upload-mark">+</span><b>Перетащите файлы сюда</b><small>или нажмите, чтобы выбрать · до 8 МБ каждый</small>
-            </label>
-            <div class="file-list" data-file-list aria-live="polite"></div>
-            <div class="checks"><label><input type="checkbox" name="walls_finished" /><span>Стены уже облицованы</span></label><label><input type="checkbox" name="floor_checked" /><span>Уровень поддона или пола проверен</span></label></div>
-            <label class="wide"><span>Комментарий и препятствия</span><textarea name="comment" rows="4" placeholder="Например: смеситель слева, полотенцесушитель рядом с дверью"></textarea></label>
-          </fieldset>
-
-          <fieldset>
-            <legend><span>03</span><div><b>Куда отправить результат</b><small>Создадим проект и сообщим номер.</small></div></legend>
-            <div class="form-grid contact-grid">
-              <label><span>Ваше имя</span><input name="name" autocomplete="name" required minlength="2" /></label>
-              <label><span>Телефон</span><input name="phone" type="tel" autocomplete="tel" inputmode="numeric" value="+7" maxlength="18" pattern="\+7 \([0-9]{3}\) [0-9]{3}-[0-9]{2}-[0-9]{2}" required /></label>
-              <label class="wide"><span>Email, необязательно</span><input name="email" type="email" autocomplete="email" /></label>
-              <label class="honeypot" aria-hidden="true"><span>Компания</span><input name="company" tabindex="-1" autocomplete="off" /></label>
-            </div>
-            <button class="submit" type="submit">Создать проект <span>→</span></button>
-            <p class="form-note">Отправляя форму, вы соглашаетесь на обработку данных для подготовки проекта.</p>
-            <p class="form-status" data-form-status role="status" aria-live="polite"></p>
-          </fieldset>
-        </form>
-
-        <section class="success" data-success hidden>
-          <span class="success-mark">✓</span>
-          <p class="eyebrow">ПРОЕКТ ПРИНЯТ В CRM</p>
-          <h2>Заказ <span data-project-number>—</span></h2>
-          <p>Исходные данные сохранены и доступны производственному навыку через MCP. Технологическая проверка начнётся с контроля понятности замера.</p>
-          <ol><li>Сначала проверим геометрию и зададим недостающие вопросы.</li><li>Затем подготовим согласовательный вид и точную спецификацию.</li><li>После проверки выпустим производственный комплект и корзину.</li></ol>
-          <div class="success-actions"><a class="submit" href="/shop/">Открыть ручной каталог <span>→</span></a><a href="/">Вернуться в 3D-коллекцию</a></div>
-        </section>
-      </div>
-    </section>
+    <aside class="result-rail">
+      <header><div><span>Проверочный проект</span><b data-result-title>Исходные данные</b></div><small data-progress-value>0%</small></header>
+      <div class="drawing" aria-hidden="true"><svg viewBox="0 0 360 300"><g class="room"><path d="M60 74 181 38l120 41v156l-120 35L60 228Z"/><path d="M181 38v232M60 74l121 39 120-34M181 113v157"/></g><g class="glass"><path d="M76 91 171 62v175l-95-24Z"/><path d="m190 63 94 28v121l-94 26Z"/><path d="M190 63v175"/></g><path class="door" d="M190 63v175l73-20V85Z"/><path class="swing" d="M190 238c48 0 87-40 87-88"/><circle cx="248" cy="154" r="3"/></svg><span>Проверочный вид — не производство</span></div>
+      <section class="data-score"><div><b>Данных достаточно: <span data-score>0 из 10</span></b><span data-score-caption>Начните диалог</span></div><progress max="100" value="0" data-progress-bar></progress></section>
+      <section class="missing"><h2>Нужно уточнить</h2><ol data-missing><li>Тип конструкции и общий вид</li><li>Размеры по чистовой отделке</li><li>Открывание и цвет фурнитуры</li></ol></section>
+      <section class="hardware"><h2>Комплект фурнитуры</h2><div data-hardware><p class="empty">Появится после уточнения конструкции.</p></div></section>
+      <section class="downloads" data-downloads aria-disabled="true"><div><svg viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2m-11 0h12v10H6Z"/></svg><span><b>Финальные чертежи после проверки размеров</b><small>PDF и DXF откроются, когда все критичные данные подтверждены.</small></span></div><div class="download-buttons"><button disabled>Скачать PDF</button><button disabled>Скачать DXF</button></div></section>
+    </aside>
   </main>
-
-  <footer><a class="brand" href="/">AMALGAMA</a><p>Проектирование душевых · Ростов-на-Дону</p><a href="/shop/">Комплектующие →</a></footer>
-  <script src="/project/project.js?v=20261013-1" defer></script>
+  <script src="/project/project.js?v=20261013-chat1" defer></script>
 </body>
 </html>

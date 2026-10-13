@@ -1,55 +1,16 @@
 (() => {
-  const form = document.querySelector('[data-project-form]');
-  const input = form.elements.files;
-  const dropzone = document.querySelector('[data-dropzone]');
-  const fileList = document.querySelector('[data-file-list]');
-  const status = document.querySelector('[data-form-status]');
-  const success = document.querySelector('[data-success]');
-  const allowed = new Set(['image/jpeg','image/png','image/webp','application/pdf']);
-  let files = [];
-
-  function renderFiles(){
-    fileList.innerHTML = files.map((file,index) => `<div><span>${file.type==='application/pdf'?'PDF':'IMG'}</span><p><b>${escapeHtml(file.name)}</b><small>${(file.size/1024/1024).toFixed(1)} МБ</small></p><button type="button" data-remove="${index}" aria-label="Удалить ${escapeHtml(file.name)}">×</button></div>`).join('');
-  }
-  function escapeHtml(value){ return String(value).replace(/[&<>"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[char])); }
-  function addFiles(list){
-    const next = [...list];
-    for(const file of next){
-      if(files.length >= 6){ status.textContent='Можно прикрепить не больше 6 файлов.'; break; }
-      if(!allowed.has(file.type)){ status.textContent='Поддерживаются JPG, PNG, WebP и PDF.'; continue; }
-      if(file.size > 8*1024*1024){ status.textContent=`Файл «${file.name}» больше 8 МБ.`; continue; }
-      if(!files.some(item=>item.name===file.name&&item.size===file.size)) files.push(file);
-    }
-    renderFiles();
-  }
-  input.addEventListener('change',()=>{ addFiles(input.files); input.value=''; });
-  ['dragenter','dragover'].forEach(type=>dropzone.addEventListener(type,event=>{event.preventDefault();dropzone.classList.add('is-dragging');}));
-  ['dragleave','drop'].forEach(type=>dropzone.addEventListener(type,event=>{event.preventDefault();dropzone.classList.remove('is-dragging');}));
-  dropzone.addEventListener('drop',event=>addFiles(event.dataTransfer.files));
-  fileList.addEventListener('click',event=>{const button=event.target.closest('[data-remove]');if(!button)return;files.splice(Number(button.dataset.remove),1);renderFiles();});
-
-  const phone=form.elements.phone;
-  phone.addEventListener('input',()=>{
-    let digits=phone.value.replace(/\D/g,'');if(digits.startsWith('8'))digits='7'+digits.slice(1);if(!digits.startsWith('7'))digits='7'+digits;digits=digits.slice(0,11);
-    let value='+7';if(digits.length>1)value+=` (${digits.slice(1,4)}`;if(digits.length>=4)value+=')';if(digits.length>4)value+=` ${digits.slice(4,7)}`;if(digits.length>7)value+=`-${digits.slice(7,9)}`;if(digits.length>9)value+=`-${digits.slice(9,11)}`;phone.value=value;
-  });
-
-  form.addEventListener('submit',async event=>{
-    event.preventDefault();status.textContent='';
-    if(!form.reportValidity())return;
-    if(!files.length && !form.elements.width.value && !form.elements.depth.value){status.textContent='Прикрепите эскиз или укажите хотя бы один размер.';return;}
-    const button=form.querySelector('.submit');button.disabled=true;button.firstChild.textContent='Создаём проект ';
-    const data=new FormData(form);
-    data.delete('files');files.forEach(file=>data.append('files',file,file.name));
-    data.set('walls_finished',form.elements.walls_finished.checked?'true':'false');
-    data.set('floor_checked',form.elements.floor_checked.checked?'true':'false');
-    let cart={};try{cart=JSON.parse(localStorage.getItem('amalgama-components-cart'))||{};}catch(_){cart={};}
-    data.set('cart',JSON.stringify(Object.entries(cart).map(([id,quantity])=>({id,quantity}))));
-    try{
-      const response=await fetch('/api/public-production/intake/',{method:'POST',body:data,headers:{Accept:'application/json'}});
-      const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Не удалось создать проект.');
-      document.querySelector('[data-project-number]').textContent=`№${result.project_number}`;
-      form.hidden=true;success.hidden=false;success.scrollIntoView({behavior:'smooth',block:'center'});
-    }catch(error){status.textContent=error.message;}finally{button.disabled=false;button.firstChild.textContent='Создать проект ';}
-  });
+  const form=document.querySelector('[data-chat-form]'), textarea=form.elements.message, fileInput=form.elements.files, messages=document.querySelector('[data-messages]'), status=document.querySelector('[data-chat-status]'), send=form.querySelector('.send'), fileLabel=document.querySelector('[data-file-label]'), onlineText=document.querySelector('[data-online-text]'), quick=document.querySelector('[data-quick-replies]');
+  const params=new URLSearchParams(location.search),selectedModel=params.get('model')||'',selectedName=params.get('name')||'';
+  const storageKey=`amalgama-designer-response:${selectedModel||'new'}`;
+  let previousResponseId=sessionStorage.getItem(storageKey)||'';
+  const turnTime=()=>new Intl.DateTimeFormat('ru',{hour:'2-digit',minute:'2-digit'}).format(new Date());
+  function addMessage(role,text,files=[]){const article=document.createElement('article');article.className=`message ${role}`;const avatar=document.createElement('span');avatar.className='avatar';avatar.textContent=role==='assistant'?'A':'Вы';const box=document.createElement('div');if(files.length){const list=document.createElement('small');list.className='attachments';list.textContent=files.map(f=>f.name).join(' · ');box.append(list);}const p=document.createElement('p');p.textContent=text;box.append(p);const time=document.createElement('time');time.textContent=role==='assistant'?`AI-технолог · ${turnTime()}`:turnTime();box.append(time);article.append(avatar,box);messages.append(article);messages.scrollTop=messages.scrollHeight;}
+  function updateResult(result){const stages=['intro','geometry','configuration','hardware','review','complete'],current=Math.max(0,stages.indexOf(result.stage));document.querySelectorAll('[data-step]').forEach((el,i)=>{el.classList.toggle('active',i===Math.min(current,4));el.classList.toggle('done',i<current);});const names={intro:'Начало проекта',geometry:'Уточнение размеров',configuration:'Конструкция',hardware:'Подбор фурнитуры',review:'Проверка проекта',complete:'Проект готов'};document.querySelector('[data-current-stage]').textContent=names[result.stage]||'Проектирование';const progress=Math.max(0,Math.min(100,result.progress||0));document.querySelector('[data-progress-value]').textContent=`${progress}%`;document.querySelector('[data-progress-bar]').value=progress;document.querySelector('[data-score]').textContent=`${Math.round(progress/10)} из 10`;document.querySelector('[data-score-caption]').textContent=result.ready_for_final?'Все критичные данные подтверждены':'Продолжаем уточнение';const missing=document.querySelector('[data-missing]');missing.innerHTML='';(result.missing||[]).slice(0,5).forEach(text=>{const li=document.createElement('li');li.textContent=text;missing.append(li);});if(!missing.children.length){const li=document.createElement('li');li.textContent='Блокирующих вопросов не осталось';missing.append(li);}const hardware=document.querySelector('[data-hardware]');hardware.innerHTML='';(result.hardware||[]).forEach(item=>{const row=document.createElement('article'),copy=document.createElement('div'),b=document.createElement('b'),small=document.createElement('small'),qty=document.createElement('span');b.textContent=item.label;small.textContent=item.reason;qty.textContent=`${item.quantity} шт.`;copy.append(b,small);row.append(copy,qty);hardware.append(row);});if(!hardware.children.length){const p=document.createElement('p');p.className='empty';p.textContent='Комплект появится после уточнения конструкции.';hardware.append(p);}document.querySelector('[data-downloads]').setAttribute('aria-disabled',String(!result.documents_unlocked));}
+  async function checkConnection(){try{const r=await fetch('/api/public-production/chat/'),d=await r.json();onlineText.textContent=d.enabled?'Проектировщик онлайн':'Подключение AI завершается';document.body.classList.toggle('ai-offline',!d.enabled);}catch(_){onlineText.textContent='Связь восстанавливается';}}
+  fileInput.addEventListener('change',()=>{const n=fileInput.files.length;fileLabel.textContent=n?`${n} файл${n>1?'а':''}`:'Эскиз / фото';});
+  if(selectedName){document.querySelector('[data-project-type]').textContent=selectedName;textarea.value=`Я выбрал модель «${selectedName}». Помогите спроектировать её по моим размерам.`;}
+  quick.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;textarea.value=`Хочу конструкцию: ${b.textContent.toLowerCase()}.`;textarea.focus();});
+  textarea.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();form.requestSubmit();}});
+  form.addEventListener('submit',async e=>{e.preventDefault();const text=textarea.value.trim(),files=[...fileInput.files];if(!text&&!files.length)return;addMessage('user',text||'Проанализируйте приложенный эскиз.',files);quick.hidden=true;textarea.value='';fileInput.value='';fileLabel.textContent='Эскиз / фото';send.disabled=true;status.textContent='Изучаю данные и сверяю проект…';const payload=new FormData();payload.set('message',text);if(selectedModel)payload.set('selected_model',selectedModel);if(previousResponseId)payload.set('previous_response_id',previousResponseId);files.forEach(f=>payload.append('files',f));try{const response=await fetch('/api/public-production/chat/',{method:'POST',body:payload,headers:{Accept:'application/json'}}),result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Не удалось получить ответ.');previousResponseId=result.response_id||previousResponseId;if(previousResponseId)sessionStorage.setItem(storageKey,previousResponseId);addMessage('assistant',result.message);updateResult(result);status.textContent=result.mcp_connected?'Каталог CRM проверен через MCP.':'';}catch(error){addMessage('assistant',error.message||'Связь прервалась. Повторите сообщение.');status.textContent='';}finally{send.disabled=false;textarea.focus();}});
+  checkConnection();
 })();

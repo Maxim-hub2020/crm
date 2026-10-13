@@ -23,8 +23,8 @@ function updateUI(rebuild=false){
   $('[data-spec-material]').textContent=mirror?'Зеркало с LED-подсветкой':'Закалённое стекло';
   $('[data-spec-layout]').textContent=mirror?'По вашим размерам':`${item.panels} ${item.panels===1?'стекло':item.panels===2?'стекла':'стекла'} · по вашим размерам`;
   $('[data-details]').href=mirror?'/zerkala/':'/dushevye/';
-  $('[data-choose]').href=mirror?'#contact':'#designer';
-  $('[data-choose]').innerHTML=mirror?'Выбрать зеркало <span aria-hidden="true">→</span>':'Рассчитать модель <span aria-hidden="true">→</span>';
+  $('[data-choose]').href=mirror?'#contact':`/project/?model=${encodeURIComponent(item.id)}&name=${encodeURIComponent(item.name)}`;
+  $('[data-choose]').innerHTML=mirror?'Выбрать зеркало <span aria-hidden="true">→</span>':'Спроектировать в чате <span aria-hidden="true">→</span>';
   $('.header-calculate').href=`/calculator/?product=${mirror?'mirror':'shower'}`;
   $('[data-collection-label]').textContent=mirror?'Зеркала':'Душевые';
   $('[data-model-count]').textContent=`${String(state.index+1).padStart(2,'0')} / ${catalog[state.category].length}`;
