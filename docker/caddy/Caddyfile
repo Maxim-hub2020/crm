@@ -65,7 +65,7 @@ amalgama.cehcrm.ru {
         reverse_proxy amalgama-notifier:8080
     }
 
-    @calculator_api path /api/public-calculator/*
+    @calculator_api path /api/public-calculator/* /api/public-production/*
     handle @calculator_api {
         header Cache-Control "no-store"
         reverse_proxy backend:8000
