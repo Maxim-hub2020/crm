@@ -92,10 +92,25 @@ class PublicDesignerChatTests(APITestCase):
         )
         response = self._start()
         self.assertTrue(response.data["ai_connected"])
+        self.assertEqual(response.data["ai_status"], "connected")
         self.assertEqual(response.data["message"], "Назовите ширину поддона в миллиметрах.")
         payload = mocked_post.call_args.kwargs["json"]
         self.assertEqual(payload["tools"][0]["type"], "mcp")
         self.assertEqual(payload["tools"][0]["allowed_tools"], ["public_shower_technologist_context"])
+
+    @patch.dict("os.environ", {"OPENAI_DESIGNER_ENABLED": "true", "OPENAI_API_KEY": "test-key"})
+    @patch("crm_app.public_ai_technologist.requests.post")
+    def test_ai_failure_exposes_only_safe_billing_status(self, mocked_post):
+        mocked_post.return_value = Mock(
+            status_code=429,
+            json=lambda: {"error": {"code": "insufficient_quota", "message": "sensitive provider detail"}},
+        )
+
+        response = self._start()
+
+        self.assertFalse(response.data["ai_connected"])
+        self.assertEqual(response.data["ai_status"], "billing_required")
+        self.assertNotContains(response, "sensitive provider detail")
 
     def test_tampered_state_is_discarded(self):
         response = self.client.post("/api/public-production/chat/", {"message": "тест", "state_token": "tampered"}, format="multipart")

@@ -38,6 +38,26 @@ def _output_text(payload):
     return ""
 
 
+def _provider_error_status(response):
+    """Return a safe public status without exposing provider response details."""
+    try:
+        error = (response.json() or {}).get("error") or {}
+    except ValueError:
+        error = {}
+    code = str(error.get("code") or "").lower()
+    if response.status_code == 401:
+        return "invalid_credentials", code
+    if response.status_code in {402, 429} and code in {"insufficient_quota", "billing_not_active"}:
+        return "billing_required", code
+    if response.status_code == 429:
+        return "rate_limited", code
+    if response.status_code == 404 or code in {"model_not_found", "model_not_available"}:
+        return "model_unavailable", code
+    if 400 <= response.status_code < 500:
+        return "request_rejected", code
+    return "provider_unavailable", code
+
+
 def enhance_designer_response(state, deterministic_result, user_message=""):
     if not ai_technologist_enabled():
         return deterministic_result
@@ -87,6 +107,17 @@ def enhance_designer_response(state, deterministic_result, user_message=""):
             json=request_payload,
             timeout=(8, 55),
         )
+        if response.status_code >= 400:
+            safe_status, provider_code = _provider_error_status(response)
+            logger.warning(
+                "Public AI technologist rejected: http_status=%s provider_code=%s safe_status=%s",
+                response.status_code,
+                provider_code or "unknown",
+                safe_status,
+            )
+            deterministic_result["ai_connected"] = False
+            deterministic_result["ai_status"] = safe_status
+            return deterministic_result
         response.raise_for_status()
         payload = response.json()
         message = _output_text(payload)
@@ -95,8 +126,10 @@ def enhance_designer_response(state, deterministic_result, user_message=""):
         state["openai_response_id"] = payload.get("id", previous_response_id)
         deterministic_result["message"] = message
         deterministic_result["ai_connected"] = True
+        deterministic_result["ai_status"] = "connected"
         deterministic_result["state_token_needs_refresh"] = True
     except (requests.RequestException, ValueError):
         logger.warning("Public AI technologist unavailable; deterministic fallback used", exc_info=True)
         deterministic_result["ai_connected"] = False
+        deterministic_result["ai_status"] = "provider_unavailable"
     return deterministic_result
