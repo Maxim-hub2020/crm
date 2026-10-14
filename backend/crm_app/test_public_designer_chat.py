@@ -26,7 +26,7 @@ class PublicDesignerChatTests(APITestCase):
             "hardware": [{"id": "chrome", "label": "Глянцевый хром"}, {"id": "black", "label": "Чёрный матовый"}],
             "hardwareItems": [
                 {"id": "hinge-6", "label": "Петля 6 мм", "sourceUrl": "https://example.com/6"},
-                {"id": "hinge-8", "label": "Петля 8 мм", "sourceUrl": "https://example.com/8"},
+                {"id": "hinge-8", "label": "Петля 8 мм", "sourceUrl": "https://example.com/8", "technicalData": {"drawingUrl": "https://example.com/8.pdf", "sourceStatus": "linked", "review": {"status": "pending"}}},
                 {"id": "handle", "label": "Ручка", "sourceUrl": "https://example.com/handle"},
             ],
         }
@@ -69,8 +69,10 @@ class PublicDesignerChatTests(APITestCase):
         self.assertIn("Ручка", labels)
         self.assertNotIn("Петля 6 мм", labels)
         self.assertTrue(all("Чёрный матовый" in row["reason"] for row in response.data["hardware"]))
+        self.assertEqual(next(row for row in response.data["hardware"] if row["catalog_id"] == "hinge-8")["documentation_status"], "linked")
+        self.assertFalse(response.data["critical_checks"]["hardware_docs"])
         self.assertFalse(response.data["documents_unlocked"])
-        self.assertIn("Технические чертежи", response.data["missing"][0])
+        self.assertIn("Технические карты", response.data["missing"][0])
 
     def test_invalid_measurement_keeps_current_question(self):
         response = self.client.post("/api/public-production/chat/", {"option_value": "6747"}, format="multipart")

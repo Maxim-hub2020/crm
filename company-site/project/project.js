@@ -95,11 +95,29 @@
       const copy = document.createElement('div');
       const name = document.createElement('b');
       const reason = document.createElement('small');
+      const links = document.createElement('nav');
       const quantity = document.createElement('span');
       name.textContent = item.label;
       reason.textContent = item.reason;
+      links.className = 'hardware-links';
+      if (item.drawing_url) {
+        const drawing = document.createElement('a');
+        drawing.href = item.drawing_url;
+        drawing.target = '_blank';
+        drawing.rel = 'noopener noreferrer';
+        drawing.textContent = 'Техкарта PDF';
+        links.append(drawing);
+      }
+      if (item.source_url) {
+        const source = document.createElement('a');
+        source.href = item.source_url;
+        source.target = '_blank';
+        source.rel = 'noopener noreferrer';
+        source.textContent = 'Карточка AV24';
+        links.append(source);
+      }
       quantity.textContent = `${item.quantity} шт.`;
-      copy.append(name, reason);
+      copy.append(name, reason, links);
       row.append(copy, quantity);
       hardware.append(row);
     });

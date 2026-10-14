@@ -174,8 +174,18 @@ def _hardware(catalog, construction, answers):
             "quantity": max(1, int(component.get("quantity") or 1)),
             "reason": f"Автоматический состав конструкции · отделка: {finish_label}",
             "source_url": item.get("sourceUrl"),
+            "drawing_url": (item.get("technicalData") or {}).get("drawingUrl"),
+            "documentation_status": (item.get("technicalData") or {}).get("sourceStatus", "not_checked"),
+            "review_status": ((item.get("technicalData") or {}).get("review") or {}).get("status", "pending"),
         })
     return result
+
+
+def _hardware_documentation_ready(hardware):
+    return bool(hardware) and all(
+        row.get("drawing_url") and row.get("review_status") == "approved"
+        for row in hardware
+    )
 
 
 def _facts(construction, answers, catalog):
@@ -223,24 +233,33 @@ def _response(catalog, state, prefix=""):
     opening = (not has_door or "opening" in answers) and (answers.get("obstacles") != "yes" or bool(answers.get("obstacles_text")))
     glass = all(key in answers for key in ["glass_thickness", "glass_type", "hardware_finish"])
     confirmation = answers.get("client_confirmation") == "yes"
-    checks = {"geometry": geometry, "levels": levels, "opening": opening, "glass": glass, "hardware_docs": False, "client_confirmation": confirmation}
+    selected_hardware = _hardware(catalog, construction, answers)
+    hardware_docs = _hardware_documentation_ready(selected_hardware)
+    linked_docs = bool(selected_hardware) and all(row.get("drawing_url") for row in selected_hardware)
+    checks = {"geometry": geometry, "levels": levels, "opening": opening, "glass": glass, "hardware_docs": hardware_docs, "client_confirmation": confirmation}
     missing = []
     if current:
         missing.append(current["prompt"])
     if answers.get("client_confirmation") == "no":
         missing.append("Повторный замер по чистовой отделке")
     if completed:
-        missing.append("Технические чертежи точных артикулов и подтверждение операций в стекле")
+        if linked_docs:
+            missing.append("Технологическая проверка отверстий, вырезов, нагрузок и монтажных зазоров по картам AV24")
+        else:
+            missing.append("Технические карты отсутствующих точных артикулов AV24")
 
     if current:
         message = (prefix + "\n\n" if prefix else "") + current["prompt"]
         options, input_mode, question_key, stage = current.get("options", []), current["kind"], current["key"], current["stage"]
     else:
-        message = "Проверочный проект собран. Состав фурнитуры подобран автоматически по конструкции и толщине стекла. Финальные PDF/DXF пока заблокированы: для производственного выпуска нужны технические чертежи точных артикулов и проверка операций технологом."
+        if linked_docs:
+            message = "Проверочный проект собран. Технические карты выбранной фурнитуры AV24 найдены и приложены к спецификации. Финальные PDF/DXF будут доступны после технологической проверки отверстий, вырезов, нагрузок и монтажных зазоров."
+        else:
+            message = "Проверочный проект собран. Состав фурнитуры подобран автоматически. У части точных артикулов AV24 технические карты не опубликованы, поэтому финальные PDF/DXF остаются заблокированы."
         options, input_mode, question_key, stage = [], "complete", "", "review"
     return {
         "message": message, "stage": stage, "progress": progress, "facts": _facts(construction, answers, catalog),
-        "missing": missing, "critical_checks": checks, "hardware": _hardware(catalog, construction, answers),
+        "missing": missing, "critical_checks": checks, "hardware": selected_hardware,
         "ready_for_final": False, "documents_unlocked": False, "options": options, "input_mode": input_mode,
         "question_key": question_key, "project_title": construction.get("shortTitle") or construction["title"],
         "catalog_connected": bool(catalog), "uploaded_files": state.get("files", []),
