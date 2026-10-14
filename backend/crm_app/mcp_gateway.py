@@ -105,7 +105,16 @@ def _resource_enum():
 
 OAUTH_SCHEME = {"type": "oauth2", "scopes": ["crm.read", "crm.write", "crm.admin"]}
 
+PUBLIC_TECHNOLOGIST_TOOL = "public_shower_technologist_context"
+
 TOOLS = [
+    {
+        "name": PUBLIC_TECHNOLOGIST_TOOL,
+        "title": "Правила публичного технолога душевых",
+        "description": "Получить производственные правила CEH CRM и безопасный публичный каталог для проектирования душевой на сайте AMALGAMA. Инструмент не открывает проекты, клиентов, финансы или другие данные CRM.",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+    },
     {
         "name": "crm_profile",
         "title": "Профиль CRM",
@@ -919,6 +928,45 @@ def _execute_tool(user, token_record, name, args):
     raise ValueError(f"Неизвестный инструмент: {name}")
 
 
+def _public_shower_technologist_context():
+    from .models import CalculatorSettings, default_workspace
+
+    skill_dir = SKILL_ROOT / "production-technologist"
+    rule_files = [skill_dir / "SKILL.md", skill_dir / "references" / "shower-design.md", skill_dir / "references" / "av24-hardware.md"]
+    rules = "\n\n".join(path.read_text(encoding="utf-8") for path in rule_files if path.is_file())
+    record = CalculatorSettings.objects.filter(workspace=default_workspace()).first()
+    catalog = record.shower_catalog if record and isinstance(record.shower_catalog, dict) else {}
+    constructions = []
+    for item in catalog.get("constructions", []):
+        constructions.append({
+            "id": item.get("id"),
+            "title": item.get("title"),
+            "shortTitle": item.get("shortTitle"),
+            "sketch": item.get("sketch"),
+            "fields": item.get("fields", []),
+            "hardwareComponents": item.get("hardwareComponents", []),
+        })
+    hardware_items = []
+    used_ids = {str(component.get("hardwareItemId")) for item in constructions for component in item.get("hardwareComponents", [])}
+    for item in catalog.get("hardwareItems", []):
+        if str(item.get("id")) not in used_ids:
+            continue
+        technical = item.get("technicalData") or {}
+        hardware_items.append({
+            "id": item.get("id"), "sku": item.get("sku"), "label": item.get("label"),
+            "sourceUrl": item.get("sourceUrl"), "technicalData": {
+                "drawingUrl": technical.get("drawingUrl"), "features": technical.get("features", {}),
+                "sourceStatus": technical.get("sourceStatus"), "review": technical.get("review", {}),
+            },
+        })
+    return {
+        "scope": "public_shower_design_only",
+        "rules": rules,
+        "catalog": {"constructions": constructions, "hardwareItems": hardware_items, "finishes": catalog.get("hardware", [])},
+        "safety": "Номинальные размеры поддона не являются производственными размерами стекла. Финальные PDF/DXF разрешены только после замыкания размерных цепочек и проверки точных технических карт.",
+    }
+
+
 def _skill_catalog():
     result = []
     if not SKILL_ROOT.exists():
@@ -1000,6 +1048,9 @@ def mcp_view(request):
             return _rpc_error(message_id, -32602, str(exc))
     if method != "tools/call":
         return _rpc_error(message_id, -32601, f"Метод не поддерживается: {method}")
+    tool_name = params.get("name")
+    if tool_name == PUBLIC_TECHNOLOGIST_TOOL:
+        return _rpc_result(message_id, _tool_output(_public_shower_technologist_context()))
     token_record = authenticate_mcp_request(request)
     if not token_record:
         metadata_url = request.build_absolute_uri("/.well-known/oauth-protected-resource")
@@ -1016,7 +1067,7 @@ def mcp_view(request):
         result["WWW-Authenticate"] = challenge
         return result
     try:
-        value = _execute_tool(token_record.user, token_record, params.get("name"), dict(params.get("arguments") or {}))
+        value = _execute_tool(token_record.user, token_record, tool_name, dict(params.get("arguments") or {}))
         return _rpc_result(message_id, _tool_output(value))
     except McpToolError as exc:
         return _rpc_result(message_id, _tool_output(exc.payload, is_error=True))

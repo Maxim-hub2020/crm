@@ -43,14 +43,78 @@
 
   function renderOptions(options = []) {
     quick.replaceChildren();
+    quick.classList.toggle('visual-options', options.some((option) => option.image));
     options.forEach((option) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.dataset.value = option.value;
-      button.textContent = option.label;
+      if (option.image) {
+        const image = document.createElement('img');
+        image.src = option.image;
+        image.alt = option.label;
+        const copy = document.createElement('span');
+        const title = document.createElement('b');
+        const description = document.createElement('small');
+        title.textContent = option.label;
+        description.textContent = option.description || '';
+        copy.append(title, description);
+        button.append(image, copy);
+      } else {
+        button.textContent = option.label;
+      }
       quick.append(button);
     });
     quick.hidden = !options.length;
+  }
+
+  function renderLayout(layout = {}) {
+    const svg = document.querySelector('[data-layout-drawing]');
+    const summary = document.querySelector('[data-layout-summary]');
+    const ns = 'http://www.w3.org/2000/svg';
+    const line = (x1, y1, x2, y2, className) => {
+      const node = document.createElementNS(ns, 'line');
+      Object.entries({ x1, y1, x2, y2 }).forEach(([key, value]) => node.setAttribute(key, value));
+      node.setAttribute('class', className);
+      return node;
+    };
+    svg.replaceChildren();
+    svg.append(line(52, 54, 308, 54, 'room-line'), line(52, 54, 52, 245, 'room-line'));
+    if (layout.shape === 'wall-to-wall') {
+      svg.append(line(52, 236, 308, 236, 'tray-line'), line(66, 218, 294, 218, 'axis-line'));
+    } else if (layout.shape === 'l-shaped') {
+      svg.append(line(52, 236, 285, 236, 'tray-line'), line(285, 236, 285, 80, 'tray-line'), line(66, 218, 268, 218, 'axis-line'), line(268, 218, 268, 94, 'axis-line'));
+    } else {
+      const text = document.createElementNS(ns, 'text');
+      text.setAttribute('x', '180'); text.setAttribute('y', '155'); text.setAttribute('text-anchor', 'middle');
+      text.textContent = 'Выберите форму поддона';
+      svg.append(text);
+    }
+    if (layout.width && layout.depth) {
+      const label = document.createElementNS(ns, 'text');
+      label.setAttribute('x', '180'); label.setAttribute('y', '270'); label.setAttribute('text-anchor', 'middle');
+      label.textContent = `${layout.width} × ${layout.depth} мм`;
+      svg.append(label);
+    }
+    summary.replaceChildren();
+    (layout.panels || []).forEach((panel) => {
+      const row = document.createElement('article');
+      const copy = document.createElement('span');
+      const id = document.createElement('b');
+      const label = document.createElement('small');
+      const size = document.createElement('strong');
+      id.textContent = panel.id;
+      label.textContent = panel.label;
+      size.textContent = panel.nominal;
+      copy.append(id, label);
+      row.append(copy, size);
+      summary.append(row);
+    });
+    if (!summary.children.length) {
+      const empty = document.createElement('p');
+      empty.className = 'empty';
+      empty.textContent = 'Схема появится после ширины и глубины.';
+      summary.append(empty);
+    }
   }
 
   function updateResult(result) {
@@ -74,6 +138,7 @@
     document.querySelector('[data-score-caption]').textContent = result.ready_for_final
       ? 'Все критичные данные подтверждены'
       : 'Продолжаем технологическую проверку';
+    renderLayout(result.layout);
 
     const missing = document.querySelector('[data-missing]');
     missing.replaceChildren();
@@ -129,9 +194,7 @@
     }
     document.querySelector('[data-downloads]').setAttribute('aria-disabled', String(!result.documents_unlocked));
     renderOptions(result.options);
-    textarea.placeholder = result.input_mode === 'pair' || result.input_mode === 'pair_zero'
-      ? 'Например: 900 905'
-      : result.input_mode === 'number' || result.input_mode === 'number_zero'
+    textarea.placeholder = result.input_mode === 'number' || result.input_mode === 'number_zero'
         ? 'Размер в миллиметрах'
         : 'Напишите ответ…';
   }
@@ -195,7 +258,9 @@
       if (stateToken) sessionStorage.setItem(storageKey, stateToken);
       addMessage('assistant', result.message);
       updateResult(result);
-      status.textContent = result.catalog_connected ? 'Конструкция и комплект сверены с каталогом CRM.' : '';
+      status.textContent = result.ai_connected
+        ? 'AI-технолог работает через производственный MCP CEH CRM.'
+        : result.catalog_connected ? 'Конструкция и комплект сверены с каталогом CRM.' : '';
     } catch (error) {
       addMessage('assistant', error.message || 'Связь прервалась. Повторите сообщение.');
       status.textContent = '';

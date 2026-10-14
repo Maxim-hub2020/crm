@@ -11,7 +11,7 @@ from rest_framework.test import APIClient
 from .models import Account, CalculatorQuote, CalculatorSettings, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, User, Workspace
 
 
-@override_settings(ALLOWED_HOSTS=["testserver"])
+@override_settings(ALLOWED_HOSTS=["testserver"], SECURE_SSL_REDIRECT=False)
 class RemoteMcpTests(TestCase):
     def setUp(self):
         self.workspace = Workspace.objects.create(name="Цех", slug="mcp-test")
@@ -89,6 +89,12 @@ class RemoteMcpTests(TestCase):
         self.assertIn("crm_calculator_catalog", {item["name"] for item in tool_items})
         self.assertIn("crm_calculate_product", {item["name"] for item in tool_items})
         self.assertIn("crm_save_calculator_quote", {item["name"] for item in tool_items})
+        self.assertIn("public_shower_technologist_context", {item["name"] for item in tool_items})
+        public_context = self.rpc("tools/call", {"name": "public_shower_technologist_context", "arguments": {}})
+        self.assertEqual(public_context.status_code, 200)
+        public_payload = public_context.json()["result"]["structuredContent"]
+        self.assertEqual(public_payload["scope"], "public_shower_design_only")
+        self.assertIn("# Технолог производства", public_payload["rules"])
         upload_tool = next(item for item in tool_items if item["name"] == "crm_upload_file")
         self.assertEqual(upload_tool["_meta"]["openai/fileParams"], ["file"])
         file_schema = upload_tool["inputSchema"]["$defs"]["OpenAIFile"]
