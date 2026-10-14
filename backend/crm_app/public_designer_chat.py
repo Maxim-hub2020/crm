@@ -73,6 +73,25 @@ def _finish_options(catalog):
     return [{"value": str(row["id"]), "label": row["label"]} for row in catalog.get("hardware", []) if row.get("id") and row.get("label")]
 
 
+def _supported_glass_options(catalog, construction):
+    item_map = {str(item.get("id")): item for item in catalog.get("hardwareItems", []) if item.get("id")}
+    supported = {6, 8}
+    for component in construction.get("hardwareComponents", []):
+        if component.get("glassThickness"):
+            continue
+        item = item_map.get(str(component.get("hardwareItemId"))) or {}
+        features = (item.get("technicalData") or {}).get("features") or {}
+        feature = next((value for key, value in features.items() if _normal(key) == "толщина стекла"), "")
+        documented = {int(value) for value in re.findall(r"\b(?:6|8|10|12)\b", str(feature))}
+        if documented:
+            supported &= documented
+    return [
+        {"value": str(value), "label": f"{value} мм"}
+        for value in (8, 6)
+        if value in supported
+    ]
+
+
 def _questions(catalog, construction, answers):
     questions = []
     for field in construction.get("fields", []):
@@ -111,7 +130,7 @@ def _questions(catalog, construction, answers):
         questions.append({"key": "opening", "kind": "choice", "stage": "configuration", "prompt": "Выберите направление движения двери.", "options": opening_options})
 
     questions.extend([
-        {"key": "glass_thickness", "kind": "choice", "stage": "configuration", "prompt": "Выберите толщину стекла.", "options": [{"value": "8", "label": "8 мм"}, {"value": "6", "label": "6 мм"}]},
+        {"key": "glass_thickness", "kind": "choice", "stage": "configuration", "prompt": "Выберите толщину стекла, совместимую с техническими картами комплекта.", "options": _supported_glass_options(catalog, construction)},
         {"key": "glass_type", "kind": "choice", "stage": "configuration", "prompt": "Какое стекло нужно?", "options": [
             {"value": "clear", "label": "Прозрачное"}, {"value": "extra-clear", "label": "Осветлённое"},
             {"value": "frosted", "label": "Матовое"}, {"value": "bronze", "label": "Бронза"}, {"value": "graphite", "label": "Графит"},

@@ -26,8 +26,8 @@ class PublicDesignerChatTests(APITestCase):
             "hardware": [{"id": "chrome", "label": "Глянцевый хром"}, {"id": "black", "label": "Чёрный матовый"}],
             "hardwareItems": [
                 {"id": "hinge-6", "label": "Петля 6 мм", "sourceUrl": "https://example.com/6"},
-                {"id": "hinge-8", "label": "Петля 8 мм", "sourceUrl": "https://example.com/8", "technicalData": {"drawingUrl": "https://example.com/8.pdf", "sourceStatus": "linked", "review": {"status": "pending"}}},
-                {"id": "handle", "label": "Ручка", "sourceUrl": "https://example.com/handle"},
+                {"id": "hinge-8", "label": "Петля 8 мм", "sourceUrl": "https://example.com/8", "technicalData": {"drawingUrl": "https://example.com/8.pdf", "sourceStatus": "linked", "features": {"Толщина стекла": "8 мм, 10 мм"}, "review": {"status": "pending"}}},
+                {"id": "handle", "label": "Ручка", "sourceUrl": "https://example.com/handle", "technicalData": {"features": {"Толщина стекла": "8 мм, 10 мм"}}},
             ],
         }
         CalculatorSettings.objects.update_or_create(
@@ -79,6 +79,13 @@ class PublicDesignerChatTests(APITestCase):
         response = self._answer(response, "слишком высоко")
         self.assertEqual(response.data["question_key"], "HEIGHT_0")
         self.assertIn("одним числом", response.data["message"])
+
+    def test_documented_hardware_restricts_glass_thickness(self):
+        response = self.client.post("/api/public-production/chat/", {"option_value": "6747"}, format="multipart")
+        for answer in ["2000", "900 905", "0 0", "0", "90", "center"]:
+            response = self._answer(response, answer)
+        self.assertEqual(response.data["question_key"], "glass_thickness")
+        self.assertEqual(response.data["options"], [{"value": "8", "label": "8 мм"}])
 
     def test_tampered_state_is_discarded(self):
         response = self.client.post(
