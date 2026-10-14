@@ -125,6 +125,26 @@ class PublicDesignerChatTests(APITestCase):
         self.assertFalse(response.data["ai_connected"])
         self.assertEqual(response.data["ai_status"], "mcp_connection_rejected")
 
+    @patch.dict("os.environ", {"OPENAI_DESIGNER_ENABLED": "true", "OPENAI_API_KEY": "test-key"})
+    @patch("crm_app.public_ai_technologist.requests.post")
+    def test_ai_retries_with_public_context_when_remote_mcp_is_rejected(self, mocked_post):
+        mocked_post.side_effect = [
+            Mock(status_code=400, json=lambda: {"error": {"code": "invalid_request_error", "message": "Request rejected"}}),
+            Mock(
+                status_code=200,
+                json=lambda: {"id": "resp_direct", "output": [{"type": "message", "content": [{"type": "output_text", "text": "Назовите ширину поддона."}]}]},
+                raise_for_status=lambda: None,
+            ),
+        ]
+
+        response = self._start()
+
+        self.assertTrue(response.data["ai_connected"])
+        self.assertEqual(response.data["message"], "Назовите ширину поддона.")
+        direct_payload = mocked_post.call_args_list[1].kwargs["json"]
+        self.assertNotIn("tools", direct_payload)
+        self.assertIn("public_shower_design_only", direct_payload["input"])
+
     def test_tampered_state_is_discarded(self):
         response = self.client.post("/api/public-production/chat/", {"message": "тест", "state_token": "tampered"}, format="multipart")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
