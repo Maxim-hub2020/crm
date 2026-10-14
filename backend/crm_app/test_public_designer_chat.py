@@ -112,6 +112,19 @@ class PublicDesignerChatTests(APITestCase):
         self.assertEqual(response.data["ai_status"], "billing_required")
         self.assertNotContains(response, "sensitive provider detail")
 
+    @patch.dict("os.environ", {"OPENAI_DESIGNER_ENABLED": "true", "OPENAI_API_KEY": "test-key"})
+    @patch("crm_app.public_ai_technologist.requests.post")
+    def test_ai_failure_identifies_remote_mcp_rejection(self, mocked_post):
+        mocked_post.return_value = Mock(
+            status_code=400,
+            json=lambda: {"error": {"code": "invalid_request_error", "message": "Failed to obtain MCP tool list"}},
+        )
+
+        response = self._start()
+
+        self.assertFalse(response.data["ai_connected"])
+        self.assertEqual(response.data["ai_status"], "mcp_connection_rejected")
+
     def test_tampered_state_is_discarded(self):
         response = self.client.post("/api/public-production/chat/", {"message": "тест", "state_token": "tampered"}, format="multipart")
         self.assertEqual(response.status_code, status.HTTP_200_OK)

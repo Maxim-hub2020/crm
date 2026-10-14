@@ -45,6 +45,7 @@ def _provider_error_status(response):
     except ValueError:
         error = {}
     code = str(error.get("code") or "").lower()
+    message = str(error.get("message") or "").lower()
     if response.status_code == 401:
         return "invalid_credentials", code
     if response.status_code in {402, 429} and code in {"insufficient_quota", "billing_not_active"}:
@@ -53,6 +54,14 @@ def _provider_error_status(response):
         return "rate_limited", code
     if response.status_code == 404 or code in {"model_not_found", "model_not_available"}:
         return "model_unavailable", code
+    if "mcp" in message or "tool list" in message or "server_url" in message:
+        return "mcp_connection_rejected", code
+    if "max_output_tokens" in message or "output token" in message:
+        return "output_limit_rejected", code
+    if "reasoning" in message or "unsupported parameter" in message or "unknown parameter" in message:
+        return "unsupported_request_parameter", code
+    if "organization" in message and ("verify" in message or "verified" in message):
+        return "organization_verification_required", code
     if 400 <= response.status_code < 500:
         return "request_rejected", code
     return "provider_unavailable", code
