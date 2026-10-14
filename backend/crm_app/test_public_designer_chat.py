@@ -145,6 +145,25 @@ class PublicDesignerChatTests(APITestCase):
         self.assertNotIn("tools", direct_payload)
         self.assertIn("public_shower_design_only", direct_payload["input"])
 
+    @patch.dict("os.environ", {"OPENAI_DESIGNER_ENABLED": "true", "OPENAI_API_KEY": "test-key", "OPENAI_DESIGNER_MODEL": "gpt-6.1-sol"})
+    @patch("crm_app.public_ai_technologist.requests.post")
+    def test_ai_retries_with_fallback_model_after_request_rejection(self, mocked_post):
+        rejected = Mock(status_code=400, json=lambda: {"error": {"code": "invalid_request_error", "message": "Request rejected"}})
+        mocked_post.side_effect = [
+            rejected,
+            rejected,
+            Mock(
+                status_code=200,
+                json=lambda: {"id": "resp_fallback", "output": [{"type": "message", "content": [{"type": "output_text", "text": "Какая ширина поддона?"}]}]},
+                raise_for_status=lambda: None,
+            ),
+        ]
+
+        response = self._start()
+
+        self.assertTrue(response.data["ai_connected"])
+        self.assertEqual(mocked_post.call_args_list[2].kwargs["json"]["model"], "gpt-5.4-mini")
+
     def test_tampered_state_is_discarded(self):
         response = self.client.post("/api/public-production/chat/", {"message": "тест", "state_token": "tampered"}, format="multipart")
         self.assertEqual(response.status_code, status.HTTP_200_OK)

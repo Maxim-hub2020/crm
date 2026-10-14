@@ -144,6 +144,15 @@ def enhance_designer_response(state, deterministic_result, user_message=""):
                 json=direct_payload,
                 timeout=(8, 55),
             )
+            fallback_model = os.environ.get("OPENAI_DESIGNER_FALLBACK_MODEL", "gpt-5.4-mini")
+            if response.status_code == 400 and direct_payload["model"] != fallback_model:
+                direct_payload["model"] = fallback_model
+                response = requests.post(
+                    OPENAI_RESPONSES_URL,
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json=direct_payload,
+                    timeout=(8, 55),
+                )
         if response.status_code >= 400:
             safe_status, provider_code = _provider_error_status(response)
             logger.warning(
