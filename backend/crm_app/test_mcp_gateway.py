@@ -334,6 +334,7 @@ class RemoteMcpTests(TestCase):
         )
         account = Account.objects.create(workspace=self.workspace, name="Касса")
         token = self.connect()
+        results = []
 
         for category, amount, comment in [
             (expense_category, "1000.00", "Личные траты без проекта"),
@@ -351,6 +352,14 @@ class RemoteMcpTests(TestCase):
             }}, token)
             payload = response.json()["result"]
             self.assertFalse(payload.get("isError", False), payload)
+            results.append(payload["structuredContent"])
+
+        for result in results:
+            self.assertTrue(result["operation_committed"])
+            self.assertTrue(result["do_not_retry"])
+            self.assertEqual(result["payment"], result["data"])
+            self.assertIsNotNone(result["payment"]["id"])
+            self.assertIn("успешно сохранена", result["message"])
 
         payments = Payment.objects.filter(created_by=self.user).order_by("amount")
         self.assertEqual(payments.count(), 2)
