@@ -1,3 +1,4 @@
+import { TaskLocation, TaskLocationFields } from "../components/TaskLocation.jsx";
 import React, { useEffect, useMemo, useState } from "react";
 import { Archive, Calendar, Check, FolderKanban, ListTodo, Plus, Trash2 } from "lucide-react";
 
@@ -13,7 +14,7 @@ function formatDeadline(date) {
   });
 }
 
-function TaskRow({ task, onToggle, onDelete }) {
+function TaskRow({ task, onToggle, onDelete, onEdit }) {
   return (
     <div
       className={`flex items-start gap-4 rounded-2xl p-4 transition ${
@@ -32,7 +33,9 @@ function TaskRow({ task, onToggle, onDelete }) {
 
       <div className="min-w-0 flex-1">
         <div className="font-semibold">{task.title}</div>
+        {onEdit && <button type="button" className="text-xs font-semibold text-blue-600" onClick={() => onEdit(task)}>Изменить дату и адрес</button>}
         {task.notes && <div className="mt-1 text-sm text-gray-500">{task.notes}</div>}
+        <TaskLocation task={task} />
         {task.project_title && (
           <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-600">
             <FolderKanban size={12} />
@@ -54,28 +57,38 @@ function TaskRow({ task, onToggle, onDelete }) {
   );
 }
 
-function TaskSection({ title, tasks, onToggle, onDelete }) {
+function TaskSection({ title, tasks, onToggle, onDelete, onEdit }) {
   if (!tasks.length) return null;
 
   return (
     <div className="space-y-4">
       <div className="text-[11px] font-black uppercase tracking-widest text-gray-400">{title}</div>
-      <div className="space-y-3">
-        {tasks.map((task) => (
-          <TaskRow key={task.id} task={task} onToggle={onToggle} onDelete={onDelete} />
-        ))}
-      </div>
+      {Object.entries(tasks.reduce((groups, task) => {
+        const day = task.scheduled_date || task.due_date || "Без даты";
+        const zone = [task.city || "Город не указан", task.district || "Район не указан"].join(" · ");
+        const key = `${day} / ${zone}`;
+        (groups[key] ||= []).push(task);
+        return groups;
+      }, {})).sort(([a], [b]) => a.localeCompare(b, "ru")).map(([key, rows]) => (
+        <div key={key} className="space-y-3 rounded-2xl border border-slate-200 p-3">
+          <div className="text-sm font-bold text-slate-600">{key} · {rows.length} задач</div>
+          {rows.map(task => <TaskRow key={task.id} task={task} onToggle={onToggle} onDelete={onDelete} onEdit={onEdit} />)}
+        </div>
+      ))}
     </div>
   );
 }
 
 export default function Tasks() {
+  const [location, setLocation] = useState({});
+  const [editingId, setEditingId] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [text, setText] = useState("");
   const [notes, setNotes] = useState("");
   const [deadline, setDeadline] = useState("");
   const [showArchive, setShowArchive] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const formRef = React.useRef(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -92,17 +105,16 @@ export default function Tasks() {
   }, []);
 
   const grouped = useMemo(() => {
+    const overdue = [];
     const today = [];
     const soon = [];
     const later = [];
     const archive = [];
 
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const inSevenDays = new Date(now);
-    inSevenDays.setDate(inSevenDays.getDate() + 7);
+    const now = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Moscow" }).format(new Date());
+    const horizon = new Date(`${now}T12:00:00Z`);
+    horizon.setUTCDate(horizon.getUTCDate() + 7);
+    const inSevenDays = horizon.toISOString().slice(0, 10);
 
     for (const task of tasks) {
       if (task.status === "done") {
@@ -110,15 +122,16 @@ export default function Tasks() {
         continue;
       }
 
-      if (!task.due_date) {
+      const taskDate = task.scheduled_date || task.due_date;
+      if (!taskDate) {
         later.push(task);
         continue;
       }
 
-      const taskDate = new Date(task.due_date);
-      taskDate.setHours(0, 0, 0, 0);
 
-      if (taskDate <= now) {
+      if (taskDate < now) {
+        overdue.push(task);
+      } else if (taskDate === now) {
         today.push(task);
       } else if (taskDate <= inSevenDays) {
         soon.push(task);
@@ -127,7 +140,7 @@ export default function Tasks() {
       }
     }
 
-    return { today, soon, later, archive, tomorrow };
+    return { overdue, today, soon, later, archive };
   }, [tasks]);
 
   async function addTask(event) {
@@ -138,13 +151,18 @@ export default function Tasks() {
     setSaving(true);
 
     try {
-      const created = await createTask({
+      const payload = {
         title: text.trim(),
         notes: notes.trim(),
         due_date: deadline || null,
-      });
+        ...location,
+        scheduled_date: location.scheduled_date || null,
+      };
+      const created = editingId ? await updateTask(editingId, payload) : await createTask(payload);
 
-      setTasks((current) => [created, ...current]);
+      setTasks((current) => editingId ? current.map(t => t.id === editingId ? created : t) : [created, ...current]);
+      setEditingId(null);
+      setLocation({});
       setText("");
       setNotes("");
       setDeadline("");
@@ -154,6 +172,16 @@ export default function Tasks() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function editTask(task) {
+    setEditingId(task.id);
+    setText(task.title);
+    setNotes(task.notes || "");
+    setDeadline(task.due_date || "");
+    setLocation({ city: task.city || "", district: task.district || "", address: task.address || "", scheduled_date: task.scheduled_date || "" });
+    setShowCreate(true);
+    requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
   }
 
   async function toggleTask(task) {
@@ -237,10 +265,11 @@ export default function Tasks() {
             </div>
           ) : (
             <div className="space-y-8">
-              <TaskSection title="Сегодня" tasks={grouped.today} onToggle={toggleTask} onDelete={removeTask} />
-              <TaskSection title="В ближайшие 7 дней" tasks={grouped.soon} onToggle={toggleTask} onDelete={removeTask} />
-              <TaskSection title="Позже" tasks={grouped.later} onToggle={toggleTask} onDelete={removeTask} />
-              {!grouped.today.length && !grouped.soon.length && !grouped.later.length && (
+              <TaskSection title="Просрочено" tasks={grouped.overdue} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />
+              <TaskSection title="Сегодня" tasks={grouped.today} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />
+              <TaskSection title="В ближайшие 7 дней" tasks={grouped.soon} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />
+              <TaskSection title="Позже" tasks={grouped.later} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />
+              {!grouped.overdue.length && !grouped.today.length && !grouped.soon.length && !grouped.later.length && (
                 <div className="rounded-2xl bg-gray-50 px-5 py-8 text-center text-sm text-gray-400">
                   Добавьте первую задачу, чтобы раздел начал работать.
                 </div>
@@ -252,11 +281,11 @@ export default function Tasks() {
                   onClick={() => setShowCreate((value) => !value)}
                 >
                   <Plus size={16} />
-                  {showCreate ? "Скрыть новую задачу" : "Новая задача"}
+                  {showCreate ? "Скрыть форму" : "Новая задача"}
                 </button>
 
                 {showCreate && (
-                  <form className="mt-4 grid gap-4 rounded-2xl bg-gray-50 p-4 md:grid-cols-2" onSubmit={addTask}>
+                  <form ref={formRef} className="mt-4 grid gap-4 rounded-2xl bg-gray-50 p-4 md:grid-cols-2" onSubmit={addTask}>
                     <div className="space-y-2 md:col-span-2">
                       <Label>Наименование задачи</Label>
                       <Input value={text} onChange={(event) => setText(event.target.value)} placeholder="Что нужно сделать?" />
@@ -266,14 +295,16 @@ export default function Tasks() {
                       <Input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Краткое описание или следующий шаг" />
                     </div>
                     <div className="space-y-2">
-                      <Label>Срок</Label>
+                      <Label>Крайний срок</Label>
                       <Input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} />
                     </div>
-                    <div className="flex items-end">
+                    <TaskLocationFields value={location} onChange={patch => setLocation(prev => ({ ...prev, ...patch }))} />
+                    <div className="flex items-end gap-2">
                       <Button className="w-full md:w-auto" disabled={saving} type="submit">
                         <Plus size={16} />
-                        {saving ? "Добавляем..." : "Добавить задачу"}
+                        {saving ? "Сохраняем..." : editingId ? "Сохранить изменения" : "Добавить задачу"}
                       </Button>
+                      {editingId && <Button type="button" variant="secondary" onClick={() => { setEditingId(null); setText(""); setNotes(""); setDeadline(""); setLocation({}); setShowCreate(false); }}>Отмена</Button>}
                     </div>
                   </form>
                 )}

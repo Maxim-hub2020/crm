@@ -1786,6 +1786,23 @@ class TaskViewSet(viewsets.ModelViewSet):
         if project_id:
             qs = qs.filter(project_id=project_id)
 
+        # Legacy tasks continue to use their due date until explicitly scheduled.
+        day = self.request.query_params.get("date")
+        if day:
+            from django.utils.dateparse import parse_date
+            from rest_framework.exceptions import ValidationError
+            try:
+                valid_day = parse_date(day)
+            except ValueError:
+                valid_day = None
+            if not valid_day:
+                raise ValidationError({"date": "Укажите дату в формате YYYY-MM-DD."})
+            qs = qs.filter(Q(scheduled_date=valid_day) | Q(scheduled_date__isnull=True, due_date=valid_day))
+        for field in ("city", "district", "status"):
+            value = self.request.query_params.get(field)
+            if value:
+                qs = qs.filter(**{field: value})
+
         return qs
 
     def perform_create(self, serializer):
@@ -1796,12 +1813,12 @@ class TaskViewSet(viewsets.ModelViewSet):
             "task",
             task.id,
             "create",
-            after=snapshot_model(task, ["id", "project_id", "title", "status", "priority", "due_date"]),
+            after=snapshot_model(task, ["id", "project_id", "title", "status", "priority", "due_date", "scheduled_date", "city", "district", "address"]),
             workspace=getattr(task.project, "workspace", current_workspace(self.request.user)),
         )
 
     def perform_update(self, serializer):
-        before = snapshot_model(serializer.instance, ["id", "project_id", "title", "status", "priority", "due_date"])
+        before = snapshot_model(serializer.instance, ["id", "project_id", "title", "status", "priority", "due_date", "scheduled_date", "city", "district", "address"])
         task = serializer.save()
         create_audit_log(
             self.request.user,
@@ -1809,13 +1826,13 @@ class TaskViewSet(viewsets.ModelViewSet):
             task.id,
             "update",
             before=before,
-            after=snapshot_model(task, ["id", "project_id", "title", "status", "priority", "due_date"]),
+            after=snapshot_model(task, ["id", "project_id", "title", "status", "priority", "due_date", "scheduled_date", "city", "district", "address"]),
             workspace=getattr(task.project, "workspace", current_workspace(self.request.user)),
         )
 
     def perform_destroy(self, instance):
         workspace = getattr(instance.project, "workspace", current_workspace(self.request.user))
-        before = snapshot_model(instance, ["id", "project_id", "title", "status", "priority", "due_date"])
+        before = snapshot_model(instance, ["id", "project_id", "title", "status", "priority", "due_date", "scheduled_date", "city", "district", "address"])
         create_audit_log(self.request.user, "task", instance.id, "delete", before=before, workspace=workspace)
         instance.delete()
 
