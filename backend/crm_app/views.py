@@ -395,7 +395,10 @@ def menu_settings_view(request):
     workspace = current_workspace(request.user)
 
     if request.method == "GET":
-        return Response({"hidden_sections": list(workspace.hidden_menu_sections or [])})
+        return Response({
+            "hidden_sections": list(workspace.hidden_menu_sections or []),
+            "projects_view_mode": workspace.projects_view_mode or "kanban",
+        })
 
     if not request.user.is_admin():
         return Response(
@@ -403,18 +406,34 @@ def menu_settings_view(request):
             status=drf_status.HTTP_403_FORBIDDEN,
         )
 
-    hidden_sections = request.data.get("hidden_sections", [])
-    if not isinstance(hidden_sections, list):
-        return Response(
-            {"hidden_sections": ["Ожидается список разделов."]},
-            status=drf_status.HTTP_400_BAD_REQUEST,
+    update_fields = ["updated_at"]
+    if "hidden_sections" in request.data:
+        hidden_sections = request.data.get("hidden_sections")
+        if not isinstance(hidden_sections, list):
+            return Response(
+                {"hidden_sections": ["Ожидается список разделов."]},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+        workspace.hidden_menu_sections = sorted(
+            {str(section).strip() for section in hidden_sections if str(section).strip() in MENU_SECTION_KEYS}
         )
+        update_fields.append("hidden_menu_sections")
 
-    workspace.hidden_menu_sections = sorted(
-        {str(section).strip() for section in hidden_sections if str(section).strip() in MENU_SECTION_KEYS}
-    )
-    workspace.save(update_fields=["hidden_menu_sections", "updated_at"])
-    return Response({"hidden_sections": workspace.hidden_menu_sections})
+    if "projects_view_mode" in request.data:
+        projects_view_mode = str(request.data.get("projects_view_mode") or "").strip()
+        if projects_view_mode not in {"kanban", "list"}:
+            return Response(
+                {"projects_view_mode": ["Допустимые значения: kanban или list."]},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+        workspace.projects_view_mode = projects_view_mode
+        update_fields.append("projects_view_mode")
+
+    workspace.save(update_fields=update_fields)
+    return Response({
+        "hidden_sections": workspace.hidden_menu_sections,
+        "projects_view_mode": workspace.projects_view_mode,
+    })
 
 
 @api_view(["GET"])

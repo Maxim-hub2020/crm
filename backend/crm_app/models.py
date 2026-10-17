@@ -10,6 +10,7 @@ class Workspace(models.Model):
     name = models.CharField(max_length=160)
     slug = models.SlugField(max_length=80, unique=True, allow_unicode=True)
     hidden_menu_sections = models.JSONField(default=list, blank=True)
+    projects_view_mode = models.CharField(max_length=16, default="kanban")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

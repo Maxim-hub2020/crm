@@ -949,15 +949,14 @@ export default function Finances() {
     <div>
       {actionError && <div className="mb-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{actionError}</div>}
 
-      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-bold text-slate-900">Финансовые операции</div>
           <div className="text-xs text-slate-500">Создание, фильтрация и контроль операций по проектам.</div>
         </div>
         {activeTab === "operations" ? (
-          <Button type="button" className="w-full justify-center lg:w-auto" onClick={openPaymentCreate}>
-          <Plus size={16} />
-          Добавить операцию
+          <Button type="button" className="h-11 w-11 shrink-0 p-0" onClick={openPaymentCreate} aria-label="Добавить операцию" title="Добавить операцию">
+          <Plus size={20} />
           </Button>
         ) : null}
       </div>
@@ -1262,7 +1261,7 @@ export default function Finances() {
         </>
       ) : null}
 
-      <Modal open={paymentModalOpen} title={editingPayment ? "Редактировать операцию" : "Добавить операцию"} onClose={closePaymentModal} widthClassName="max-w-2xl">
+      <Modal open={paymentModalOpen} title={editingPayment ? "Редактировать операцию" : "Добавить операцию"} onClose={closePaymentModal} widthClassName="max-w-2xl" mobileSheet={!editingPayment}>
         <form className="space-y-4" onSubmit={submitPaymentForm}>
           <div className="grid gap-4 md:grid-cols-2">
             {paymentForm.category_kind !== "account_transfer" && !paymentForm.category_kind.startsWith("balance_adjustment_") ? (

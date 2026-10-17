@@ -453,9 +453,8 @@ export default function Clients() {
   return (
     <div>
       <div className="mb-5 flex justify-end">
-        <Button type="button" className="w-full justify-center sm:w-auto" onClick={openClientCreate}>
-          <Plus size={16} />
-          Добавить клиента
+        <Button type="button" className="h-11 w-11 p-0" onClick={openClientCreate} aria-label="Добавить клиента" title="Добавить клиента">
+          <Plus size={20} />
         </Button>
       </div>
 
@@ -625,7 +624,7 @@ export default function Clients() {
         )}
       </Modal>
 
-      <Modal open={createOpen} title="Добавить клиента" onClose={closeClientCreate} widthClassName="max-w-2xl">
+      <Modal open={createOpen} title="Добавить клиента" onClose={closeClientCreate} widthClassName="max-w-2xl" mobileSheet>
         <form className="space-y-4" onSubmit={submitCreateClient}>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2 md:col-span-2">

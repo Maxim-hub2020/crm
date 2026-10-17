@@ -11,8 +11,6 @@ import {
   FolderOpen,
   Gift,
   History,
-  LayoutGrid,
-  List,
   ListTodo,
   Mail,
   MapPin,
@@ -47,6 +45,7 @@ import {
   fetchAccounts,
   fetchClients,
   fetchFinanceCategories,
+  fetchMenuSettings,
   fetchPayments,
   fetchProjectActivity,
   fetchProjectComments,
@@ -745,20 +744,6 @@ function statusBadgeClass(colorOrStatus) {
   return "bg-sky-100 text-sky-700";
 }
 
-function ModeButton({ active, icon: Icon, label, onClick }) {
-  return (
-    <Button
-      type="button"
-      variant={active ? "primary" : "secondary"}
-      className="px-4"
-      onClick={onClick}
-    >
-      <Icon size={16} />
-      {label}
-    </Button>
-  );
-}
-
 function StatCard({ icon: Icon, label, value, dark = false }) {
   return (
     <div
@@ -1325,7 +1310,7 @@ export default function Projects() {
     }
 
     try {
-      const [projectRows, clientRows, paymentRows, taskRows, statusItems, financeCategoryRows, accountRows, customFieldRows] = await Promise.all([
+      const [projectRows, clientRows, paymentRows, taskRows, statusItems, financeCategoryRows, accountRows, customFieldRows, menuSettings] = await Promise.all([
         fetchProjects(),
         fetchClients(),
         fetchPayments(),
@@ -1334,6 +1319,7 @@ export default function Projects() {
         fetchFinanceCategories(),
         fetchAccounts(),
         fetchProjectCustomFields(),
+        fetchMenuSettings().catch(() => ({ projects_view_mode: localStorage.getItem(VIEW_MODE_KEY) || "kanban" })),
       ]);
 
       setProjects(projectRows);
@@ -1345,6 +1331,7 @@ export default function Projects() {
       setFinanceCategories(financeCategoryRows);
       setAccounts(accountRows);
       setCustomFields(customFieldRows);
+      setViewMode(menuSettings.projects_view_mode === "list" ? "list" : "kanban");
       const snapshot = {
         savedAt: new Date().toISOString(),
         projects: projectRows,
@@ -1481,6 +1468,14 @@ export default function Projects() {
   useEffect(() => {
     localStorage.setItem(VIEW_MODE_KEY, viewMode);
   }, [viewMode]);
+
+  useEffect(() => {
+    const handleViewModeUpdated = (event) => {
+      setViewMode(event.detail?.viewMode === "list" ? "list" : "kanban");
+    };
+    window.addEventListener("crm-project-view-mode-updated", handleViewModeUpdated);
+    return () => window.removeEventListener("crm-project-view-mode-updated", handleViewModeUpdated);
+  }, []);
 
   useEffect(() => {
     if (offlineMode || !hasLoadedOnlineData) return undefined;
@@ -3404,18 +3399,10 @@ export default function Projects() {
           ) : null}
         </div>
       ) : null}
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-end">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2 rounded-full bg-white p-1 shadow-sm ring-1 ring-slate-200/80">
-            <ModeButton active={viewMode === "kanban"} icon={LayoutGrid} label="Канбан" onClick={() => setViewMode("kanban")} />
-            <ModeButton active={viewMode === "list"} icon={List} label="Список" onClick={() => setViewMode("list")} />
-          </div>
-
-          <Button type="button" className="px-6" onClick={() => openCreateModal()} disabled={offlineMode}>
-            <Plus size={16} />
-            Создать проект
-          </Button>
-        </div>
+      <div className="flex justify-end">
+        <Button type="button" className="h-11 w-11 p-0" onClick={() => openCreateModal()} disabled={offlineMode} aria-label="Создать проект" title="Создать проект">
+          <Plus size={20} />
+        </Button>
       </div>
 
       {loading ? (
@@ -3593,7 +3580,7 @@ export default function Projects() {
         </div>
       )}
 
-      <Modal open={openCreate} title="Создать проект" onClose={closeCreateModal}>
+      <Modal open={openCreate} title="Создать проект" onClose={closeCreateModal} mobileSheet>
         <form className="space-y-5" onSubmit={submitCreate}>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2 md:col-span-2">

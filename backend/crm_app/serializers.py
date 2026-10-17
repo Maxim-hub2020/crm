@@ -82,6 +82,7 @@ class MeSerializer(serializers.ModelSerializer):
             "name": workspace.name if workspace else "",
             "slug": workspace.slug if workspace else "",
             "hidden_menu_sections": list(workspace.hidden_menu_sections or []) if workspace else [],
+            "projects_view_mode": workspace.projects_view_mode if workspace else "kanban",
         }
 
 

@@ -337,14 +337,15 @@ export function Modal({
   bodyClassName = "",
   positionClassName = "items-center",
   overlayClassName = "bg-gray-900/40 backdrop-blur-md",
+  mobileSheet = false,
 }) {
   if (!open) return null;
 
   const modal = (
-    <div className={`crm-modal-overlay fixed inset-0 z-50 flex justify-center overflow-y-auto px-2 sm:px-4 ${overlayClassName} ${positionClassName}`}>
+    <div className={`crm-modal-overlay fixed inset-0 z-50 flex justify-center overflow-y-auto px-2 sm:px-4 ${overlayClassName} ${mobileSheet ? "crm-modal-bottom-sheet-overlay items-end sm:items-center" : positionClassName}`}>
       <div className="absolute inset-0" onClick={onClose} />
       <div
-        className={`crm-modal-panel relative z-10 flex min-w-0 w-full flex-col overflow-hidden rounded-3xl bg-white shadow-2xl sm:rounded-[32px] ${widthClassName}`}
+        className={`crm-modal-panel relative z-10 flex min-w-0 w-full flex-col overflow-hidden bg-white shadow-2xl ${mobileSheet ? "crm-modal-bottom-sheet rounded-b-none rounded-t-[32px] sm:rounded-[32px]" : "rounded-3xl sm:rounded-[32px]"} ${widthClassName}`}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-2.5 sm:px-7 sm:py-3.5">
           {headerContent || (

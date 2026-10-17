@@ -11,6 +11,8 @@ import {
   HardDrive,
   Hash,
   Layers,
+  LayoutGrid,
+  List,
   ListTodo,
   Lock,
   MessageCircle,
@@ -200,6 +202,7 @@ export default function Settings() {
   const [chatSettings, setChatSettings] = useState(null);
   const [yandexDiskSettings, setYandexDiskSettings] = useState(null);
   const [hiddenMenuSections, setHiddenMenuSections] = useState([]);
+  const [projectsViewMode, setProjectsViewMode] = useState("kanban");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [draggedRow, setDraggedRow] = useState(null);
@@ -273,6 +276,7 @@ export default function Settings() {
     setChatSettings(chatRows);
     setYandexDiskSettings(yandexDiskRows);
     setHiddenMenuSections(menuRows.hidden_sections || []);
+    setProjectsViewMode(menuRows.projects_view_mode === "list" ? "list" : "kanban");
     setChatForm({
       enabled: Boolean(chatRows.enabled),
       base_url: chatRows.base_url || "",
@@ -345,6 +349,27 @@ export default function Settings() {
     } catch (requestError) {
       setHiddenMenuSections(previous);
       setError(extractApiErrorMessage(requestError, "Не удалось изменить видимость раздела."));
+    } finally {
+      setMenuSettingsSaving("");
+    }
+  }
+
+  async function changeProjectsViewMode(nextMode) {
+    const previous = projectsViewMode;
+    setProjectsViewMode(nextMode);
+    localStorage.setItem("crm_projects_view_mode", nextMode);
+    setMenuSettingsSaving("projects_view_mode");
+    try {
+      const updated = await updateMenuSettings({ projects_view_mode: nextMode });
+      const savedMode = updated.projects_view_mode === "list" ? "list" : "kanban";
+      setProjectsViewMode(savedMode);
+      localStorage.setItem("crm_projects_view_mode", savedMode);
+      window.dispatchEvent(new CustomEvent("crm-project-view-mode-updated", { detail: { viewMode: savedMode } }));
+      setError("");
+    } catch (requestError) {
+      setProjectsViewMode(previous);
+      localStorage.setItem("crm_projects_view_mode", previous);
+      setError(extractApiErrorMessage(requestError, "Не удалось сохранить вид проектов."));
     } finally {
       setMenuSettingsSaving("");
     }
@@ -791,6 +816,32 @@ export default function Settings() {
                 </label>
               );
             })}
+          </div>
+        </SettingsCard>
+
+        <SettingsCard title="Отображение проектов" icon={<LayoutGrid size={16} />} defaultOpen>
+          <div className="space-y-3">
+            <p className="text-xs font-semibold leading-5 text-slate-500">
+              Выбранный вид применяется в разделе «Проекты» у всей команды.
+            </p>
+            <div className="grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1.5">
+              <button
+                type="button"
+                className={`flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-black transition ${projectsViewMode === "kanban" ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-white"}`}
+                disabled={Boolean(menuSettingsSaving)}
+                onClick={() => changeProjectsViewMode("kanban")}
+              >
+                <LayoutGrid size={17} />Канбан
+              </button>
+              <button
+                type="button"
+                className={`flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-black transition ${projectsViewMode === "list" ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-white"}`}
+                disabled={Boolean(menuSettingsSaving)}
+                onClick={() => changeProjectsViewMode("list")}
+              >
+                <List size={17} />Список
+              </button>
+            </div>
           </div>
         </SettingsCard>
 
