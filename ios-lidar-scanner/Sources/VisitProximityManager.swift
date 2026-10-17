@@ -1,7 +1,6 @@
 import Combine
 import CoreLocation
 import Foundation
-import UserNotifications
 
 private struct VisitProject: Codable {
     let id: Int
@@ -18,7 +17,7 @@ private struct VisitProject: Codable {
     var location: CLLocation { CLLocation(latitude: latitude, longitude: longitude) }
 }
 
-final class VisitProximityManager: NSObject, ObservableObject, CLLocationManagerDelegate, UNUserNotificationCenterDelegate {
+final class VisitProximityManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = VisitProximityManager()
 
     @Published private(set) var isEnabled: Bool
@@ -26,7 +25,6 @@ final class VisitProximityManager: NSObject, ObservableObject, CLLocationManager
     @Published private(set) var visitOpenSequence = 0
 
     private let locationManager = CLLocationManager()
-    private let notificationCenter = UNUserNotificationCenter.current()
     private let projectsKey = "ceh.visit.projects.v1"
     private let enabledKey = "ceh.visit.enabled.v1"
     private let radius: CLLocationDistance = 3_000
@@ -43,7 +41,6 @@ final class VisitProximityManager: NSObject, ObservableObject, CLLocationManager
         super.init()
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-        notificationCenter.delegate = self
         stopLegacyBackgroundMonitoring()
     }
 
@@ -87,7 +84,6 @@ final class VisitProximityManager: NSObject, ObservableObject, CLLocationManager
 
     func checkNearbyOnAppOpen() {
         guard isEnabled, !projects.isEmpty, !locationRequestPending else { return }
-        notificationCenter.requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
         switch locationManager.authorizationStatus {
         case .notDetermined:
             locationRequestPending = true
@@ -150,43 +146,5 @@ final class VisitProximityManager: NSObject, ObservableObject, CLLocationManager
             self.pendingProjectID = project.id
             self.visitOpenSequence += 1
         }
-
-        notificationCenter.getNotificationSettings { settings in
-            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
-            let content = UNMutableNotificationContent()
-            content.title = project.title
-            let phone = project.phone?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let phoneLine = phone.isEmpty ? "Телефон не указан" : "Телефон: \(phone)"
-            let addressDetails = [
-                project.entrance.flatMap { $0.isEmpty ? nil : "подъезд \($0)" },
-                project.floor.flatMap { $0.isEmpty ? nil : "этаж \($0)" },
-                project.apartment.flatMap { $0.isEmpty ? nil : "квартира \($0)" },
-            ].compactMap { $0 }.joined(separator: ", ")
-            let addressLine = addressDetails.isEmpty ? project.address : "\(project.address), \(addressDetails)"
-            content.body = "\(phoneLine)\nАдрес: \(addressLine)"
-            content.sound = .default
-            content.userInfo = ["visitProjectID": project.id]
-            self.notificationCenter.add(UNNotificationRequest(
-                identifier: "ceh-visit-open-\(project.id)-\(Int(now.timeIntervalSince1970))",
-                content: content,
-                trigger: nil
-            ))
-        }
-    }
-
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
-                                withCompletionHandler completionHandler: @escaping () -> Void) {
-        if let id = response.notification.request.content.userInfo["visitProjectID"] as? Int {
-            DispatchQueue.main.async {
-                self.pendingProjectID = id
-                self.visitOpenSequence += 1
-            }
-        }
-        completionHandler()
-    }
-
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
-                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .sound])
     }
 }

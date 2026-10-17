@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import React, { useLayoutEffect, useRef, useState } from "react";
+import { createPortal, flushSync } from "react-dom";
 import { X } from "lucide-react";
 
 const MOBILE_SHEET_TYPES = new Set(["text", "tel", "number", "email", "search", "url"]);
@@ -30,16 +30,16 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
   const [dragging, setDragging] = useState(false);
   const [dragY, setDragY] = useState(0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     setDragY(0);
     setDragging(false);
-    const frame = window.requestAnimationFrame(() => {
-      setEntered(true);
-      fieldRef.current?.focus({ preventScroll: true });
-    });
+    // iOS only opens the software keyboard when focus happens during the
+    // original tap. The sheet is mounted synchronously by begin().
+    fieldRef.current?.focus({ preventScroll: true });
+    const frame = window.requestAnimationFrame(() => setEntered(true));
     return () => {
       window.cancelAnimationFrame(frame);
       window.clearTimeout(closeTimerRef.current);
@@ -91,7 +91,13 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
     value,
     onChange: (event) => onValueChange(event.target.value),
     placeholder: inputProps.placeholder,
-    inputMode: inputProps.inputMode,
+    inputMode: inputProps.inputMode || (
+      inputProps.type === "number" ? "decimal" :
+        inputProps.type === "tel" ? "tel" :
+          inputProps.type === "email" ? "email" :
+            inputProps.type === "search" ? "search" :
+              inputProps.type === "url" ? "url" : undefined
+    ),
     autoComplete: inputProps.autoComplete,
     maxLength: inputProps.maxLength,
     enterKeyHint: multiline ? undefined : "done",
@@ -161,10 +167,14 @@ function useMobileFieldSheet({ value, defaultValue, type = "text", disabled, rea
     if (!mobileSheetAvailable(type, disabled, readOnly, mobileSheet)) return false;
     event?.preventDefault?.();
     const currentValue = String(value ?? inputRef.current?.value ?? defaultValue ?? "");
-    setDraft(currentValue);
-    setTitle(closestFieldLabel(inputRef.current, mobileLabel, placeholder));
     inputRef.current?.blur();
-    setOpen(true);
+    // Commit the portal before the tap handler returns so WKWebView accepts
+    // focus on its real field and opens the matching keyboard immediately.
+    flushSync(() => {
+      setDraft(currentValue);
+      setTitle(closestFieldLabel(inputRef.current, mobileLabel, placeholder));
+      setOpen(true);
+    });
     return true;
   };
 
