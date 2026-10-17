@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Calendar,
   Check,
+  CloudOff,
   Link,
   Copy,
   FileText,
@@ -85,6 +86,7 @@ import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalC
 
 const VIEW_MODE_KEY = "crm_projects_view_mode";
 const OFFLINE_PROJECTS_KEY = "crm_projects_offline_cache_v1";
+const OFFLINE_SNAPSHOT_KEY = "crm_projects_offline_snapshot_v2";
 const PROJECT_DRAG_HOLD_MS = 1500;
 const PROJECT_DRAG_MOVE_CANCEL_PX = 12;
 
@@ -999,14 +1001,15 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
   );
 }
 
-function EmptyColumn({ onCreate }) {
+function EmptyColumn({ onCreate, disabled = false }) {
   return (
     <button
       type="button"
       onClick={onCreate}
-      className="flex min-h-[108px] w-full items-center justify-center rounded-[22px] border border-dashed border-slate-200 bg-white/75 text-sm font-semibold text-slate-400 transition hover:border-slate-300 hover:bg-white hover:text-slate-700"
+      disabled={disabled}
+      className="flex min-h-[108px] w-full items-center justify-center rounded-[22px] border border-dashed border-slate-200 bg-white/75 text-sm font-semibold text-slate-400 transition hover:border-slate-300 hover:bg-white hover:text-slate-700 disabled:cursor-default disabled:hover:border-slate-200 disabled:hover:bg-white/75 disabled:hover:text-slate-400"
     >
-      Добавить первый проект
+      {disabled ? "Нет сохранённых проектов" : "Добавить первый проект"}
     </button>
   );
 }
@@ -1108,27 +1111,72 @@ function ProjectDragGhost({ project, amount, ageDays, left, top, width }) {
   );
 }
 
-function readOfflineProjects() {
+function emptyOfflineSnapshot() {
+  return {
+    savedAt: "",
+    projects: [],
+    clients: [],
+    payments: [],
+    tasks: [],
+    statuses: DEFAULT_STATUS_OPTIONS,
+    financeCategories: [],
+    accounts: [],
+    customFields: [],
+  };
+}
+
+function readOfflineSnapshot() {
   try {
-    const value = JSON.parse(localStorage.getItem(OFFLINE_PROJECTS_KEY) || "[]");
-    return Array.isArray(value) ? value : [];
+    const snapshot = JSON.parse(localStorage.getItem(OFFLINE_SNAPSHOT_KEY) || "null");
+    if (snapshot && Array.isArray(snapshot.projects)) {
+      return { ...emptyOfflineSnapshot(), ...snapshot };
+    }
+    const projects = JSON.parse(localStorage.getItem(OFFLINE_PROJECTS_KEY) || "[]");
+    return { ...emptyOfflineSnapshot(), projects: Array.isArray(projects) ? projects : [] };
   } catch {
-    return [];
+    return emptyOfflineSnapshot();
   }
+}
+
+function saveOfflineSnapshot(snapshot) {
+  try {
+    localStorage.setItem(OFFLINE_SNAPSHOT_KEY, JSON.stringify(snapshot));
+    localStorage.setItem(OFFLINE_PROJECTS_KEY, JSON.stringify(snapshot.projects));
+  } catch {
+    // Viewing remains available from memory when the device storage is full.
+  }
+}
+
+function formatOfflineSavedAt(value) {
+  if (!value) return "время обновления неизвестно";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "время обновления неизвестно";
+  return `обновлено ${date.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`;
 }
 
 export default function Projects() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const [projects, setProjects] = useState(readOfflineProjects);
-  const [clients, setClients] = useState([]);
-  const [payments, setPayments] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [statusRows, setStatusRows] = useState(DEFAULT_STATUS_OPTIONS);
-  const [financeCategories, setFinanceCategories] = useState([]);
-  const [accounts, setAccounts] = useState([]);
-  const [customFields, setCustomFields] = useState([]);
+  const initialOfflineSnapshotRef = useRef(null);
+  if (!initialOfflineSnapshotRef.current) {
+    initialOfflineSnapshotRef.current = readOfflineSnapshot();
+  }
+  const initialOfflineSnapshot = initialOfflineSnapshotRef.current;
+
+  const [projects, setProjects] = useState(initialOfflineSnapshot.projects);
+  const [clients, setClients] = useState(initialOfflineSnapshot.clients);
+  const [payments, setPayments] = useState(initialOfflineSnapshot.payments);
+  const [tasks, setTasks] = useState(initialOfflineSnapshot.tasks);
+  const [statusRows, setStatusRows] = useState(initialOfflineSnapshot.statuses);
+  const [financeCategories, setFinanceCategories] = useState(initialOfflineSnapshot.financeCategories);
+  const [accounts, setAccounts] = useState(initialOfflineSnapshot.accounts);
+  const [customFields, setCustomFields] = useState(initialOfflineSnapshot.customFields);
+  const [isOnline, setIsOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
+  const [usingOfflineData, setUsingOfflineData] = useState(() => typeof navigator !== "undefined" && !navigator.onLine);
+  const [hasLoadedOnlineData, setHasLoadedOnlineData] = useState(false);
+  const [offlineSavedAt, setOfflineSavedAt] = useState(initialOfflineSnapshot.savedAt);
+  const offlineMode = !isOnline || usingOfflineData;
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem(VIEW_MODE_KEY) || "kanban");
   const [touchDragProjectId, setTouchDragProjectId] = useState(null);
@@ -1251,9 +1299,29 @@ export default function Projects() {
     () => financeCategoryOptions.filter((category) => category.type === paymentForm.category_kind),
     [financeCategoryOptions, paymentForm.category_kind]
   );
+
+  function applyOfflineSnapshot(snapshot) {
+    setProjects(snapshot.projects || []);
+    setClients(snapshot.clients || []);
+    setPayments(snapshot.payments || []);
+    setTasks(snapshot.tasks || []);
+    setStatusRows(snapshot.statuses?.length ? snapshot.statuses : DEFAULT_STATUS_OPTIONS);
+    setFinanceCategories(snapshot.financeCategories || []);
+    setAccounts(snapshot.accounts || []);
+    setCustomFields(snapshot.customFields || []);
+    setOfflineSavedAt(snapshot.savedAt || "");
+  }
+
   async function reloadData({ silent = false } = {}) {
     if (!silent) {
       setLoading(true);
+    }
+
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      applyOfflineSnapshot(readOfflineSnapshot());
+      setUsingOfflineData(true);
+      setLoading(false);
+      return;
     }
 
     try {
@@ -1269,14 +1337,34 @@ export default function Projects() {
       ]);
 
       setProjects(projectRows);
-      localStorage.setItem(OFFLINE_PROJECTS_KEY, JSON.stringify(projectRows));
       setClients(clientRows);
       setPayments(paymentRows);
       setTasks(taskRows);
-      setStatusRows(statusItems.length > 0 ? statusItems : DEFAULT_STATUS_OPTIONS);
+      const nextStatuses = statusItems.length > 0 ? statusItems : DEFAULT_STATUS_OPTIONS;
+      setStatusRows(nextStatuses);
       setFinanceCategories(financeCategoryRows);
       setAccounts(accountRows);
       setCustomFields(customFieldRows);
+      const snapshot = {
+        savedAt: new Date().toISOString(),
+        projects: projectRows,
+        clients: clientRows,
+        payments: paymentRows,
+        tasks: taskRows,
+        statuses: nextStatuses,
+        financeCategories: financeCategoryRows,
+        accounts: accountRows,
+        customFields: customFieldRows,
+      };
+      saveOfflineSnapshot(snapshot);
+      setOfflineSavedAt(snapshot.savedAt);
+      setUsingOfflineData(false);
+      setHasLoadedOnlineData(true);
+    } catch (error) {
+      const snapshot = readOfflineSnapshot();
+      applyOfflineSnapshot(snapshot);
+      setUsingOfflineData(true);
+      throw error;
     } finally {
       if (!silent) {
         setLoading(false);
@@ -1337,16 +1425,26 @@ export default function Projects() {
 
   useEffect(() => {
     reloadData().catch(() => {
-      setProjects(readOfflineProjects());
-      setClients([]);
-      setPayments([]);
-      setTasks([]);
-      setStatusRows(DEFAULT_STATUS_OPTIONS);
-      setFinanceCategories([]);
-      setAccounts([]);
-      setCustomFields([]);
       setLoading(false);
     });
+  }, []);
+
+  useEffect(() => {
+    const handleOffline = () => {
+      setIsOnline(false);
+      applyOfflineSnapshot(readOfflineSnapshot());
+      setUsingOfflineData(true);
+    };
+    const handleOnline = () => {
+      setIsOnline(true);
+      void reloadData({ silent: true }).catch(() => setUsingOfflineData(true));
+    };
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+    return () => {
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+    };
   }, []);
 
   useEffect(() => {
@@ -1356,11 +1454,16 @@ export default function Projects() {
   useEffect(() => {
     let active = true;
     const refreshProjects = () => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible" || !navigator.onLine) return;
       void fetchProjects().then((rows) => {
         if (active) {
           setProjects(rows);
-          localStorage.setItem(OFFLINE_PROJECTS_KEY, JSON.stringify(rows));
+          const snapshot = readOfflineSnapshot();
+          const savedAt = new Date().toISOString();
+          saveOfflineSnapshot({ ...snapshot, savedAt, projects: rows });
+          setOfflineSavedAt(savedAt);
+          setUsingOfflineData(false);
+          setHasLoadedOnlineData(true);
         }
       }).catch(() => {});
     };
@@ -1378,6 +1481,26 @@ export default function Projects() {
   useEffect(() => {
     localStorage.setItem(VIEW_MODE_KEY, viewMode);
   }, [viewMode]);
+
+  useEffect(() => {
+    if (offlineMode || !hasLoadedOnlineData) return undefined;
+    const timer = window.setTimeout(() => {
+      const savedAt = new Date().toISOString();
+      saveOfflineSnapshot({
+        savedAt,
+        projects,
+        clients,
+        payments,
+        tasks,
+        statuses: statusRows,
+        financeCategories,
+        accounts,
+        customFields,
+      });
+      setOfflineSavedAt(savedAt);
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [accounts, clients, customFields, financeCategories, hasLoadedOnlineData, offlineMode, payments, projects, statusRows, tasks]);
 
   useEffect(() => {
     const state = location.state || {};
@@ -1719,7 +1842,7 @@ export default function Projects() {
   }, [activeProject, defaultStatusValue]);
 
   useEffect(() => {
-    if (!activeProject) return;
+    if (!activeProject || offlineMode) return;
 
     const payload = buildProjectUpdatePayload(detailForm);
     const payloadKey = JSON.stringify(payload);
@@ -1779,7 +1902,7 @@ export default function Projects() {
     }, 900);
 
     return () => window.clearTimeout(detailAutosaveTimerRef.current);
-  }, [activeProject, defaultStatusValue, detailForm]);
+  }, [activeProject, defaultStatusValue, detailForm, offlineMode]);
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -1897,6 +2020,7 @@ export default function Projects() {
   }, [activeProjectId, addressDetailsOpen, detailForm.object_address]);
 
   function openCreateModal(status = defaultStatusValue) {
+    if (offlineMode) return;
     setCreateError("");
     setCreateBonusEnabled(false);
     setCreateBonusPreview(null);
@@ -2877,6 +3001,7 @@ export default function Projects() {
   }
 
   async function moveProjectToStatus(projectId, nextStatus) {
+    if (offlineMode) return;
     const target = projects.find((project) => project.id === projectId);
     if (!target || target.status === nextStatus) return;
 
@@ -3107,6 +3232,7 @@ export default function Projects() {
   }
 
   function handleProjectPointerDown(event, projectId) {
+    if (offlineMode) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
 
     event.stopPropagation();
@@ -3258,6 +3384,26 @@ export default function Projects() {
           width={dragPreview.width}
         />
       )}
+      {offlineMode ? (
+        <div className="flex flex-col gap-3 rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <CloudOff size={20} className="mt-0.5 shrink-0 text-amber-600" />
+            <div className="min-w-0">
+              <div className="text-sm font-black">Офлайн-режим · только просмотр</div>
+              <div className="mt-0.5 text-xs font-semibold text-amber-800/80">
+                {projects.length
+                  ? `Показана сохранённая копия: ${formatOfflineSavedAt(offlineSavedAt)}.`
+                  : "На этом устройстве ещё нет сохранённой копии проектов."}
+              </div>
+            </div>
+          </div>
+          {isOnline ? (
+            <Button type="button" variant="secondary" className="shrink-0" onClick={() => reloadData().catch(() => {})}>
+              Повторить загрузку
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-end">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 rounded-full bg-white p-1 shadow-sm ring-1 ring-slate-200/80">
@@ -3265,7 +3411,7 @@ export default function Projects() {
             <ModeButton active={viewMode === "list"} icon={List} label="Список" onClick={() => setViewMode("list")} />
           </div>
 
-          <Button type="button" className="px-6" onClick={() => openCreateModal()}>
+          <Button type="button" className="px-6" onClick={() => openCreateModal()} disabled={offlineMode}>
             <Plus size={16} />
             Создать проект
           </Button>
@@ -3339,12 +3485,15 @@ export default function Projects() {
                     })}
                   </div>
 
-                  {columnProjects.length === 0 && <EmptyColumn onCreate={() => openCreateModal(status.value)} />}
+                  {columnProjects.length === 0 && (
+                    <EmptyColumn disabled={offlineMode} onCreate={() => openCreateModal(status.value)} />
+                  )}
                 </div>
 
                 <div className="border-t border-slate-100 px-5 py-4">
                   <button
                     type="button"
+                    disabled={offlineMode}
                     className="flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-[0.98rem] font-semibold text-slate-500 transition hover:bg-slate-50 hover:text-slate-800"
                     onClick={() => openCreateModal(status.value)}
                   >
@@ -3708,6 +3857,7 @@ export default function Projects() {
               className="col-span-2 h-10 min-w-0 py-2 font-bold sm:col-span-1"
               value={detailForm.title}
               onChange={(event) => setDetailForm((prev) => ({ ...prev, title: event.target.value }))}
+              readOnly={offlineMode}
               aria-label="Наименование проекта"
               placeholder="Наименование проекта"
             />
@@ -3715,6 +3865,7 @@ export default function Projects() {
               className="h-10 min-w-0 py-2 font-semibold"
               value={detailForm.status}
               onChange={(event) => setDetailForm((prev) => ({ ...prev, status: event.target.value }))}
+              disabled={offlineMode}
               aria-label="Статус проекта"
             >
               {statusOptions.map((option) => (
@@ -3728,6 +3879,7 @@ export default function Projects() {
                 className="h-10 min-w-0 py-2 pr-7 font-black"
                 value={detailForm.total_amount}
                 onChange={(event) => setDetailForm((prev) => ({ ...prev, total_amount: formatAmountInput(event.target.value) }))}
+                readOnly={offlineMode}
                 inputMode="numeric"
                 aria-label="Стоимость проекта"
                 placeholder="120 000"
@@ -3743,7 +3895,25 @@ export default function Projects() {
         overlayClassName="crm-project-modal-overlay bg-slate-950/25 backdrop-blur-sm backdrop-saturate-75"
       >
         {activeProject && (
-          <div className="space-y-5">
+          <div
+            className="space-y-5"
+            onChangeCapture={(event) => {
+              if (!offlineMode) return;
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+          >
+            {offlineMode ? (
+              <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950">
+                <CloudOff size={18} className="mt-0.5 shrink-0 text-amber-600" />
+                <div>
+                  <div className="text-sm font-black">Карточка открыта из памяти телефона</div>
+                  <div className="mt-0.5 text-xs font-semibold text-amber-800/80">
+                    Просмотр доступен, изменения будут доступны после подключения к интернету.
+                  </div>
+                </div>
+              </div>
+            ) : null}
             <div className="space-y-5">
               <div className="grid overflow-hidden rounded-[22px] border border-slate-200 bg-slate-50/70 md:grid-cols-[1.1fr_1.35fr]">
                 <div className="min-w-0 border-b border-slate-200 p-4 md:border-b-0 md:border-r">
