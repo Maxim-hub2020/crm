@@ -66,7 +66,7 @@ function MetricCard({ icon: Icon, label, value, note, tone = "slate", onClick })
     <Component
       type={onClick ? "button" : undefined}
       onClick={onClick}
-      className={`rounded-[26px] bg-white p-4 text-left shadow-sm ring-1 ring-slate-200/70 ${
+      className={`min-w-0 max-w-full overflow-hidden rounded-[26px] bg-white p-4 text-left shadow-sm ring-1 ring-slate-200/70 ${
         onClick ? "transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-400" : ""
       }`}
     >
@@ -74,17 +74,17 @@ function MetricCard({ icon: Icon, label, value, note, tone = "slate", onClick })
         <Icon size={17} />
       </div>
       <div className="mt-4 text-[10px] font-black uppercase tracking-[0.17em] text-slate-400">{label}</div>
-      <div className="mt-1 text-2xl font-black tracking-tight text-slate-950">{value}</div>
-      <div className="mt-1 text-xs font-semibold text-slate-500">{note}</div>
+      <div className="mt-1 break-words text-xl font-black tracking-tight text-slate-950 sm:text-2xl">{value}</div>
+      <div className="mt-1 break-words text-xs font-semibold text-slate-500">{note}</div>
     </Component>
   );
 }
 
 function Section({ id, title, description, action, children, className = "" }) {
   return (
-    <section id={id} className={`rounded-[30px] bg-white p-4 shadow-sm ring-1 ring-slate-200/70 sm:p-5 ${className}`}>
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
+    <section id={id} className={`min-w-0 max-w-full overflow-hidden rounded-[30px] bg-white p-4 shadow-sm ring-1 ring-slate-200/70 sm:p-5 ${className}`}>
+      <div className="mb-4 flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
           <h2 className="text-base font-black tracking-tight text-slate-950">{title}</h2>
           {description ? <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">{description}</p> : null}
         </div>
@@ -107,14 +107,14 @@ function ProjectRow({ project, meta, tone = "slate", onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className="group flex w-full items-center justify-between gap-3 rounded-2xl bg-slate-50 px-3 py-3 text-left transition hover:bg-blue-50"
+      className="group flex min-w-0 w-full flex-col items-stretch gap-2 rounded-2xl bg-slate-50 px-3 py-3 text-left transition hover:bg-blue-50 min-[430px]:flex-row min-[430px]:items-center min-[430px]:justify-between min-[430px]:gap-3"
     >
       <div className="min-w-0">
         <div className="truncate text-sm font-black text-slate-900">{projectDisplayName(project)}</div>
         <div className="mt-1 truncate text-xs font-semibold text-slate-500">{project.client_name || "Клиент не указан"}</div>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {meta ? <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${toneClass}`}>{meta}</span> : null}
+      <div className="flex min-w-0 items-center justify-between gap-2 min-[430px]:shrink-0 min-[430px]:justify-start">
+        {meta ? <span className={`min-w-0 truncate rounded-full px-2.5 py-1 text-[10px] font-black ${toneClass}`}>{meta}</span> : null}
         <ArrowRight size={15} className="text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-blue-600" />
       </div>
     </button>
@@ -231,7 +231,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="mx-auto max-w-[1600px] space-y-5">
+    <div className="mx-auto w-full min-w-0 max-w-[1600px] space-y-5 overflow-x-hidden">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="text-2xl font-black tracking-tight text-slate-950">Состояние бизнеса</h2>
@@ -250,7 +250,7 @@ export default function Dashboard() {
 
       {error ? <div className="rounded-2xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">{error}</div> : null}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+      <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         <MetricCard
           icon={Landmark}
           label="Сейчас в кассе"
@@ -289,7 +289,7 @@ export default function Dashboard() {
       </div>
 
       <Section title="Проекты по этапам" description="Количество и общая стоимость проектов на каждом этапе.">
-        <div className="no-scrollbar flex gap-3 overflow-x-auto pb-1">
+        <div className="no-scrollbar flex w-full min-w-0 gap-3 overflow-x-auto overscroll-x-contain pb-1">
           {statusSummary.map((status) => (
             <div key={status.code} className="min-w-[180px] flex-1 rounded-[22px] bg-slate-50 px-4 py-3 ring-1 ring-slate-100">
               <div className="truncate text-xs font-black uppercase tracking-wide text-slate-500">{status.name}</div>
@@ -303,7 +303,7 @@ export default function Dashboard() {
         </div>
       </Section>
 
-      <div className="grid gap-5 xl:grid-cols-2">
+      <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-2">
         <Section
           id="dashboard-risks"
           title="Финансовые риски"
@@ -389,9 +389,9 @@ export default function Dashboard() {
         </Section>
       </div>
 
-      <div className="flex items-center gap-2 px-1 text-xs font-semibold text-slate-400">
-        <Clock3 size={14} />
-        Финансовые показатели учитывают текущие операции и прогноз на 60 дней. Заявки в расчёты не входят.
+      <div className="flex min-w-0 items-start gap-2 px-1 text-xs font-semibold text-slate-400">
+        <Clock3 size={14} className="mt-0.5 shrink-0" />
+        <span className="min-w-0">Финансовые показатели учитывают текущие операции и прогноз на 60 дней. Заявки в расчёты не входят.</span>
       </div>
     </div>
   );
