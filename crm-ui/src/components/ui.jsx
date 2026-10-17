@@ -25,6 +25,8 @@ function closestFieldLabel(input, explicitLabel, placeholder) {
 function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueChange, onClose }) {
   const fieldRef = useRef(null);
   const closeTimerRef = useRef(null);
+  const revealTimerRef = useRef(null);
+  const blurTimerRef = useRef(null);
   const dragRef = useRef({ pointerId: null, startY: 0, startedAt: 0 });
   const [entered, setEntered] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -39,10 +41,22 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
     // iOS only opens the software keyboard when focus happens during the
     // original tap. The sheet is mounted synchronously by begin().
     fieldRef.current?.focus({ preventScroll: true });
-    const frame = window.requestAnimationFrame(() => setEntered(true));
+    const reveal = () => {
+      window.clearTimeout(revealTimerRef.current);
+      revealTimerRef.current = window.setTimeout(() => {
+        window.requestAnimationFrame(() => setEntered(true));
+      }, 60);
+    };
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("resize", reveal);
+    revealTimerRef.current = window.setTimeout(() => {
+      window.requestAnimationFrame(() => setEntered(true));
+    }, 120);
     return () => {
-      window.cancelAnimationFrame(frame);
+      viewport?.removeEventListener("resize", reveal);
+      window.clearTimeout(revealTimerRef.current);
       window.clearTimeout(closeTimerRef.current);
+      window.clearTimeout(blurTimerRef.current);
       document.body.style.overflow = previousOverflow;
     };
   }, [open]);
@@ -51,14 +65,14 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
 
   const close = () => {
     if (closeTimerRef.current) return;
-    fieldRef.current?.blur();
     setDragging(false);
     setEntered(false);
+    blurTimerRef.current = window.setTimeout(() => fieldRef.current?.blur(), 90);
     closeTimerRef.current = window.setTimeout(() => {
       closeTimerRef.current = null;
       setDragY(0);
       onClose();
-    }, 240);
+    }, 280);
   };
 
   const startDrag = (event) => {
@@ -114,7 +128,7 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[90] flex items-end" role="presentation">
+    <div className="fixed inset-0 z-[90]" role="presentation">
       <button
         type="button"
         aria-label="Закрыть ввод"
@@ -123,10 +137,11 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
         onClick={close}
       />
       <section
-        className="relative z-10 w-full rounded-t-[34px] bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-24px_70px_rgba(15,23,42,0.24)] will-change-transform"
+        className="fixed inset-x-0 bottom-0 z-10 w-full rounded-t-[34px] bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-24px_70px_rgba(15,23,42,0.24)] will-change-transform"
         style={{
           transform: entered ? `translate3d(0, ${dragY}px, 0)` : "translate3d(0, 100%, 0)",
-          transition: dragging ? "none" : "transform 240ms cubic-bezier(0.22, 1, 0.36, 1)",
+          transition: dragging ? "none" : "transform 280ms cubic-bezier(0.22, 1, 0.36, 1)",
+          backfaceVisibility: "hidden",
         }}
         role="dialog"
         aria-modal="true"

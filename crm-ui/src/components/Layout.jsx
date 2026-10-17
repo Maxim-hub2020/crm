@@ -10,6 +10,12 @@ import { openNativeYandexRoute } from "../utils/appLinks.js";
 
 const PENDING_VISIT_KEY = "crm_pending_visit_project_id";
 
+function consumePendingVisitProjectId() {
+  const projectId = localStorage.getItem(PENDING_VISIT_KEY);
+  if (projectId) localStorage.removeItem(PENDING_VISIT_KEY);
+  return projectId;
+}
+
 function visitRouteLinks(project) {
   const lat = Number(project?.object_lat);
   const lon = Number(project?.object_lon);
@@ -69,7 +75,7 @@ export default function Layout({ children }) {
   const [globalResults, setGlobalResults] = useState([]);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [visitProjects, setVisitProjects] = useState([]);
-  const [visitProjectId, setVisitProjectId] = useState(() => localStorage.getItem(PENDING_VISIT_KEY));
+  const [visitProjectId, setVisitProjectId] = useState(consumePendingVisitProjectId);
 
   useEffect(() => {
     let active = true;
@@ -140,7 +146,7 @@ export default function Layout({ children }) {
     function handleVisitProject(event) {
       const projectId = event.detail?.projectId;
       if (!projectId) return;
-      localStorage.setItem(PENDING_VISIT_KEY, String(projectId));
+      localStorage.removeItem(PENDING_VISIT_KEY);
       setVisitProjectId(String(projectId));
     }
     window.addEventListener("cehcrm:visit-project", handleVisitProject);

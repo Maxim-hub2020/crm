@@ -1,4 +1,4 @@
-const CACHE_NAME = "crm-shell-v6";
+const CACHE_NAME = "crm-shell-v7";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
