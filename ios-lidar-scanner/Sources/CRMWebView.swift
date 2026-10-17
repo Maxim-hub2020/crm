@@ -153,6 +153,7 @@ struct CRMWebView: UIViewRepresentable {
         let onScan: (ScanRequest) -> Void
         var reloadID = 0
         var visitOpenSequence = 0
+        var attemptedOfflineFallback = false
         init(onScan: @escaping (ScanRequest) -> Void) { self.onScan = onScan }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -321,10 +322,22 @@ struct CRMWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             guard (error as NSError).code != NSURLErrorCancelled else { return }
+            if !attemptedOfflineFallback {
+                attemptedOfflineFallback = true
+                webView.load(URLRequest(url: CRMOrigin.home, cachePolicy: .returnCacheDataDontLoad))
+                return
+            }
             let controller = UIAlertController(title: "CRM недоступна", message: "Проверьте интернет-соединение и повторите загрузку.", preferredStyle: .alert)
-            controller.addAction(UIAlertAction(title: "Повторить", style: .default) { _ in webView.load(URLRequest(url: CRMOrigin.home)) })
+            controller.addAction(UIAlertAction(title: "Повторить", style: .default) { _ in
+                self.attemptedOfflineFallback = false
+                webView.load(URLRequest(url: CRMOrigin.home, cachePolicy: .reloadRevalidatingCacheData))
+            })
             controller.addAction(UIAlertAction(title: "Закрыть", style: .cancel))
             presenter(for: webView)?.present(controller, animated: true)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            attemptedOfflineFallback = false
         }
     }
 }
