@@ -59,7 +59,7 @@ import {
   updateYandexDiskSettings,
   uploadDocumentTemplate,
 } from "../api";
-import { Button, Input, Modal, Select } from "../components/ui.jsx";
+import { Button, Input, Modal, Select, Textarea } from "../components/ui.jsx";
 import { formatRussianPhoneInput } from "../utils/phone.js";
 
 const STATUS_COLOR = "sky";
@@ -847,7 +847,7 @@ export default function Settings() {
             </div>
             {renderYandexDiskPathField("base_path", "Папка проектов", "Сюда будут автоматически попадать новые папки проектов.")}
             {renderYandexDiskPathField("archive_path", "Папка архива", "Сюда CRM перенесёт папку проекта после перехода в завершённый статус.")}
-            <textarea
+            <Textarea
               className="min-h-40 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
               value={yandexDiskForm.folder_template_text}
               onChange={(event) => setYandexDiskForm((prev) => ({ ...prev, folder_template_text: event.target.value }))}

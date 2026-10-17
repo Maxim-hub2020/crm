@@ -1,6 +1,119 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+
+const MOBILE_SHEET_TYPES = new Set(["text", "tel", "number", "email", "search", "url"]);
+
+function mobileSheetAvailable(type, disabled, readOnly, enabled) {
+  if (enabled === false || disabled || readOnly || typeof window === "undefined") return false;
+  return MOBILE_SHEET_TYPES.has(type || "text") && window.matchMedia("(max-width: 767px)").matches;
+}
+
+function closestFieldLabel(input, explicitLabel, placeholder) {
+  if (explicitLabel) return explicitLabel;
+  if (input?.getAttribute("aria-label")) return input.getAttribute("aria-label");
+  let parent = input?.parentElement;
+  for (let depth = 0; parent && depth < 4; depth += 1, parent = parent.parentElement) {
+    const label = parent.querySelector(":scope > label");
+    const text = label?.textContent?.trim();
+    if (text) return text;
+  }
+  return placeholder || "Введите значение";
+}
+
+function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueChange, onCancel, onDone }) {
+  const fieldRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const frame = window.requestAnimationFrame(() => fieldRef.current?.focus({ preventScroll: true }));
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open]);
+
+  if (!open) return null;
+  const sharedProps = {
+    ref: fieldRef,
+    value,
+    onChange: (event) => onValueChange(event.target.value),
+    placeholder: inputProps.placeholder,
+    inputMode: inputProps.inputMode,
+    autoComplete: inputProps.autoComplete,
+    maxLength: inputProps.maxLength,
+    enterKeyHint: multiline ? undefined : "done",
+    "data-mobile-sheet-field": "true",
+    className: multiline
+      ? "min-h-36 w-full resize-none rounded-3xl border border-slate-200 bg-slate-50 px-5 py-4 text-lg font-semibold leading-relaxed text-slate-900 outline-none transition focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-500/10"
+      : "h-16 w-full rounded-3xl border border-slate-200 bg-slate-50 px-5 text-xl font-bold text-slate-900 outline-none transition placeholder:text-slate-300 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-500/10",
+    onKeyDown: (event) => {
+      if (!multiline && event.key === "Enter") {
+        event.preventDefault();
+        onDone();
+      }
+    },
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[90] flex items-end bg-slate-950/45 backdrop-blur-sm" role="presentation">
+      <button type="button" aria-label="Закрыть ввод" className="absolute inset-0 cursor-default" onClick={onCancel} />
+      <section className="relative z-10 w-full rounded-t-[34px] bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-24px_70px_rgba(15,23,42,0.24)]" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200" />
+        <div className="mb-4 flex items-center justify-between gap-3 px-1">
+          <button type="button" className="rounded-full px-3 py-2 text-sm font-bold text-slate-500" onClick={onCancel}>Отмена</button>
+          <h2 className="min-w-0 flex-1 truncate text-center text-lg font-black text-slate-900">{title}</h2>
+          <button type="button" className="rounded-full bg-slate-100 p-2.5 text-slate-500" onClick={onCancel} aria-label="Закрыть"><X size={20} /></button>
+        </div>
+        {multiline ? <textarea {...sharedProps} rows={5} /> : <input {...sharedProps} type={inputProps.type || "text"} />}
+        <button type="button" className="mt-4 h-14 w-full rounded-full bg-slate-950 text-base font-black text-white shadow-lg transition active:scale-[0.99]" onClick={onDone}>Готово</button>
+      </section>
+    </div>,
+    document.body
+  );
+}
+
+function useMobileFieldSheet({ value, defaultValue, type = "text", disabled, readOnly, mobileSheet, mobileLabel, placeholder, onChange, onBlur, multiline = false }) {
+  const originalValueRef = useRef("");
+  const inputRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [title, setTitle] = useState("");
+
+  const emitChange = (nextValue) => {
+    setDraft(nextValue);
+    onChange?.({
+      target: { value: nextValue, name: inputRef.current?.name || "" },
+      currentTarget: { value: nextValue, name: inputRef.current?.name || "" },
+    });
+  };
+
+  const begin = (event) => {
+    if (!mobileSheetAvailable(type, disabled, readOnly, mobileSheet)) return false;
+    event?.preventDefault?.();
+    const currentValue = String(value ?? inputRef.current?.value ?? defaultValue ?? "");
+    originalValueRef.current = currentValue;
+    setDraft(currentValue);
+    setTitle(closestFieldLabel(inputRef.current, mobileLabel, placeholder));
+    inputRef.current?.blur();
+    setOpen(true);
+    return true;
+  };
+
+  const cancel = () => {
+    emitChange(originalValueRef.current);
+    setOpen(false);
+  };
+
+  const done = () => {
+    setOpen(false);
+    onBlur?.({ target: { value: draft }, currentTarget: { value: draft } });
+  };
+
+  return { inputRef, open, draft, title, begin, emitChange, cancel, done, multiline };
+}
 
 export function Card({ className = "", children }) {
   return <div className={`rounded-[32px] bg-white shadow-lg ${className}`}>{children}</div>;
@@ -38,18 +151,70 @@ export function Button({ variant = "primary", className = "", ...props }) {
   return <button className={`${base} ${styles} ${className}`} {...props} />;
 }
 
-export function Input({ className = "", onKeyDown, enterKeyHint, ...props }) {
+export function Input({ className = "", onKeyDown, onPointerDown, onFocus, enterKeyHint, mobileSheet = true, mobileLabel, ...props }) {
   const numeric = props.inputMode === "numeric" || props.inputMode === "decimal";
+  const sheet = useMobileFieldSheet({ ...props, mobileSheet, mobileLabel, multiline: false });
   return (
-    <input
-      className={`w-full rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500/20 ${className}`}
-      enterKeyHint={enterKeyHint || (numeric ? "done" : undefined)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" && numeric) event.currentTarget.blur();
-        onKeyDown?.(event);
-      }}
-      {...props}
-    />
+    <>
+      <input
+        ref={sheet.inputRef}
+        className={`w-full rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500/20 ${className}`}
+        enterKeyHint={enterKeyHint || (numeric ? "done" : undefined)}
+        onPointerDown={(event) => {
+          onPointerDown?.(event);
+          if (!event.defaultPrevented && sheet.begin(event)) onFocus?.(event);
+        }}
+        onFocus={(event) => {
+          onFocus?.(event);
+          if (!event.defaultPrevented && event.detail === 0) sheet.begin(event);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && numeric) event.currentTarget.blur();
+          onKeyDown?.(event);
+        }}
+        {...props}
+      />
+      <MobileFieldSheet
+        open={sheet.open}
+        title={sheet.title}
+        value={sheet.draft}
+        inputProps={props}
+        onValueChange={sheet.emitChange}
+        onCancel={sheet.cancel}
+        onDone={sheet.done}
+      />
+    </>
+  );
+}
+
+export function Textarea({ className = "", onPointerDown, onFocus, mobileSheet = true, mobileLabel, ...props }) {
+  const sheet = useMobileFieldSheet({ ...props, type: "text", mobileSheet, mobileLabel, multiline: true });
+  return (
+    <>
+      <textarea
+        ref={sheet.inputRef}
+        className={`w-full rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500/20 ${className}`}
+        onPointerDown={(event) => {
+          onPointerDown?.(event);
+          if (!event.defaultPrevented && sheet.begin(event)) onFocus?.(event);
+        }}
+        onFocus={(event) => {
+          onFocus?.(event);
+          if (!event.defaultPrevented && event.detail === 0) sheet.begin(event);
+        }}
+        {...props}
+      />
+      <MobileFieldSheet
+        open={sheet.open}
+        title={sheet.title}
+        multiline
+        value={sheet.draft}
+        inputProps={props}
+        onValueChange={sheet.emitChange}
+        onCancel={sheet.cancel}
+        onDone={sheet.done}
+      />
+    </>
   );
 }
 

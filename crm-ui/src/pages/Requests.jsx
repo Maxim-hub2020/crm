@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, LoaderCircle, Phone, RefreshCw, ShieldQuestion, Trash2 } from "lucide-react";
 
 import { deleteCalculatorLead, extractApiErrorMessage, fetchCalculatorLeads, fetchMe, updateCalculatorLead } from "../api";
-import { Badge, Button, Card, CardBody, CardHeader, Modal } from "../components/ui.jsx";
+import { Badge, Button, Card, CardBody, CardHeader, Modal, Textarea } from "../components/ui.jsx";
 
 const STATUS_LABELS = {
   new: "Новая",
@@ -57,7 +57,7 @@ function LeadDetails({ lead, saving, onSave }) {
       </label>
       <p className="text-xs text-gray-500">Когда срок наступит, заявка будет выделена в списке. Это не отправляет сообщение клиенту.</p>
       <label className="block text-sm font-semibold">Заметка
-        <textarea className="mt-2 block w-full rounded-xl border p-3 text-base" rows={3} maxLength={5000} value={note} onChange={(event) => setNote(event.target.value)} placeholder="О чём договорились и когда напомнить о себе" />
+        <Textarea className="mt-2 block text-base" rows={3} maxLength={5000} value={note} onChange={(event) => setNote(event.target.value)} placeholder="О чём договорились и когда напомнить о себе" />
       </label>
       <Button type="submit" disabled={saving}>Сохранить</Button>
     </form>

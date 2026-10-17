@@ -72,6 +72,7 @@ import {
   Label,
   Modal,
   Select,
+  Textarea,
 } from "../components/ui.jsx";
 import ClientAddressFields from "../components/ClientAddressFields.jsx";
 const MeasurementSheet = React.lazy(() => import("../components/MeasurementSheet.jsx"));
@@ -4252,7 +4253,7 @@ export default function Projects() {
                           </div>
                           {editingCommentId === comment.id ? (
                             <div className="mt-3 space-y-3">
-                              <textarea
+                              <Textarea
                                 className="min-h-24 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
                                 value={editingCommentText}
                                 onChange={(event) => setEditingCommentText(event.target.value)}
@@ -4276,7 +4277,7 @@ export default function Projects() {
 
                   <form className="border-t border-slate-100 pt-4" onSubmit={submitComment}>
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                      <textarea
+                      <Textarea
                         className="min-h-12 flex-1 resize-y rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
                         value={commentText}
                         onChange={(event) => setCommentText(event.target.value)}
@@ -4331,7 +4332,7 @@ export default function Projects() {
                       </div>
                       <div className="space-y-2">
                         <Label>Комментарий</Label>
-                        <textarea
+                        <Textarea
                           className="min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
                           value={taskForm.notes}
                           onChange={(event) => setTaskForm((prev) => ({ ...prev, notes: event.target.value }))}
