@@ -18,6 +18,7 @@ import {
   Plus,
   Settings as SettingsIcon,
   Sliders,
+  Smartphone,
   Tag,
   Trash2,
   UploadCloud,
@@ -60,6 +61,7 @@ import {
   uploadDocumentTemplate,
 } from "../api";
 import { Button, Input, Modal, Select, Textarea } from "../components/ui.jsx";
+import { nativeAppVersion, sendNativeAction } from "../utils/nativeApp.js";
 import { formatRussianPhoneInput } from "../utils/phone.js";
 
 const STATUS_COLOR = "sky";
@@ -187,6 +189,7 @@ function TemplateUploader({ label, templateType, templates, onUpload, onDelete, 
 }
 
 export default function Settings() {
+  const nativeVersion = nativeAppVersion();
   const [users, setUsers] = useState([]);
   const [statuses, setStatuses] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -219,6 +222,9 @@ export default function Settings() {
   const [yandexDiskCodeSaving, setYandexDiskCodeSaving] = useState(false);
   const [yandexDiskCode, setYandexDiskCode] = useState("");
   const [menuSettingsSaving, setMenuSettingsSaving] = useState("");
+  const [visitAlertsEnabled, setVisitAlertsEnabled] = useState(
+    () => typeof window !== "undefined" && window.CEHCRMNative?.visitAlertsEnabled !== false
+  );
   const [diskPicker, setDiskPicker] = useState({
     open: false,
     target: "base_path",
@@ -300,6 +306,18 @@ export default function Settings() {
     });
   }, []);
 
+  useEffect(() => {
+    if (!nativeVersion) return undefined;
+    const receiveNativeSettings = (event) => {
+      if (typeof event.detail?.visitAlertsEnabled === "boolean") {
+        setVisitAlertsEnabled(event.detail.visitAlertsEnabled);
+      }
+    };
+    window.addEventListener("cehcrm:native-settings", receiveNativeSettings);
+    sendNativeAction("getNativeSettings", window.location.href);
+    return () => window.removeEventListener("cehcrm:native-settings", receiveNativeSettings);
+  }, [nativeVersion]);
+
   const managers = useMemo(() => users.filter((user) => user.role === "manager" || !user.is_admin), [users]);
   const financeCategoriesByType = useMemo(
     () => ({
@@ -329,6 +347,15 @@ export default function Settings() {
       setError(extractApiErrorMessage(requestError, "Не удалось изменить видимость раздела."));
     } finally {
       setMenuSettingsSaving("");
+    }
+  }
+
+  function toggleVisitAlerts() {
+    const next = !visitAlertsEnabled;
+    setVisitAlertsEnabled(next);
+    if (!sendNativeAction("setVisitAlerts", window.location.href, { enabled: next })) {
+      setVisitAlertsEnabled(!next);
+      setError("Не удалось изменить настройку приложения iPhone.");
     }
   }
 
@@ -706,6 +733,32 @@ export default function Settings() {
       ) : null}
 
       <div className="space-y-6">
+        {nativeVersion ? (
+          <SettingsCard title="Приложение iPhone" icon={<Smartphone size={16} />} defaultOpen>
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 rounded-2xl bg-slate-950 px-4 py-4 text-white">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-lg font-black text-slate-950">A</div>
+                <div className="min-w-0">
+                  <div className="text-sm font-black">CEH CRM</div>
+                  <div className="mt-0.5 text-xs font-semibold text-slate-300">Версия {nativeVersion} · от Amjus</div>
+                </div>
+              </div>
+              <label className="flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                <span>
+                  <span className="block text-sm font-black text-slate-800">Подсказка ближайшего объекта</span>
+                  <span className="mt-1 block text-xs font-semibold leading-5 text-slate-500">Показывать карточку проекта при открытии приложения рядом с адресом.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  className="h-5 w-5 shrink-0 rounded border-slate-300 text-blue-600"
+                  checked={visitAlertsEnabled}
+                  onChange={toggleVisitAlerts}
+                />
+              </label>
+            </div>
+          </SettingsCard>
+        ) : null}
+
         <SettingsCard title="Безопасность" icon={<Lock size={16} />}>
           <button className="w-full rounded-full bg-gray-900 px-5 py-3 text-xs font-bold text-white shadow-lg hover:bg-black" type="button">
             Сменить пароль

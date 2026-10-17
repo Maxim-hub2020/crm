@@ -49,7 +49,7 @@ final class NativeBridgeTests: XCTestCase {
     func testAppDeclaresCameraPermission() {
         let description = Bundle.main.object(forInfoDictionaryKey: "NSCameraUsageDescription") as? String
         XCTAssertFalse(description?.isEmpty ?? true)
-        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "15")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String, "16")
     }
 
     func testMobileConfigurationAnnouncesNativeBridgeBeforePageScripts() {

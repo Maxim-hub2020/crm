@@ -87,7 +87,11 @@ struct CRMWebView: UIViewRepresentable {
         configuration.websiteDataStore = .default()
         configuration.defaultWebpagePreferences.preferredContentMode = .mobile
         configuration.applicationNameForUserAgent = "CEHCRM-iOS/\(versionLabel)"
-        let info: [String: String] = ["version": versionLabel, "origin": CRMOrigin.home.absoluteString]
+        let info: [String: Any] = [
+            "version": versionLabel,
+            "origin": CRMOrigin.home.absoluteString,
+            "visitAlertsEnabled": VisitProximityManager.shared.isEnabled,
+        ]
         let json = String(data: try! JSONSerialization.data(withJSONObject: info), encoding: .utf8)!
         // Announce the native capabilities before the CRM's first render.
         let script = """
@@ -96,7 +100,8 @@ struct CRMWebView: UIViewRepresentable {
           if (location.origin !== info.origin) return;
           window.CEHCRMNative = Object.freeze({
             version: info.version,
-            capabilities: Object.freeze({route: true, yandexDisk: true, visitAlerts: true}),
+            visitAlertsEnabled: info.visitAlertsEnabled,
+            capabilities: Object.freeze({route: true, yandexDisk: true, visitAlerts: true, nativeSettings: true}),
             postMessage: (message) => window.webkit.messageHandlers.cehCRM.postMessage(message)
           });
           document.addEventListener('DOMContentLoaded', () => {
@@ -166,6 +171,16 @@ struct CRMWebView: UIViewRepresentable {
                 VisitProximityManager.shared.clear()
                 return
             }
+            if body["action"] as? String == "getNativeSettings" {
+                publishNativeSettings(to: webView)
+                return
+            }
+            if body["action"] as? String == "setVisitAlerts",
+               let enabled = body["enabled"] as? Bool {
+                VisitProximityManager.shared.setEnabled(enabled)
+                publishNativeSettings(to: webView)
+                return
+            }
             guard let body = body as? [String: String],
                   let rawURL = body["url"], let url = URL(string: rawURL) else { return }
             if body["action"] == "scan", let scan = ScanRequest(url: url) { onScan(scan) }
@@ -179,6 +194,16 @@ struct CRMWebView: UIViewRepresentable {
             if body["action"] == "openExternal", url.scheme == "https", url.user == nil, url.password == nil {
                 openExternal(url, from: webView)
             }
+        }
+
+        private func publishNativeSettings(to webView: WKWebView) {
+            let settings: [String: Any] = [
+                "visitAlertsEnabled": VisitProximityManager.shared.isEnabled,
+                "version": CRMWebView.versionLabel,
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: settings),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('cehcrm:native-settings', {detail: \(json)}));")
         }
 
         private func openRoute(_ route: YandexRouteLink, from webView: WKWebView) {

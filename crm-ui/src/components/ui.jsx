@@ -173,7 +173,9 @@ function useMobileFieldSheet({ value, defaultValue, type = "text", disabled, rea
     onBlur?.({ target: { value: draft }, currentTarget: { value: draft } });
   };
 
-  return { inputRef, open, draft, title, begin, emitChange, close, multiline };
+  const preventsNativeEditing = mobileSheetAvailable(type, disabled, readOnly, mobileSheet);
+
+  return { inputRef, open, draft, title, begin, emitChange, close, multiline, preventsNativeEditing };
 }
 
 export function Card({ className = "", children }) {
@@ -212,7 +214,7 @@ export function Button({ variant = "primary", className = "", ...props }) {
   return <button className={`${base} ${styles} ${className}`} {...props} />;
 }
 
-export function Input({ className = "", onKeyDown, onPointerDown, onFocus, enterKeyHint, mobileSheet = true, mobileLabel, ...props }) {
+export function Input({ className = "", onKeyDown, onPointerDown, onClick, onFocus, enterKeyHint, mobileSheet = true, mobileLabel, ...props }) {
   const numeric = props.inputMode === "numeric" || props.inputMode === "decimal";
   const sheet = useMobileFieldSheet({ ...props, mobileSheet, mobileLabel, multiline: false });
   return (
@@ -223,17 +225,20 @@ export function Input({ className = "", onKeyDown, onPointerDown, onFocus, enter
         enterKeyHint={enterKeyHint || (numeric ? "done" : undefined)}
         onPointerDown={(event) => {
           onPointerDown?.(event);
-          if (!event.defaultPrevented && sheet.begin(event)) onFocus?.(event);
         }}
         onFocus={(event) => {
           onFocus?.(event);
-          if (!event.defaultPrevented && event.detail === 0) sheet.begin(event);
+        }}
+        onClick={(event) => {
+          onClick?.(event);
+          if (!event.defaultPrevented) sheet.begin(event);
         }}
         onKeyDown={(event) => {
           if (event.key === "Enter" && numeric) event.currentTarget.blur();
           onKeyDown?.(event);
         }}
         {...props}
+        readOnly={sheet.preventsNativeEditing || props.readOnly}
       />
       <MobileFieldSheet
         open={sheet.open}
@@ -247,7 +252,7 @@ export function Input({ className = "", onKeyDown, onPointerDown, onFocus, enter
   );
 }
 
-export function Textarea({ className = "", onPointerDown, onFocus, mobileSheet = true, mobileLabel, ...props }) {
+export function Textarea({ className = "", onPointerDown, onClick, onFocus, mobileSheet = true, mobileLabel, ...props }) {
   const sheet = useMobileFieldSheet({ ...props, type: "text", mobileSheet, mobileLabel, multiline: true });
   return (
     <>
@@ -256,13 +261,16 @@ export function Textarea({ className = "", onPointerDown, onFocus, mobileSheet =
         className={`w-full rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500/20 ${className}`}
         onPointerDown={(event) => {
           onPointerDown?.(event);
-          if (!event.defaultPrevented && sheet.begin(event)) onFocus?.(event);
         }}
         onFocus={(event) => {
           onFocus?.(event);
-          if (!event.defaultPrevented && event.detail === 0) sheet.begin(event);
+        }}
+        onClick={(event) => {
+          onClick?.(event);
+          if (!event.defaultPrevented) sheet.begin(event);
         }}
         {...props}
+        readOnly={sheet.preventsNativeEditing || props.readOnly}
       />
       <MobileFieldSheet
         open={sheet.open}
