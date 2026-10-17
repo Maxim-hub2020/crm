@@ -1,10 +1,31 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Briefcase, Calculator, FolderKanban, Home, ListTodo, LogOut, Menu, MessageCircle, Search, Settings, ShieldQuestion, Users, Wallet, X } from "lucide-react";
+import { Briefcase, Calculator, FolderKanban, Home, ListTodo, LogOut, MapPin, Menu, MessageCircle, Phone, Search, Settings, ShieldQuestion, Users, Wallet, X } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { clearToken, fetchGlobalSearch, fetchMe, fetchProjects, getUser, isAdminUser } from "../api";
 import { BrandMark } from "./BrandLogo.jsx";
+import { Button, Modal } from "./ui.jsx";
 import { clearNativeVisitLocations, syncNativeVisitLocations } from "../utils/visitLocations.js";
+import { openNativeYandexRoute } from "../utils/appLinks.js";
+
+const PENDING_VISIT_KEY = "crm_pending_visit_project_id";
+
+function visitRouteLinks(project) {
+  const lat = Number(project?.object_lat);
+  const lon = Number(project?.object_lon);
+  const hasCoordinates = Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+  const destination = hasCoordinates ? `${lat},${lon}` : String(project?.object_address || "").trim();
+  if (!destination) return null;
+  const params = new URLSearchParams({ mode: "routes", rtext: `~${destination}`, rtt: "auto" });
+  const webUrl = `https://yandex.ru/maps/?${params.toString()}`;
+  if (!hasCoordinates) return { webUrl, mapsUrl: `yandexmaps://maps.yandex.ru/?${params.toString()}`, navigatorUrl: "" };
+  const routeParams = new URLSearchParams({ lat_to: String(lat), lon_to: String(lon) });
+  return {
+    webUrl,
+    mapsUrl: `yandexmaps://build_route_on_map/?${routeParams.toString()}`,
+    navigatorUrl: `yandexnavi://build_route_on_map?${routeParams.toString()}`,
+  };
+}
 
 const ROUTE_META = {
   "/": { title: "Дашборд", icon: Home },
@@ -47,6 +68,8 @@ export default function Layout({ children }) {
   const [globalQuery, setGlobalQuery] = useState("");
   const [globalResults, setGlobalResults] = useState([]);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [visitProjects, setVisitProjects] = useState([]);
+  const [visitProjectId, setVisitProjectId] = useState(() => localStorage.getItem(PENDING_VISIT_KEY));
 
   useEffect(() => {
     let active = true;
@@ -108,8 +131,21 @@ export default function Layout({ children }) {
   }, [globalQuery]);
 
   useEffect(() => {
-    localStorage.setItem("crm_last_screen", location.pathname);
-  }, [location.pathname]);
+    if (!new URLSearchParams(location.search).has("visit")) {
+      localStorage.setItem("crm_last_screen", location.pathname);
+    }
+  }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    function handleVisitProject(event) {
+      const projectId = event.detail?.projectId;
+      if (!projectId) return;
+      localStorage.setItem(PENDING_VISIT_KEY, String(projectId));
+      setVisitProjectId(String(projectId));
+    }
+    window.addEventListener("cehcrm:visit-project", handleVisitProject);
+    return () => window.removeEventListener("cehcrm:visit-project", handleVisitProject);
+  }, []);
 
   useEffect(() => {
     if (!window.CEHCRMNative?.capabilities?.visitAlerts) return undefined;
@@ -117,7 +153,10 @@ export default function Layout({ children }) {
     const sync = () => {
       if (document.visibilityState === "hidden") return;
       void fetchProjects().then((projects) => {
-        if (active) syncNativeVisitLocations(projects);
+        if (active) {
+          setVisitProjects(projects);
+          syncNativeVisitLocations(projects);
+        }
       }).catch((error) => {
         if (active && error?.response?.status === 401) {
           clearNativeVisitLocations();
@@ -133,6 +172,19 @@ export default function Layout({ children }) {
       document.removeEventListener("visibilitychange", sync);
     };
   }, []);
+
+  const visitProject = visitProjects.find((project) => String(project.id) === String(visitProjectId)) || null;
+
+  function closeVisitCard() {
+    localStorage.removeItem(PENDING_VISIT_KEY);
+    setVisitProjectId(null);
+  }
+
+  function openVisitRoute() {
+    const links = visitRouteLinks(visitProject);
+    if (!links) return;
+    if (!openNativeYandexRoute(links)) window.open(links.webUrl, "_blank", "noopener,noreferrer");
+  }
 
   function logout() {
     clearNativeVisitLocations();
@@ -279,6 +331,39 @@ export default function Layout({ children }) {
 
         <main className={`no-scrollbar relative min-h-0 flex-1 overflow-auto ${location.pathname === "/calculator" ? "p-0" : "p-4 sm:p-6"}`}>{children}</main>
       </div>
+
+      <Modal open={Boolean(visitProject)} title="Карточка выезда" onClose={closeVisitCard} widthClassName="max-w-lg">
+        {visitProject ? (
+          <div className="space-y-5">
+            <div>
+              <div className="text-xl font-black text-slate-900">
+                {visitProject.order_number_label ? `№${visitProject.order_number_label} · ` : ""}{visitProject.title}
+              </div>
+              <div className="mt-2 text-sm font-semibold text-slate-500">{visitProject.client_name || "Клиент не указан"}</div>
+            </div>
+            <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
+              <div className="font-bold">{visitProject.object_address}</div>
+              {[visitProject.entrance && `Подъезд ${visitProject.entrance}`, visitProject.floor && `Этаж ${visitProject.floor}`, visitProject.apartment && `Квартира ${visitProject.apartment}`].filter(Boolean).length ? (
+                <div className="mt-2 text-slate-500">
+                  {[visitProject.entrance && `Подъезд ${visitProject.entrance}`, visitProject.floor && `Этаж ${visitProject.floor}`, visitProject.apartment && `Квартира ${visitProject.apartment}`].filter(Boolean).join(" · ")}
+                </div>
+              ) : null}
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {visitProject.client_phone ? (
+                <a className="btn-hover inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700" href={`tel:${String(visitProject.client_phone).replace(/[^\d+]/g, "")}`}>
+                  <Phone size={16} />Позвонить
+                </a>
+              ) : null}
+              <Button type="button" variant="secondary" onClick={openVisitRoute}><MapPin size={16} />Маршрут</Button>
+            </div>
+            <Button type="button" className="w-full" onClick={() => {
+              closeVisitCard();
+              navigate("/projects", { state: { projectId: visitProject.id, tab: "comments" } });
+            }}>Открыть проект</Button>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }

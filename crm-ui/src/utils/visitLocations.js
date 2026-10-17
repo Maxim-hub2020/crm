@@ -17,6 +17,10 @@ export function projectVisitLocations(projects) {
       title: [project.order_number_label ? `№${project.order_number_label}` : "", project.title || "Проект"].filter(Boolean).join(" · "),
       address,
       phone: String(project.client_phone || "").trim(),
+      clientName: String(project.client_name || "").trim(),
+      entrance: String(project.entrance || "").trim(),
+      floor: String(project.floor || "").trim(),
+      apartment: String(project.apartment || "").trim(),
       lat,
       lon,
     }];

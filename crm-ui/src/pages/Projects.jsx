@@ -1155,7 +1155,6 @@ export default function Projects() {
   const selectedCreateAddressValueRef = useRef("");
 
   const [activeProjectId, setActiveProjectId] = useState(null);
-  const [visitProjectId, setVisitProjectId] = useState(null);
   const [detailForm, setDetailForm] = useState(createEmptyProjectForm());
   const [detailTab, setDetailTab] = useState("comments");
   const [detailBonusEnabled, setDetailBonusEnabled] = useState(false);
@@ -1395,8 +1394,10 @@ export default function Projects() {
   useEffect(() => {
     const visitId = new URLSearchParams(location.search).get("visit");
     if (!visitId || !projects.some((project) => String(project.id) === visitId)) return;
-    setVisitProjectId(visitId);
-    navigate("/projects", { replace: true });
+    localStorage.setItem("crm_pending_visit_project_id", visitId);
+    window.dispatchEvent(new CustomEvent("cehcrm:visit-project", { detail: { projectId: visitId } }));
+    const previousPath = localStorage.getItem("crm_last_screen") || "/projects";
+    navigate(previousPath === "/projects" ? "/projects" : previousPath, { replace: true });
   }, [location.search, projects, navigate]);
 
   useEffect(() => {
@@ -1967,7 +1968,6 @@ export default function Projects() {
     setPaymentSearch("");
   }
 
-  const visitProject = projects.find((project) => String(project.id) === String(visitProjectId)) || null;
 
   function closeProject() {
     setActiveProjectId(null);
@@ -4946,51 +4946,6 @@ export default function Projects() {
             </Button>
           </div>
         </form>
-      </Modal>
-
-      <Modal
-        open={Boolean(visitProject)}
-        title="Карточка выезда"
-        onClose={() => setVisitProjectId(null)}
-        widthClassName="max-w-lg"
-      >
-        {visitProject ? (
-          <div className="space-y-5">
-            <div>
-              <div className="text-xl font-black text-slate-900">
-                {projectOrderLabel(visitProject) ? `№${projectOrderLabel(visitProject)} · ` : ""}{visitProject.title}
-              </div>
-              <div className="mt-2 text-sm font-semibold text-slate-500">{visitProject.client_name || "Клиент не указан"}</div>
-            </div>
-            <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
-              <div className="font-bold">{visitProject.object_address}</div>
-              {[visitProject.entrance && `Подъезд ${visitProject.entrance}`,
-                visitProject.floor && `Этаж ${visitProject.floor}`,
-                visitProject.apartment && `Квартира ${visitProject.apartment}`]
-                .filter(Boolean).length > 0 ? (
-                  <div className="mt-2 text-slate-500">
-                    {[visitProject.entrance && `Подъезд ${visitProject.entrance}`,
-                      visitProject.floor && `Этаж ${visitProject.floor}`,
-                      visitProject.apartment && `Квартира ${visitProject.apartment}`].filter(Boolean).join(" · ")}
-                  </div>
-                ) : null}
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {phoneHref(visitProject.client_phone) ? (
-                <a className="btn-hover inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700"
-                   href={phoneHref(visitProject.client_phone)}><Phone size={16} />Позвонить</a>
-              ) : null}
-              <Button type="button" variant="secondary"
-                onClick={() => openYandexRouteLinks(yandexRouteLinks(visitProject.object_address, visitProject.object_lat, visitProject.object_lon))}>
-                <MapPin size={16} />Маршрут
-              </Button>
-            </div>
-            <Button type="button" className="w-full" onClick={() => {
-              setVisitProjectId(null);
-              openProject(visitProject);
-            }}>Открыть проект</Button>
-          </div>
-        ) : null}
       </Modal>
 
       <Modal

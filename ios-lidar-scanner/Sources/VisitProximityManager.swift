@@ -8,6 +8,10 @@ private struct VisitProject: Codable {
     let title: String
     let address: String
     let phone: String?
+    let clientName: String?
+    let entrance: String?
+    let floor: String?
+    let apartment: String?
     let latitude: Double
     let longitude: Double
 
@@ -59,8 +63,14 @@ final class VisitProximityManager: NSObject, ObservableObject, CLLocationManager
                   latitude.isFinite, longitude.isFinite,
                   (-90...90).contains(latitude), (-180...180).contains(longitude) else { return nil }
             let phone = (row["phone"] as? String).map { String($0.prefix(50)) }
+            let clientName = (row["clientName"] as? String).map { String($0.prefix(100)) }
+            let entrance = (row["entrance"] as? String).map { String($0.prefix(30)) }
+            let floor = (row["floor"] as? String).map { String($0.prefix(30)) }
+            let apartment = (row["apartment"] as? String).map { String($0.prefix(30)) }
             return VisitProject(id: id, title: String(title.prefix(100)),
                                 address: String(address.prefix(300)), phone: phone,
+                                clientName: clientName, entrance: entrance,
+                                floor: floor, apartment: apartment,
                                 latitude: latitude, longitude: longitude)
         }
         if let data = try? JSONEncoder().encode(projects) {
@@ -147,7 +157,13 @@ final class VisitProximityManager: NSObject, ObservableObject, CLLocationManager
             content.title = project.title
             let phone = project.phone?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let phoneLine = phone.isEmpty ? "Телефон не указан" : "Телефон: \(phone)"
-            content.body = "\(phoneLine)\nАдрес: \(project.address)"
+            let addressDetails = [
+                project.entrance.flatMap { $0.isEmpty ? nil : "подъезд \($0)" },
+                project.floor.flatMap { $0.isEmpty ? nil : "этаж \($0)" },
+                project.apartment.flatMap { $0.isEmpty ? nil : "квартира \($0)" },
+            ].compactMap { $0 }.joined(separator: ", ")
+            let addressLine = addressDetails.isEmpty ? project.address : "\(project.address), \(addressDetails)"
+            content.body = "\(phoneLine)\nАдрес: \(addressLine)"
             content.sound = .default
             content.userInfo = ["visitProjectID": project.id]
             self.notificationCenter.add(UNNotificationRequest(

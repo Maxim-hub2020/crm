@@ -125,9 +125,14 @@ struct CRMWebView: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {
         if let visitProjectID, context.coordinator.visitOpenSequence != visitOpenSequence {
             context.coordinator.visitOpenSequence = visitOpenSequence
-            var url = URLComponents(url: CRMOrigin.home.appendingPathComponent("projects"), resolvingAgainstBaseURL: false)!
-            url.queryItems = [URLQueryItem(name: "visit", value: String(visitProjectID))]
-            if let target = url.url { uiView.load(URLRequest(url: target)) }
+            let script = """
+            (() => {
+              const projectId = \(visitProjectID);
+              localStorage.setItem('crm_pending_visit_project_id', String(projectId));
+              window.dispatchEvent(new CustomEvent('cehcrm:visit-project', {detail: {projectId}}));
+            })();
+            """
+            uiView.evaluateJavaScript(script)
             return
         }
         guard context.coordinator.reloadID != reloadID else { return }
