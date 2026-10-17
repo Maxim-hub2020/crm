@@ -1,0 +1,421 @@
+import re
+
+from django.core import signing
+from rest_framework import status
+from rest_framework.decorators import api_view, parser_classes, permission_classes
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+
+from .models import CalculatorSettings, default_workspace
+from .public_ai_technologist import ai_technologist_enabled, enhance_designer_response
+from .public_calculator import _rate_limited
+from .public_production import ALLOWED_CONTENT_TYPES, ALLOWED_EXTENSIONS, MAX_FILE_SIZE, _clean
+
+
+MAX_CHAT_FILES = 3
+STATE_SALT = "amalgama-public-designer-v2"
+STATE_MAX_AGE = 7 * 24 * 60 * 60
+
+
+def _catalog():
+    record = CalculatorSettings.objects.filter(workspace=default_workspace()).first()
+    return record.shower_catalog if record and isinstance(record.shower_catalog, dict) else {}
+
+
+def _constructions(catalog):
+    return [row for row in catalog.get("constructions", []) if row.get("id") and row.get("title")]
+
+
+def _construction(catalog, construction_id):
+    return next((row for row in _constructions(catalog) if str(row.get("id")) == str(construction_id)), None)
+
+
+def _normal(value):
+    return re.sub(r"[^a-zа-яё0-9]+", " ", str(value or "").lower()).strip()
+
+
+def _numbers(value):
+    return [float(item.replace(",", ".")) for item in re.findall(r"\d+(?:[.,]\d+)?", str(value or ""))]
+
+
+def _format_mm(value):
+    number = float(value)
+    return f"{number:g} мм"
+
+
+def _choice(value, options):
+    normalized = _normal(value)
+    for option in options:
+        if normalized in {_normal(option["value"]), _normal(option["label"])}:
+            return option["value"]
+    matches = [option for option in options if normalized and normalized in _normal(option["label"])]
+    return matches[0]["value"] if len(matches) == 1 else None
+
+
+def _validate_files(files):
+    if len(files) > MAX_CHAT_FILES:
+        return "За один раз можно загрузить не больше трёх файлов."
+    for uploaded in files:
+        extension = "." + uploaded.name.rsplit(".", 1)[-1].lower() if "." in uploaded.name else ""
+        if uploaded.size > MAX_FILE_SIZE or uploaded.content_type not in ALLOWED_CONTENT_TYPES or extension not in ALLOWED_EXTENSIONS:
+            return "Прикрепляйте JPG, PNG, WebP или PDF до 8 МБ."
+    return ""
+
+
+def _construction_options(catalog):
+    return [
+        {"value": str(row["id"]), "label": row.get("shortTitle") or row["title"]}
+        for row in _constructions(catalog)
+    ]
+
+
+def _tray_shape_options():
+    return [
+        {"value": "wall-to-wall", "label": "От стены до стены", "description": "Прямая линия стекла в нише", "image": "/project/assets/tray-wall-to-wall.webp"},
+        {"value": "l-shaped", "label": "Г-образный поддон", "description": "Фронтальная и боковая линии стекла", "image": "/project/assets/tray-l-shaped.webp"},
+    ]
+
+
+def _construction_for_shape(catalog, tray_shape, preferred_id=""):
+    preferred = _construction(catalog, preferred_id)
+    if preferred:
+        return preferred
+    markers = ("niche", "ниша") if tray_shape == "wall-to-wall" else ("corner", "угл")
+    rows = _constructions(catalog)
+    return next(
+        (row for row in rows if any(marker in _normal(f"{row.get('sketch', '')} {row.get('title', '')}") for marker in markers)),
+        rows[0] if rows else None,
+    )
+
+
+def _finish_options(catalog):
+    return [{"value": str(row["id"]), "label": row["label"]} for row in catalog.get("hardware", []) if row.get("id") and row.get("label")]
+
+
+def _supported_glass_options(catalog, construction):
+    item_map = {str(item.get("id")): item for item in catalog.get("hardwareItems", []) if item.get("id")}
+    supported = {6, 8}
+    for component in construction.get("hardwareComponents", []):
+        if component.get("glassThickness"):
+            continue
+        item = item_map.get(str(component.get("hardwareItemId"))) or {}
+        features = (item.get("technicalData") or {}).get("features") or {}
+        feature = next((value for key, value in features.items() if _normal(key) == "толщина стекла"), "")
+        documented = {int(value) for value in re.findall(r"\b(?:6|8|10|12)\b", str(feature))}
+        if documented:
+            supported &= documented
+    return [
+        {"value": str(value), "label": f"{value} мм"}
+        for value in (8, 6)
+        if value in supported
+    ]
+
+
+def _questions(catalog, construction, answers):
+    questions = [
+        {"key": "overall_width", "kind": "number", "stage": "geometry", "min": 500, "max": 4000, "prompt": "Какая ширина поддона от левого до правого края? Укажите один размер в миллиметрах."},
+        {"key": "overall_depth", "kind": "number", "stage": "geometry", "min": 500, "max": 2500, "prompt": "Какая глубина поддона от стены до переднего края? Укажите один размер в миллиметрах."},
+        {"key": "tray_width", "kind": "number", "stage": "geometry", "min": 20, "max": 300, "prompt": "Какая ширина порожка, на котором будет стоять стекло? Укажите размер в миллиметрах."},
+        {"key": "tray_axis", "kind": "choice", "stage": "geometry", "prompt": "Где провести линию стекла?", "options": [
+            {"value": "center", "label": "По центру порожка"},
+            {"value": "tile-joint", "label": "По шву плитки"},
+        ]},
+    ]
+    if answers.get("tray_axis") == "tile-joint":
+        questions.extend([
+            {"key": "joint_reference", "kind": "choice", "stage": "geometry", "prompt": "От какого края порожка удобнее показать положение шва?", "options": [
+                {"value": "outer", "label": "От наружного края"},
+                {"value": "inner", "label": "От внутреннего края"},
+            ]},
+            {"key": "joint_offset", "kind": "number", "stage": "geometry", "min": 1, "max": 299, "prompt": "Укажите расстояние от выбранного края порожка до центра шва плитки, мм. Линия стекла перекроет этот шов."},
+        ])
+
+    sketch = str(construction.get("sketch") or "")
+    has_door = "door" in sketch or "niche" in sketch or "corner" in sketch or "slider" in sketch or "trapezoid" in sketch
+    if has_door:
+        if "slider" in sketch:
+            opening_options = [{"value": "slide-left", "label": "Дверь сдвигается влево"}, {"value": "slide-right", "label": "Дверь сдвигается вправо"}]
+        else:
+            opening_options = [
+                {"value": "out-left", "label": "Наружу, петли слева"},
+                {"value": "out-right", "label": "Наружу, петли справа"},
+                {"value": "in-left", "label": "Внутрь, петли слева"},
+                {"value": "in-right", "label": "Внутрь, петли справа"},
+            ]
+        questions.append({"key": "opening", "kind": "choice", "stage": "configuration", "prompt": "Выберите направление движения двери.", "options": opening_options})
+
+    questions.extend([
+        {"key": "glass_thickness", "kind": "choice", "stage": "configuration", "prompt": "Выберите толщину стекла, совместимую с техническими картами комплекта.", "options": _supported_glass_options(catalog, construction)},
+        {"key": "glass_type", "kind": "choice", "stage": "configuration", "prompt": "Какое стекло нужно?", "options": [
+            {"value": "clear", "label": "Прозрачное"}, {"value": "extra-clear", "label": "Осветлённое"},
+            {"value": "frosted", "label": "Матовое"}, {"value": "bronze", "label": "Бронза"}, {"value": "graphite", "label": "Графит"},
+        ]},
+        {"key": "hardware_finish", "kind": "choice", "stage": "configuration", "prompt": "Выберите только цвет фурнитуры — состав система подберёт автоматически.", "options": _finish_options(catalog)},
+        {"key": "obstacles", "kind": "choice", "stage": "configuration", "prompt": "Есть ли рядом сантехника, мебель, полотенцесушитель или другие препятствия для двери и монтажа?", "options": [{"value": "no", "label": "Препятствий нет"}, {"value": "yes", "label": "Есть препятствия"}]},
+    ])
+    if answers.get("obstacles") == "yes":
+        questions.append({"key": "obstacles_text", "kind": "text", "stage": "configuration", "prompt": "Коротко опишите препятствие и укажите расстояние до него в миллиметрах."})
+    return questions
+
+
+def _parse_answer(question, message, option_value):
+    raw = option_value or message
+    kind = question["kind"]
+    if kind == "choice":
+        value = _choice(raw, question.get("options", []))
+        if value is None:
+            raise ValueError("Выберите один из предложенных вариантов.")
+        return value
+    if kind in {"number", "number_zero"}:
+        values = _numbers(raw)
+        if not values:
+            raise ValueError("Введите размер одним числом в миллиметрах.")
+        value = values[0]
+        if not question["min"] <= value <= question["max"]:
+            raise ValueError(f"Допустимый диапазон: {question['min']}–{question['max']} мм.")
+        return value
+    if kind in {"pair", "pair_zero"}:
+        values = _numbers(raw)
+        if len(values) != 2:
+            raise ValueError("Введите ровно два числа: размер снизу, затем размер сверху.")
+        if any(not question["min"] <= value <= question["max"] for value in values):
+            raise ValueError(f"Каждый размер должен быть в диапазоне {question['min']}–{question['max']} мм.")
+        return {"bottom": values[0], "top": values[1]}
+    value = _clean(raw, 800)
+    if len(value) < 3:
+        raise ValueError("Опишите препятствие чуть подробнее.")
+    return value
+
+
+def _hardware(catalog, construction, answers):
+    item_map = {str(item.get("id")): item for item in catalog.get("hardwareItems", []) if item.get("id")}
+    thickness = int(answers.get("glass_thickness") or 0)
+    if not thickness or not answers.get("hardware_finish"):
+        return []
+    finish_label = next((row["label"] for row in _finish_options(catalog) if row["value"] == answers.get("hardware_finish")), "выбранная отделка")
+    result = []
+    for component in construction.get("hardwareComponents", []):
+        component_thickness = component.get("glassThickness")
+        if component_thickness and thickness and int(component_thickness) != thickness:
+            continue
+        item = item_map.get(str(component.get("hardwareItemId")))
+        if not item:
+            continue
+        result.append({
+            "catalog_id": str(item["id"]),
+            "label": str(item.get("label") or item.get("sku") or item["id"]),
+            "quantity": max(1, int(component.get("quantity") or 1)),
+            "reason": f"Автоматический состав конструкции · отделка: {finish_label}",
+            "source_url": item.get("sourceUrl"),
+            "drawing_url": (item.get("technicalData") or {}).get("drawingUrl"),
+            "documentation_status": (item.get("technicalData") or {}).get("sourceStatus", "not_checked"),
+            "review_status": ((item.get("technicalData") or {}).get("review") or {}).get("status", "pending"),
+        })
+    return result
+
+
+def _hardware_documentation_ready(hardware):
+    return bool(hardware) and all(
+        row.get("drawing_url") and row.get("review_status") == "approved"
+        for row in hardware
+    )
+
+
+def _layout_plan(construction, answers, tray_shape):
+    width = answers.get("overall_width")
+    depth = answers.get("overall_depth")
+    tray_width = answers.get("tray_width")
+    if not width or not depth:
+        return {"shape": tray_shape, "width": width, "depth": depth, "axis_offset": None, "panels": []}
+    axis_offset = None
+    if tray_width and answers.get("tray_axis") == "center":
+        axis_offset = tray_width / 2
+    elif answers.get("tray_axis") == "tile-joint" and answers.get("joint_offset"):
+        axis_offset = answers["joint_offset"]
+
+    sketch = _normal(construction.get("sketch"))
+    panels = []
+    if "slider" in sketch:
+        panels.append({"id": "G1", "label": "Раздвижная дверь", "nominal": "По формуле точной раздвижной системы"})
+        panels.append({"id": "G2", "label": "Неподвижный добор", "nominal": "После проверки рабочего хода"})
+    elif any(marker in sketch for marker in ("door", "niche", "corner", "trapezoid")):
+        door = min(float(width), 700)
+        panels.append({"id": "G1", "label": "Распашная дверь", "nominal": _format_mm(door)})
+        if width > door:
+            panels.append({"id": "G2", "label": "Фронтальный неподвижный добор", "nominal": _format_mm(width - door)})
+    else:
+        panels.append({"id": "G1", "label": "Неподвижное стекло", "nominal": _format_mm(width)})
+    if tray_shape == "l-shaped":
+        panels.append({"id": f"G{len(panels) + 1}", "label": "Боковое неподвижное стекло", "nominal": _format_mm(depth)})
+    return {
+        "shape": tray_shape,
+        "width": width,
+        "depth": depth,
+        "tray_width": tray_width,
+        "axis_mode": answers.get("tray_axis"),
+        "axis_offset": axis_offset,
+        "axis_reference": answers.get("joint_reference"),
+        "panels": panels,
+        "note": "Размеры стекол пока номинальные. Чистовой рез будет рассчитан по картам точной фурнитуры и замкнутым размерным цепочкам.",
+    }
+
+
+def _facts(construction, answers, catalog, tray_shape):
+    facts = [{"key": "Конструкция", "value": construction["title"], "source": "каталог CRM"}]
+    facts.append({"key": "Форма поддона", "value": "От стены до стены" if tray_shape == "wall-to-wall" else "Г-образный", "source": "выбор клиента"})
+    for key, label in (("overall_width", "Ширина"), ("overall_depth", "Глубина"), ("tray_width", "Ширина порожка")):
+        if answers.get(key) is not None:
+            facts.append({"key": label, "value": _format_mm(answers[key]), "source": "ответ клиента"})
+    if answers.get("tray_axis") == "center" and answers.get("tray_width"):
+        facts.append({"key": "Ось стекла", "value": f"по центру — {_format_mm(answers['tray_width'] / 2)} от края", "source": "расчёт"})
+    elif answers.get("tray_axis") == "tile-joint" and answers.get("joint_offset"):
+        edge = "наружного" if answers.get("joint_reference") == "outer" else "внутреннего"
+        facts.append({"key": "Ось стекла", "value": f"по шву — {_format_mm(answers['joint_offset'])} от {edge} края", "source": "ответ клиента"})
+    finish = next((row["label"] for row in _finish_options(catalog) if row["value"] == answers.get("hardware_finish")), None)
+    if finish:
+        facts.append({"key": "Цвет фурнитуры", "value": finish, "source": "выбор клиента"})
+    return facts
+
+
+def _response(catalog, state, prefix=""):
+    tray_shape = state.get("tray_shape")
+    if not tray_shape:
+        return {
+            "message": prefix or "Сначала выберите форму поддона. Здесь всего два понятных варианта.",
+            "stage": "intro", "progress": 0, "facts": [], "layout": {"shape": "", "panels": []},
+            "missing": ["Форма поддона", "Ширина и глубина", "Ширина порожка и линия стекла"],
+            "critical_checks": {"geometry": False, "axis": False, "opening": False, "glass": False, "hardware_docs": False},
+            "hardware": [], "ready_for_final": False, "documents_unlocked": False,
+            "options": _tray_shape_options(), "input_mode": "visual-choice", "question_key": "tray_shape",
+            "project_title": "Новая душевая", "catalog_connected": bool(catalog),
+            "state_token": signing.dumps(state, salt=STATE_SALT, compress=True),
+        }
+    construction = _construction(catalog, state.get("construction_id"))
+    if not construction:
+        message = prefix or "Не удалось подобрать конструкцию к этой форме поддона."
+        return {
+            "message": message, "stage": "intro", "progress": 0, "facts": [],
+            "missing": ["Конструкция для выбранной формы"], "critical_checks": {"geometry": False, "axis": False, "opening": False, "glass": False, "hardware_docs": False},
+            "hardware": [], "ready_for_final": False, "documents_unlocked": False,
+            "options": _tray_shape_options(), "input_mode": "visual-choice", "question_key": "tray_shape",
+            "project_title": "Новая конструкция", "catalog_connected": bool(catalog),
+            "state_token": signing.dumps(state, salt=STATE_SALT, compress=True),
+        }
+
+    answers = state.setdefault("answers", {})
+    questions = _questions(catalog, construction, answers)
+    current = next((question for question in questions if question["key"] not in answers), None)
+    completed = current is None
+    answered = len([question for question in questions if question["key"] in answers])
+    progress = min(90, round(answered / max(1, len(questions)) * 90))
+    has_door = any(question["key"] == "opening" for question in questions)
+    geometry_keys = [question["key"] for question in questions if question["stage"] == "geometry"]
+    geometry = all(key in answers for key in geometry_keys)
+    axis = all(key in answers for key in ["tray_width", "tray_axis"]) and (answers.get("tray_axis") != "tile-joint" or all(key in answers for key in ["joint_reference", "joint_offset"]))
+    opening = (not has_door or "opening" in answers) and (answers.get("obstacles") != "yes" or bool(answers.get("obstacles_text")))
+    glass = all(key in answers for key in ["glass_thickness", "glass_type", "hardware_finish"])
+    selected_hardware = _hardware(catalog, construction, answers)
+    hardware_docs = _hardware_documentation_ready(selected_hardware)
+    linked_docs = bool(selected_hardware) and all(row.get("drawing_url") for row in selected_hardware)
+    checks = {"geometry": geometry, "axis": axis, "opening": opening, "glass": glass, "hardware_docs": hardware_docs}
+    missing = []
+    if current:
+        missing.append(current["prompt"])
+    if completed:
+        if linked_docs:
+            missing.append("Технологическая проверка отверстий, вырезов, нагрузок и монтажных зазоров по картам AV24")
+        else:
+            missing.append("Технические карты отсутствующих точных артикулов AV24")
+
+    if current:
+        message = (prefix + "\n\n" if prefix else "") + current["prompt"]
+        options, input_mode, question_key, stage = current.get("options", []), current["kind"], current["key"], current["stage"]
+    else:
+        if linked_docs:
+            message = "Проверочный проект собран. Технические карты выбранной фурнитуры AV24 найдены и приложены к спецификации. Финальные PDF/DXF будут доступны после технологической проверки отверстий, вырезов, нагрузок и монтажных зазоров."
+        else:
+            message = "Проверочный проект собран. Состав фурнитуры подобран автоматически. У части точных артикулов AV24 технические карты не опубликованы, поэтому финальные PDF/DXF остаются заблокированы."
+        options, input_mode, question_key, stage = [], "complete", "", "review"
+    return {
+        "message": message, "stage": stage, "progress": progress, "facts": _facts(construction, answers, catalog, tray_shape),
+        "layout": _layout_plan(construction, answers, tray_shape),
+        "missing": missing, "critical_checks": checks, "hardware": selected_hardware,
+        "ready_for_final": False, "documents_unlocked": False, "options": options, "input_mode": input_mode,
+        "question_key": question_key, "project_title": construction.get("shortTitle") or construction["title"],
+        "catalog_connected": bool(catalog), "uploaded_files": state.get("files", []),
+        "state_token": signing.dumps(state, salt=STATE_SALT, compress=True),
+    }
+
+
+def _response_with_ai(catalog, state, prefix="", user_message=""):
+    result = _response(catalog, state, prefix)
+    if state.get("tray_shape") and _construction(catalog, state.get("construction_id")):
+        result = enhance_designer_response(state, result, user_message)
+    result.pop("state_token_needs_refresh", None)
+    result["state_token"] = signing.dumps(state, salt=STATE_SALT, compress=True)
+    return result
+
+
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+@parser_classes([MultiPartParser, FormParser])
+def public_designer_chat_view(request):
+    catalog = _catalog()
+    if request.method == "GET":
+        ai_enabled = ai_technologist_enabled()
+        return Response({"enabled": bool(_constructions(catalog)), "model": "OpenAI + CEH CRM MCP" if ai_enabled else "Правила CEH CRM", "mode": "ai_mcp" if ai_enabled else "deterministic"})
+    if _rate_limited(request, "designer-chat", limit=60, seconds=600):
+        return Response({"detail": "Слишком много сообщений. Продолжите через несколько минут."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    files = request.FILES.getlist("files")
+    file_error = _validate_files(files)
+    if file_error:
+        return Response({"detail": file_error}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        state = signing.loads(request.data.get("state_token", ""), salt=STATE_SALT, max_age=STATE_MAX_AGE) if request.data.get("state_token") else {"version": 2, "tray_shape": "", "construction_id": "", "answers": {}, "files": []}
+    except (signing.BadSignature, signing.SignatureExpired):
+        state = {"version": 2, "tray_shape": "", "construction_id": "", "answers": {}, "files": []}
+
+    for uploaded in files:
+        name = _clean(uploaded.name, 180)
+        if name and name not in state.setdefault("files", []):
+            state["files"].append(name)
+    message = _clean(request.data.get("message"), 4000)
+    option_value = _clean(request.data.get("option_value"), 200)
+    selected_model = _clean(request.data.get("selected_model"), 120)
+    if not state.get("tray_shape"):
+        tray_shape = _choice(option_value or message, _tray_shape_options())
+        if tray_shape:
+            state["tray_shape"] = tray_shape
+            chosen = _construction_for_shape(catalog, tray_shape, selected_model)
+            if chosen:
+                state["construction_id"] = str(chosen["id"])
+            shape_label = "от стены до стены" if tray_shape == "wall-to-wall" else "Г-образный"
+            return Response(_response_with_ai(catalog, state, f"Выбран поддон: {shape_label}. Теперь нужны только основные размеры — без вопросов про отклонения стен и пола.", message or option_value))
+        return Response(_response(catalog, state))
+
+    construction = _construction(catalog, state.get("construction_id"))
+
+    if not construction:
+        chosen = _construction_for_shape(catalog, state["tray_shape"], selected_model)
+        if chosen:
+            state["construction_id"] = str(chosen["id"])
+            construction = chosen
+        else:
+            return Response(_response(catalog, state))
+
+    questions = _questions(catalog, construction, state.setdefault("answers", {}))
+    current = next((question for question in questions if question["key"] not in state["answers"]), None)
+    if current:
+        if not message and not option_value:
+            prefix = "Файл принят как материал замера. Размеры из него автоматически не переносятся." if files else ""
+            return Response(_response_with_ai(catalog, state, prefix, message))
+        try:
+            parsed = _parse_answer(current, message, option_value)
+            if current["key"] == "joint_offset" and parsed >= float(state["answers"].get("tray_width") or 0):
+                raise ValueError("Шов должен находиться внутри порожка. Укажите расстояние меньше его ширины.")
+            state["answers"][current["key"]] = parsed
+        except ValueError as error:
+            return Response(_response_with_ai(catalog, state, str(error), message or option_value))
+    return Response(_response_with_ai(catalog, state, user_message=message or option_value))
