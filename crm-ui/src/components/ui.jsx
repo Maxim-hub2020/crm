@@ -15,27 +15,77 @@ function closestFieldLabel(input, explicitLabel, placeholder) {
   let parent = input?.parentElement;
   for (let depth = 0; parent && depth < 4; depth += 1, parent = parent.parentElement) {
     const label = parent.querySelector(":scope > label");
+    const fields = parent.querySelectorAll("input, textarea, select");
     const text = label?.textContent?.trim();
-    if (text) return text;
+    if (text && fields.length === 1 && fields[0] === input) return text;
   }
   return placeholder || "Введите значение";
 }
 
-function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueChange, onCancel, onDone }) {
+function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueChange, onClose }) {
   const fieldRef = useRef(null);
+  const closeTimerRef = useRef(null);
+  const dragRef = useRef({ pointerId: null, startY: 0, startedAt: 0 });
+  const [entered, setEntered] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [dragY, setDragY] = useState(0);
 
   useEffect(() => {
     if (!open) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const frame = window.requestAnimationFrame(() => fieldRef.current?.focus({ preventScroll: true }));
+    setDragY(0);
+    setDragging(false);
+    const frame = window.requestAnimationFrame(() => {
+      setEntered(true);
+      fieldRef.current?.focus({ preventScroll: true });
+    });
     return () => {
       window.cancelAnimationFrame(frame);
+      window.clearTimeout(closeTimerRef.current);
       document.body.style.overflow = previousOverflow;
     };
   }, [open]);
 
   if (!open) return null;
+
+  const close = () => {
+    if (closeTimerRef.current) return;
+    fieldRef.current?.blur();
+    setDragging(false);
+    setEntered(false);
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      setDragY(0);
+      onClose();
+    }, 240);
+  };
+
+  const startDrag = (event) => {
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startedAt: window.performance.now(),
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setDragging(true);
+  };
+
+  const moveDrag = (event) => {
+    if (dragRef.current.pointerId !== event.pointerId) return;
+    setDragY(Math.max(0, event.clientY - dragRef.current.startY));
+  };
+
+  const finishDrag = (event) => {
+    if (dragRef.current.pointerId !== event.pointerId) return;
+    const distance = Math.max(0, event.clientY - dragRef.current.startY);
+    const elapsed = Math.max(1, window.performance.now() - dragRef.current.startedAt);
+    dragRef.current.pointerId = null;
+    setDragging(false);
+    if (distance > 90 || distance / elapsed > 0.65) close();
+    else setDragY(0);
+  };
+
   const sharedProps = {
     ref: fieldRef,
     value,
@@ -52,23 +102,41 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
     onKeyDown: (event) => {
       if (!multiline && event.key === "Enter") {
         event.preventDefault();
-        onDone();
+        close();
       }
     },
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[90] flex items-end bg-slate-950/45 backdrop-blur-sm" role="presentation">
-      <button type="button" aria-label="Закрыть ввод" className="absolute inset-0 cursor-default" onClick={onCancel} />
-      <section className="relative z-10 w-full rounded-t-[34px] bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-24px_70px_rgba(15,23,42,0.24)]" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200" />
-        <div className="mb-4 flex items-center justify-between gap-3 px-1">
-          <button type="button" className="rounded-full px-3 py-2 text-sm font-bold text-slate-500" onClick={onCancel}>Отмена</button>
-          <h2 className="min-w-0 flex-1 truncate text-center text-lg font-black text-slate-900">{title}</h2>
-          <button type="button" className="rounded-full bg-slate-100 p-2.5 text-slate-500" onClick={onCancel} aria-label="Закрыть"><X size={20} /></button>
+    <div className="fixed inset-0 z-[90] flex items-end" role="presentation">
+      <button
+        type="button"
+        aria-label="Закрыть ввод"
+        className="absolute inset-0 cursor-default bg-slate-950/45 backdrop-blur-sm transition-opacity duration-200"
+        style={{ opacity: entered ? 1 : 0 }}
+        onClick={close}
+      />
+      <section
+        className="relative z-10 w-full rounded-t-[34px] bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-24px_70px_rgba(15,23,42,0.24)] will-change-transform"
+        style={{
+          transform: entered ? `translate3d(0, ${dragY}px, 0)` : "translate3d(0, 100%, 0)",
+          transition: dragging ? "none" : "transform 240ms cubic-bezier(0.22, 1, 0.36, 1)",
+        }}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
+        <div
+          className="cursor-grab touch-none pb-4 active:cursor-grabbing"
+          onPointerDown={startDrag}
+          onPointerMove={moveDrag}
+          onPointerUp={finishDrag}
+          onPointerCancel={finishDrag}
+        >
+          <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200" />
+          <h2 className="truncate px-4 text-center text-lg font-black text-slate-900">{title}</h2>
         </div>
         {multiline ? <textarea {...sharedProps} rows={5} /> : <input {...sharedProps} type={inputProps.type || "text"} />}
-        <button type="button" className="mt-4 h-14 w-full rounded-full bg-slate-950 text-base font-black text-white shadow-lg transition active:scale-[0.99]" onClick={onDone}>Готово</button>
       </section>
     </div>,
     document.body
@@ -76,7 +144,6 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
 }
 
 function useMobileFieldSheet({ value, defaultValue, type = "text", disabled, readOnly, mobileSheet, mobileLabel, placeholder, onChange, onBlur, multiline = false }) {
-  const originalValueRef = useRef("");
   const inputRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -94,7 +161,6 @@ function useMobileFieldSheet({ value, defaultValue, type = "text", disabled, rea
     if (!mobileSheetAvailable(type, disabled, readOnly, mobileSheet)) return false;
     event?.preventDefault?.();
     const currentValue = String(value ?? inputRef.current?.value ?? defaultValue ?? "");
-    originalValueRef.current = currentValue;
     setDraft(currentValue);
     setTitle(closestFieldLabel(inputRef.current, mobileLabel, placeholder));
     inputRef.current?.blur();
@@ -102,17 +168,12 @@ function useMobileFieldSheet({ value, defaultValue, type = "text", disabled, rea
     return true;
   };
 
-  const cancel = () => {
-    emitChange(originalValueRef.current);
-    setOpen(false);
-  };
-
-  const done = () => {
+  const close = () => {
     setOpen(false);
     onBlur?.({ target: { value: draft }, currentTarget: { value: draft } });
   };
 
-  return { inputRef, open, draft, title, begin, emitChange, cancel, done, multiline };
+  return { inputRef, open, draft, title, begin, emitChange, close, multiline };
 }
 
 export function Card({ className = "", children }) {
@@ -180,8 +241,7 @@ export function Input({ className = "", onKeyDown, onPointerDown, onFocus, enter
         value={sheet.draft}
         inputProps={props}
         onValueChange={sheet.emitChange}
-        onCancel={sheet.cancel}
-        onDone={sheet.done}
+        onClose={sheet.close}
       />
     </>
   );
@@ -211,8 +271,7 @@ export function Textarea({ className = "", onPointerDown, onFocus, mobileSheet =
         value={sheet.draft}
         inputProps={props}
         onValueChange={sheet.emitChange}
-        onCancel={sheet.cancel}
-        onDone={sheet.done}
+        onClose={sheet.close}
       />
     </>
   );
