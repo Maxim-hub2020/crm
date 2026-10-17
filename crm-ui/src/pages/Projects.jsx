@@ -1,3 +1,4 @@
+import { TaskLocation, TaskLocationFields } from "../components/TaskLocation.jsx";
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -147,6 +148,7 @@ function createEmptyTaskForm() {
     title: "",
     notes: "",
     due_date: "",
+    scheduled_date: "", city: "", district: "", address: "",
     priority: "medium",
   };
 }
@@ -796,6 +798,7 @@ function ProjectTaskRow({ task, onToggle, onDelete }) {
           {task.title}
         </div>
         {task.notes && <div className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-slate-500">{task.notes}</div>}
+        <TaskLocation task={task} />
         {task.due_date && (
           <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-600">
             <Calendar size={12} />
@@ -2637,6 +2640,8 @@ export default function Projects() {
         title: taskForm.title.trim(),
         notes: taskForm.notes.trim(),
         due_date: taskForm.due_date || null,
+        scheduled_date: taskForm.scheduled_date || null,
+        city: taskForm.city.trim(), district: taskForm.district.trim(), address: taskForm.address.trim(),
         priority: taskForm.priority,
       });
 
@@ -4361,6 +4366,7 @@ export default function Projects() {
                         </div>
                       </div>
 
+                      <TaskLocationFields value={taskForm} onChange={patch => setTaskForm(prev => ({ ...prev, ...patch }))} />
                       {taskError && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{taskError}</div>}
 
                       <Button type="submit" disabled={taskSaving}>
