@@ -57,25 +57,45 @@ function TaskRow({ task, onToggle, onDelete, onEdit }) {
   );
 }
 
-function TaskSection({ title, tasks, onToggle, onDelete, onEdit }) {
-  if (!tasks.length) return null;
+function taskCount(count) {
+  const last = count % 10;
+  const teen = count % 100 >= 11 && count % 100 <= 14;
+  return `${count} ${teen ? "задач" : last === 1 ? "задача" : last >= 2 && last <= 4 ? "задачи" : "задач"}`;
+}
+
+function DaySection({ date, today, tomorrow, tasks, onToggle, onDelete, onEdit }) {
+  const isToday = date === today;
+  const overdue = date && date < today;
+  const zones = tasks.reduce((groups, task) => {
+    const zone = [task.city, task.district].filter(Boolean).join(" · ") || "Место не указано";
+    (groups[zone] ||= []).push(task);
+    return groups;
+  }, {});
+  const heading = date ? new Date(`${date}T12:00:00`).toLocaleDateString("ru-RU", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
+  }) : "Без даты";
+  const badge = isToday ? "Сегодня" : date === tomorrow ? "Завтра" : overdue ? "Просрочено" : "";
 
   return (
-    <div className="space-y-4">
-      <div className="text-[11px] font-black uppercase tracking-widest text-gray-400">{title}</div>
-      {Object.entries(tasks.reduce((groups, task) => {
-        const day = task.scheduled_date || task.due_date || "Без даты";
-        const zone = [task.city || "Город не указан", task.district || "Район не указан"].join(" · ");
-        const key = `${day} / ${zone}`;
-        (groups[key] ||= []).push(task);
-        return groups;
-      }, {})).sort(([a], [b]) => a.localeCompare(b, "ru")).map(([key, rows]) => (
-        <div key={key} className="space-y-3 rounded-2xl border border-slate-200 p-3">
-          <div className="text-sm font-bold text-slate-600">{key} · {rows.length} задач</div>
-          {rows.map(task => <TaskRow key={task.id} task={task} onToggle={onToggle} onDelete={onDelete} onEdit={onEdit} />)}
+    <section className={`overflow-hidden rounded-2xl border ${isToday ? "border-blue-300 ring-2 ring-blue-50" : "border-slate-200"}`}>
+      <div className={`flex flex-wrap items-center justify-between gap-3 border-b px-4 py-4 sm:px-5 ${isToday ? "border-blue-100 bg-blue-50" : "border-slate-100 bg-slate-50"}`}>
+        <div className="min-w-0">
+          {badge && <div className={`mb-1 text-xs font-black uppercase tracking-wider ${overdue ? "text-red-600" : "text-blue-600"}`}>{badge}</div>}
+          <h3 className="text-base font-black capitalize text-slate-900 sm:text-lg">{heading}</h3>
         </div>
-      ))}
-    </div>
+        <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-600 ring-1 ring-slate-200">{taskCount(tasks.length)}</span>
+      </div>
+      <div className="space-y-5 bg-white p-3 sm:p-5">
+        {tasks.length ? Object.entries(zones).sort(([a], [b]) => a.localeCompare(b, "ru")).map(([zone, rows]) => (
+          <div key={zone} className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-sm font-bold text-slate-600">
+              <span>{zone}</span><span className="text-xs font-medium text-slate-400">{taskCount(rows.length)}</span>
+            </div>
+            {rows.map(task => <TaskRow key={task.id} task={task} onToggle={onToggle} onDelete={onDelete} onEdit={onEdit} />)}
+          </div>
+        )) : <div className="px-1 py-3 text-sm text-slate-400">На сегодня задач пока нет.</div>}
+      </div>
+    </section>
   );
 }
 
@@ -104,44 +124,25 @@ export default function Tasks() {
     });
   }, []);
 
+  const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Moscow" }).format(new Date());
+  const tomorrowDate = new Date(`${today}T12:00:00Z`);
+  tomorrowDate.setUTCDate(tomorrowDate.getUTCDate() + 1);
+  const tomorrow = tomorrowDate.toISOString().slice(0, 10);
   const grouped = useMemo(() => {
-    const overdue = [];
-    const today = [];
-    const soon = [];
-    const later = [];
+    const days = { [today]: [] };
     const archive = [];
-
-    const now = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Moscow" }).format(new Date());
-    const horizon = new Date(`${now}T12:00:00Z`);
-    horizon.setUTCDate(horizon.getUTCDate() + 7);
-    const inSevenDays = horizon.toISOString().slice(0, 10);
-
+    const undated = [];
     for (const task of tasks) {
       if (task.status === "done") {
         archive.push(task);
-        continue;
-      }
-
-      const taskDate = task.scheduled_date || task.due_date;
-      if (!taskDate) {
-        later.push(task);
-        continue;
-      }
-
-
-      if (taskDate < now) {
-        overdue.push(task);
-      } else if (taskDate === now) {
-        today.push(task);
-      } else if (taskDate <= inSevenDays) {
-        soon.push(task);
       } else {
-        later.push(task);
+        const date = task.scheduled_date || task.due_date;
+        if (date) (days[date] ||= []).push(task);
+        else undated.push(task);
       }
     }
-
-    return { overdue, today, soon, later, archive };
-  }, [tasks]);
+    return { days: Object.entries(days).sort(([a], [b]) => a.localeCompare(b)), archive, undated };
+  }, [tasks, today]);
 
   async function addTask(event) {
     event.preventDefault();
@@ -221,7 +222,7 @@ export default function Tasks() {
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-xl font-black text-gray-800">
           <ListTodo size={20} className="text-blue-500" />
-          Общий список задач
+          План задач по дням
         </h2>
         <Button variant="secondary" onClick={() => setShowArchive((value) => !value)}>
           <Archive size={16} />
@@ -265,15 +266,10 @@ export default function Tasks() {
             </div>
           ) : (
             <div className="space-y-8">
-              <TaskSection title="Просрочено" tasks={grouped.overdue} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />
-              <TaskSection title="Сегодня" tasks={grouped.today} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />
-              <TaskSection title="В ближайшие 7 дней" tasks={grouped.soon} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />
-              <TaskSection title="Позже" tasks={grouped.later} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />
-              {!grouped.overdue.length && !grouped.today.length && !grouped.soon.length && !grouped.later.length && (
-                <div className="rounded-2xl bg-gray-50 px-5 py-8 text-center text-sm text-gray-400">
-                  Добавьте первую задачу, чтобы раздел начал работать.
-                </div>
-              )}
+              {grouped.days.map(([date, rows]) => (
+                <DaySection key={date} date={date} today={today} tomorrow={tomorrow} tasks={rows} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />
+              ))}
+              {grouped.undated.length > 0 && <DaySection today={today} tomorrow={tomorrow} tasks={grouped.undated} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />}
               <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-4">
                 <button
                   type="button"
