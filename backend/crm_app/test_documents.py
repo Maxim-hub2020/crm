@@ -80,6 +80,13 @@ class ProjectDocumentTests(APITestCase):
         self.assertEqual(values["QUOTE_NUMBER"], "1027")
         self.assertIn("Стеклянная душевая (Стекло: прозрачное 8 мм; Размер: 1200 × 2000 мм) – 2 шт. – 80 000 руб.", values["QUOTE_ITEMS"])
         self.assertEqual(values["DEAL_VALUE"], "80 500 руб.")
+        self.assertEqual(values["_QUOTE_ROWS"][0]["amount"], "80 000 руб.")
+        self.assertEqual(values["_QUOTE_ROWS"][1]["description"], "Доставка")
+        self.assertEqual(values["_QUOTE_ROWS"][1]["amount"], "500 руб.")
+        self.assertEqual(
+            sum((row["amount_value"] for row in values["_QUOTE_ROWS"]), Decimal("0")),
+            Decimal("80500"),
+        )
         self.assertEqual(values["CLIENT_ADDRESS"], "г Ростов-на-Дону, ул Клиентская, д 5, этаж 2, кв. 7")
         self.assertEqual(values["PROJECT_ADDRESS"], "г Ростов-на-Дону, ул Объектная, д 12, подъезд 3, этаж 8, кв. 15")
         self.assertEqual(values["OBJECT_ADDRESS"], values["PROJECT_ADDRESS"])

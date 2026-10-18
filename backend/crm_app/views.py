@@ -1573,11 +1573,16 @@ def _draw_contract_first_page(pdf, values, font_names, pdfmetrics, page_width, p
         ),
     ]
     pdf.setFont(regular, 10.5)
-    clause_top = 544
+    clause_top = 548
     for clause in clauses:
         clause_top = _draw_pdf_paragraph(
             pdf, clause, 84, clause_top, page_width - 125, pdfmetrics, regular, 10.5, 12.6,
-        ) + 10
+        ) + 12
+
+    # The source template places this heading too close to 2.1. Redraw it in
+    # the reserved gap so varying addresses cannot make section 1 overlap it.
+    pdf.setFont(bold, 11)
+    pdf.drawString(84, 296, "2. Права и обязанности сторон")
 
 
 def _draw_contract_requisites_page(pdf, values, font_names, pdfmetrics, page_width):
@@ -1607,30 +1612,70 @@ def _draw_contract_specification_page(pdf, values, font_names, pdfmetrics, page_
     table_top = 675
     table_width = page_width - 84
     number_width = 34
-    description_width = table_width - number_width
-    description = str(values.get("QUOTE_ITEMS") or "")
-    description_lines = _wrap_pdf_text(description.splitlines(), description_width - 12, pdfmetrics, regular, 10.5)
-    row_height = max(58, len(description_lines) * 13 + 14)
+    quantity_width = 58
+    amount_width = 96
+    description_width = table_width - number_width - quantity_width - amount_width
+    rows = values.get("_QUOTE_ROWS")
+    if not isinstance(rows, list) or not rows:
+        rows = [{
+            "description": str(values.get("QUOTE_ITEMS") or ""),
+            "quantity": "1",
+            "amount": str(values.get("DEAL_VALUE") or ""),
+        }]
+    prepared_rows = []
+    for row in rows:
+        description_lines = _wrap_pdf_text(
+            str(row.get("description") or "").splitlines(),
+            description_width - 12,
+            pdfmetrics,
+            regular,
+            9.5,
+        )
+        prepared_rows.append({
+            **row,
+            "description_lines": description_lines,
+            "height": max(28, len(description_lines) * 11.5 + 10),
+        })
     header_height = 28
     total_height = 30
-    table_bottom = table_top - header_height - row_height - total_height
+    rows_height = sum(row["height"] for row in prepared_rows)
+    table_bottom = table_top - header_height - rows_height - total_height
 
     pdf.setLineWidth(0.7)
-    pdf.rect(table_x, table_bottom, table_width, header_height + row_height + total_height, stroke=1, fill=0)
+    pdf.rect(table_x, table_bottom, table_width, header_height + rows_height + total_height, stroke=1, fill=0)
     pdf.line(table_x, table_top - header_height, table_x + table_width, table_top - header_height)
-    pdf.line(table_x, table_top - header_height - row_height, table_x + table_width, table_top - header_height - row_height)
-    pdf.line(table_x + number_width, table_bottom + total_height, table_x + number_width, table_top)
-    pdf.setFont(bold, 10.5)
+    description_x = table_x + number_width
+    quantity_x = description_x + description_width
+    amount_x = quantity_x + quantity_width
+    body_bottom = table_bottom + total_height
+    for boundary in (description_x, quantity_x, amount_x):
+        pdf.line(boundary, body_bottom, boundary, table_top)
+    row_y = table_top - header_height
+    for row in prepared_rows:
+        row_y -= row["height"]
+        pdf.line(table_x, row_y, table_x + table_width, row_y)
+
+    pdf.setFont(bold, 9.5)
     pdf.drawCentredString(table_x + number_width / 2, table_top - 18, "№")
-    pdf.drawString(table_x + number_width + 7, table_top - 18, "Наименование, количество и стоимость")
-    pdf.setFont(regular, 10.5)
-    pdf.drawCentredString(table_x + number_width / 2, table_top - header_height - 22, "1")
-    baseline = table_top - header_height - 17
-    for line in description_lines:
-        pdf.drawString(table_x + number_width + 7, baseline, line)
-        baseline -= 13
+    pdf.drawString(description_x + 6, table_top - 18, "Наименование")
+    pdf.drawCentredString(quantity_x + quantity_width / 2, table_top - 18, "Кол-во")
+    pdf.drawCentredString(amount_x + amount_width / 2, table_top - 18, "Сумма")
+
+    row_top = table_top - header_height
+    pdf.setFont(regular, 9.5)
+    for index, row in enumerate(prepared_rows, start=1):
+        row_middle = row_top - row["height"] / 2
+        pdf.drawCentredString(table_x + number_width / 2, row_middle - 3, str(index))
+        baseline = row_top - 13
+        for line in row["description_lines"]:
+            pdf.drawString(description_x + 6, baseline, line)
+            baseline -= 11.5
+        pdf.drawCentredString(quantity_x + quantity_width / 2, row_middle - 3, str(row.get("quantity") or ""))
+        pdf.drawRightString(table_x + table_width - 7, row_middle - 3, str(row.get("amount") or ""))
+        row_top -= row["height"]
+
     pdf.setFont(bold, 11)
-    pdf.drawRightString(table_x + table_width - 145, table_bottom + 10, "ИТОГО:")
+    pdf.drawRightString(amount_x - 8, table_bottom + 10, "ИТОГО:")
     pdf.drawRightString(table_x + table_width - 8, table_bottom + 10, str(values.get("DEAL_VALUE") or ""))
 
     parties_top = min(table_bottom - 65, 470)
@@ -1744,6 +1789,8 @@ def build_project_document_values(project):
     payload = quote.payload if quote and isinstance(quote.payload, dict) else {}
     raw_items = payload.get("items") if isinstance(payload.get("items"), list) else []
     item_lines = []
+    quote_rows = []
+    items_total = Decimal("0")
     for index, item in enumerate((item for item in raw_items if isinstance(item, dict)), start=1):
         title = str(
             item.get("positionName")
@@ -1757,7 +1804,7 @@ def build_project_document_values(project):
         try:
             line_total = Decimal(str(amount)) * Decimal(str(quantity)) if amount not in (None, "") else None
         except (InvalidOperation, TypeError, ValueError):
-            line_total = amount
+            line_total = None
         amount_label = f" – {_document_money(line_total)}" if line_total not in (None, "") else ""
         raw_details = item.get("details") if isinstance(item.get("details"), list) else []
         detail_parts = []
@@ -1770,6 +1817,14 @@ def build_project_document_values(project):
                 detail_parts.append(f"{label}: {value}")
         detail_label = f" ({'; '.join(detail_parts)})" if detail_parts else ""
         item_lines.append(f"{index}. {title}{detail_label} – {quantity} шт.{amount_label}")
+        if line_total is not None:
+            items_total += line_total
+        quote_rows.append({
+            "description": f"{title}{detail_label}",
+            "quantity": str(quantity),
+            "amount": _document_money(line_total) if line_total is not None else "",
+            "amount_value": line_total,
+        })
 
     if not item_lines:
         item_lines.append(f"1. {project.title or 'Изделие'} – 1 шт. – {_document_money(project.total_amount)}")
@@ -1789,6 +1844,30 @@ def build_project_document_values(project):
         from .calculator_leads import quote_summary
 
         quote_total, _configuration = quote_summary(payload)
+    document_total = quote_total if quote_total is not None else project.total_amount
+    if quote_rows and quote_total is not None:
+        difference = quote_total - items_total
+        if difference > 0:
+            quote_rows.append({
+                "description": "Доставка",
+                "quantity": "1",
+                "amount": _document_money(difference),
+                "amount_value": difference,
+            })
+        elif difference < 0:
+            quote_rows.append({
+                "description": "Скидка",
+                "quantity": "1",
+                "amount": _document_money(difference),
+                "amount_value": difference,
+            })
+    if not quote_rows:
+        quote_rows.append({
+            "description": project.title or "Изделие",
+            "quantity": "1",
+            "amount": _document_money(document_total),
+            "amount_value": document_total,
+        })
     values = {
         "CLIENT_NAME": full_name or client_name,
         "CLIENT_FULL_NAME": full_name,
@@ -1803,11 +1882,12 @@ def build_project_document_values(project):
         "PROJECT_ENTRANCE": project.entrance or "",
         "PROJECT_FLOOR": project.floor or "",
         "PROJECT_APARTMENT": project.apartment or "",
-        "DEAL_VALUE": _document_money(quote_total if quote_total is not None else project.total_amount),
+        "DEAL_VALUE": _document_money(document_total),
         "PROJECT_NUMBER": f"{project.order_number:04d}" if project.order_number else "",
         "PROJECT_TITLE": project.title or project.client_name or "",
         "QUOTE_NUMBER": quote_number,
         "QUOTE_ITEMS": quote_items,
+        "_QUOTE_ROWS": quote_rows,
         "CONTRACT_SUBJECT": quote_items,
         "DOCUMENT_DATE": timezone.localdate().strftime("%d.%m.%Y"),
         "DOC_DATE": timezone.localdate().strftime("%d.%m.%Y"),
