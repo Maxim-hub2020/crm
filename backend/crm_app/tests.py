@@ -1225,6 +1225,78 @@ class TestClientApi(AuthenticatedApiMixin, APITestCase):
                 self.assertEqual(response.status_code, status.HTTP_200_OK)
                 self.assertIn(project.id, [row["project_id"] for row in response.data["results"] if row.get("project_id")])
 
+    def test_global_search_finds_calculator_quote_and_opens_it_in_calculator(self):
+        quote = CalculatorQuote.objects.create(
+            workspace=self.admin.workspace,
+            quote_id="quote-search-1007",
+            number="1007",
+            payload={
+                "id": "quote-search-1007",
+                "number": "1007",
+                "customer": {
+                    "clientName": "Константин Архивный",
+                    "clientPhone": "+7-988-946-47-77",
+                    "note": "бронзовое зеркало в прихожую",
+                },
+                "result": {"total": 45600},
+                "constructionTitle": "Зеркало с подсветкой",
+            },
+            created_by=self.admin,
+        )
+        api_client = self.auth_client_for(self.admin)
+
+        for query in ("1007", "Константин Архивный", "8988946", "бронзовое", "подсветкой"):
+            with self.subTest(query=query):
+                response = api_client.get("/api/global-search/", {"q": query})
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                result = next(row for row in response.data["results"] if row["type"] == "calculator_quote")
+                self.assertEqual(result["id"], quote.quote_id)
+                self.assertEqual(result["route"], "/calculator?quote=quote-search-1007")
+
+    def test_manager_cannot_search_unlinked_or_other_managers_calculator_quotes(self):
+        other_manager = self.create_user("calculator.other.manager")
+        own_project = Project.objects.create(
+            manager=self.manager,
+            title="Свой проект с КП",
+            client_name=self.client_card.name,
+            client_phone=self.client_card.phone,
+        )
+        other_project = Project.objects.create(
+            manager=other_manager,
+            title="Чужой проект с КП",
+            client_name="Чужой клиент",
+            client_phone="+7-900-111-22-33",
+        )
+        own_quote = CalculatorQuote.objects.create(
+            workspace=self.manager.workspace,
+            quote_id="own-search-quote",
+            number="2001",
+            project=own_project,
+            payload={"id": "own-search-quote", "number": "2001", "customer": {"note": "доступное КП"}},
+        )
+        CalculatorQuote.objects.create(
+            workspace=self.manager.workspace,
+            quote_id="other-search-quote",
+            number="2002",
+            project=other_project,
+            payload={"id": "other-search-quote", "number": "2002", "customer": {"note": "чужое КП"}},
+        )
+        CalculatorQuote.objects.create(
+            workspace=self.manager.workspace,
+            quote_id="unlinked-search-quote",
+            number="2003",
+            payload={"id": "unlinked-search-quote", "number": "2003", "customer": {"note": "непривязанное КП"}},
+        )
+        api_client = self.auth_client_for(self.manager)
+
+        visible = api_client.get("/api/global-search/", {"q": "доступное"})
+        hidden = api_client.get("/api/global-search/", {"q": "КП"})
+
+        self.assertIn(own_quote.quote_id, [row["id"] for row in visible.data["results"] if row["type"] == "calculator_quote"])
+        quote_ids = [row["id"] for row in hidden.data["results"] if row["type"] == "calculator_quote"]
+        self.assertNotIn("other-search-quote", quote_ids)
+        self.assertNotIn("unlinked-search-quote", quote_ids)
+
     def test_client_rejects_invalid_phone(self):
         api_client = self.auth_client_for(self.manager)
 

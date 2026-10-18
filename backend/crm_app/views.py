@@ -317,6 +317,39 @@ def _comment_result(comment):
     }
 
 
+def _calculator_quote_result(quote):
+    from .calculator_leads import quote_summary
+
+    payload = quote.payload if isinstance(quote.payload, dict) else {}
+    customer = payload.get("customer") if isinstance(payload.get("customer"), dict) else {}
+    if not customer and isinstance(payload.get("form"), dict):
+        customer = payload["form"]
+    amount, summary = quote_summary(payload)
+    item_titles = [str(item.get("title") or "").strip() for item in summary["items"] if item.get("title")]
+    quote_number = quote.number or quote.quote_id[:8]
+    title = f"КП №{quote_number}"
+    if item_titles:
+        title += f" · {item_titles[0]}" if len(set(item_titles)) == 1 else f" · {len(item_titles)} позиций"
+    subtitle = " · ".join(
+        value
+        for value in [
+            str(customer.get("clientName") or "").strip(),
+            str(customer.get("clientPhone") or "").strip(),
+            f"{amount} ₽" if amount is not None else "",
+            getattr(quote.project, "title", "") if quote.project_id else "",
+        ]
+        if value
+    )
+    return {
+        "type": "calculator_quote",
+        "id": quote.quote_id,
+        "title": title,
+        "subtitle": subtitle,
+        "route": f"/calculator?{urlencode({'quote': quote.quote_id})}",
+        "label": "КП",
+    }
+
+
 def _project_activity_payload(project):
     events = []
 
@@ -881,9 +914,27 @@ def global_search_view(request):
         .order_by("-created_at")[:6]
     )
 
+    quote_queryset = CalculatorQuote.objects.select_related("project").filter(
+        workspace=workspace,
+        lead_deleted=False,
+    )
+    if not request.user.is_admin():
+        quote_queryset = quote_queryset.filter(project__manager=request.user)
+    normalized_query = query.casefold().replace("ё", "е")
+    calculator_quotes = []
+    for quote in quote_queryset.order_by("-quote_created_at", "-id"):
+        payload_text = json.dumps(quote.payload or {}, ensure_ascii=False, default=str)
+        searchable_text = f"{quote.number} {payload_text}".casefold().replace("ё", "е")
+        searchable_digits = re.sub(r"\D", "", searchable_text)
+        if normalized_query in searchable_text or (phone_query and phone_query in searchable_digits):
+            calculator_quotes.append(quote)
+        if len(calculator_quotes) >= 8:
+            break
+
     results = []
     results.extend(_project_result(project) for project in projects)
     results.extend(_client_result(client) for client in clients)
+    results.extend(_calculator_quote_result(quote) for quote in calculator_quotes)
     results.extend(_task_result(task) for task in tasks)
     results.extend(_payment_result(payment) for payment in payments)
     results.extend(_comment_result(comment) for comment in comments)
