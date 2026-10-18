@@ -8,7 +8,7 @@ from pypdf import PdfReader
 from rest_framework.test import APITestCase
 
 from .models import CalculatorQuote, Client, Project, ProjectStatus, User, Workspace
-from .views import build_project_document_values, render_pdf_template
+from .views import _fit_contract_clauses, build_project_document_values, render_pdf_template
 
 
 class ProjectDocumentTests(APITestCase):
@@ -122,3 +122,41 @@ class ProjectDocumentTests(APITestCase):
         rendered_text = "\n".join(page.extract_text() or "" for page in reader.pages)
         self.assertIn("Иванов Иван Иванович", rendered_text)
         self.assertIn("0012", rendered_text)
+
+    def test_contract_clause_layout_stays_above_section_two(self):
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+
+        from .views import _register_document_fonts, _wrap_pdf_text
+
+        font_name = _register_document_fonts(pdfmetrics, TTFont)["regular"]
+        clauses = [
+            "1.1. По договору подряда Подрядчик обязуется выполнить комплекс стекольно-зеркальных работ.",
+            (
+                "1.2. Осуществить доставку и монтаж на объекте по адресу: Российская Федерация, "
+                "Ростовская область, город Ростов-на-Дону, очень длинное наименование улицы, "
+                "дом 123, корпус 4, строение 5, подъезд 6, этаж 17, квартира 245."
+            ),
+            "1.3. Работы выполняются из материалов Подрядчика.",
+            "1.4. Объем и стоимость работ определяются в приложении №1 к настоящему договору.",
+            "1.5. Спецификация может меняться после замера на объекте Исполнителем.",
+            "1.6. Подрядчик предоставляет перерасчет стоимости после изменения объема.",
+            (
+                "1.7. Срок выполнения работ составляет 10 рабочих дней после подписания договора, "
+                "решения технической части замера и внесения авансовой части оплаты. В позициях с "
+                "закаленным стеклом срок изготовления увеличивается до 15 рабочих дней."
+            ),
+            "1.8. Договор действует до полного исполнения Сторонами обязательств по Договору.",
+        ]
+        size, leading, spacing = _fit_contract_clauses(
+            clauses, 470, pdfmetrics, font_name, 554, 318,
+        )
+        top = 554
+        last_baseline = top
+        for clause in clauses:
+            line_count = len(_wrap_pdf_text([clause], 470, pdfmetrics, font_name, size))
+            last_baseline = top - size - leading * (line_count - 1)
+            top = last_baseline - leading + spacing
+
+        self.assertEqual(size, 10.5)
+        self.assertGreaterEqual(last_baseline, 318)

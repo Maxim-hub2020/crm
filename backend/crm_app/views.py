@@ -1464,6 +1464,23 @@ def _draw_pdf_paragraph(pdf, text, x, top, width, pdfmetrics, font_name, size=11
     return baseline
 
 
+def _fit_contract_clauses(clauses, width, pdfmetrics, font_name, top, minimum_baseline):
+    """Keep the body font fixed and compact only its vertical rhythm."""
+    size = 10.5
+    for leading in (12.6, 12.2, 11.8, 11.4, 11, 10.7, 10.5):
+        paragraph_spacing = leading - 0.5
+        clause_top = top
+        last_baseline = clause_top
+        for clause in clauses:
+            line_count = len(_wrap_pdf_text([clause], width, pdfmetrics, font_name, size))
+            first_baseline = clause_top - size
+            last_baseline = first_baseline - leading * (line_count - 1)
+            clause_top = last_baseline - leading + paragraph_spacing
+        if last_baseline >= minimum_baseline:
+            return size, leading, paragraph_spacing
+    return size, size, size - 0.5
+
+
 def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top, include_signatures=True):
     regular = font_names["regular"]
     bold = font_names["bold"]
@@ -1572,12 +1589,29 @@ def _draw_contract_first_page(pdf, values, font_names, pdfmetrics, page_width, p
             "исполнения Сторонами обязательств по Договору."
         ),
     ]
-    pdf.setFont(regular, 10.5)
-    clause_top = 548
+    clause_width = page_width - 125
+    clause_top = 554
+    clause_size, clause_leading, paragraph_spacing = _fit_contract_clauses(
+        clauses,
+        clause_width,
+        pdfmetrics,
+        regular,
+        clause_top,
+        318,
+    )
+    pdf.setFont(regular, clause_size)
     for clause in clauses:
         clause_top = _draw_pdf_paragraph(
-            pdf, clause, 84, clause_top, page_width - 125, pdfmetrics, regular, 10.5, 12.6,
-        ) + 12
+            pdf,
+            clause,
+            84,
+            clause_top,
+            clause_width,
+            pdfmetrics,
+            regular,
+            clause_size,
+            clause_leading,
+        ) + paragraph_spacing
 
     # The source template places this heading too close to 2.1. Redraw it in
     # the reserved gap so varying addresses cannot make section 1 overlap it.
