@@ -20,6 +20,9 @@ class ProjectDocumentTests(APITestCase):
             workspace=self.workspace,
             name="Иван",
             phone="+7-900-000-00-00",
+            address="г Ростов-на-Дону, ул Клиентская, д 5",
+            apartment="7",
+            floor="2",
             works_with_contract=True,
         )
         self.project = Project.objects.create(
@@ -30,6 +33,10 @@ class ProjectDocumentTests(APITestCase):
             client_phone=self.client_card.phone,
             order_number=12,
             title="Душевая",
+            object_address="г Ростов-на-Дону, ул Объектная, д 12",
+            entrance="3",
+            apartment="15",
+            floor="8",
             total_amount=Decimal("81000"),
             status="active",
         )
@@ -49,12 +56,17 @@ class ProjectDocumentTests(APITestCase):
             number="1027",
             project=self.project,
             payload={
+                "result": {"total": 80500},
                 "items": [
                     {
                         "id": "one",
                         "constructionTitle": "Стеклянная душевая",
                         "quantity": 2,
                         "result": {"total": 40000},
+                        "details": [
+                            {"label": "Стекло", "value": "прозрачное 8 мм"},
+                            {"label": "Размер", "value": "1200 × 2000 мм"},
+                        ],
                     }
                 ]
             },
@@ -66,8 +78,11 @@ class ProjectDocumentTests(APITestCase):
         self.assertEqual(values["CLIENT_FULL_NAME_2"], "Иванов Иван Иванович")
         self.assertEqual(values["PROJECT_NUMBER"], "0012")
         self.assertEqual(values["QUOTE_NUMBER"], "1027")
-        self.assertIn("Стеклянная душевая – 2 шт. – 80 000 руб.", values["QUOTE_ITEMS"])
-        self.assertEqual(values["DEAL_VALUE"], "81 000 руб.")
+        self.assertIn("Стеклянная душевая (Стекло: прозрачное 8 мм; Размер: 1200 × 2000 мм) – 2 шт. – 80 000 руб.", values["QUOTE_ITEMS"])
+        self.assertEqual(values["DEAL_VALUE"], "80 500 руб.")
+        self.assertEqual(values["CLIENT_ADDRESS"], "г Ростов-на-Дону, ул Клиентская, д 5, этаж 2, кв. 7")
+        self.assertEqual(values["PROJECT_ADDRESS"], "г Ростов-на-Дону, ул Объектная, д 12, подъезд 3, этаж 8, кв. 15")
+        self.assertEqual(values["OBJECT_ADDRESS"], values["PROJECT_ADDRESS"])
 
     def test_document_values_fall_back_to_project_without_quote(self):
         self.client_card.contract_full_name = "Иванов Иван Иванович"
@@ -83,6 +98,9 @@ class ProjectDocumentTests(APITestCase):
         self.client_card.save(update_fields=["contract_full_name", "updated_at"])
         template_path = Path(__file__).resolve().parents[2] / "output" / "pdf" / "Шаблон договора CRM.pdf"
 
+        source_reader = PdfReader(str(template_path))
+        source_fields = source_reader.get_fields() or {}
+
         with template_path.open("rb") as template_stream:
             template = SimpleNamespace(file=File(template_stream, name=template_path.name))
             rendered = render_pdf_template(template, self.project)
@@ -92,3 +110,7 @@ class ProjectDocumentTests(APITestCase):
         self.assertEqual(len(reader.pages), 4)
         self.assertEqual(fields["CLIENT_FULL_NAME"].get("/V"), "Иванов Иван Иванович")
         self.assertEqual(fields["PROJECT_NUMBER"].get("/V"), "0012")
+        self.assertEqual(fields["CLIENT_FULL_NAME"].get("/DA"), source_fields["CLIENT_FULL_NAME"].get("/DA"))
+        self.assertEqual(fields["PROJECT_NUMBER"].get("/DA"), source_fields["PROJECT_NUMBER"].get("/DA"))
+        need_appearances = reader.trailer["/Root"]["/AcroForm"].get("/NeedAppearances")
+        self.assertFalse(need_appearances.value)

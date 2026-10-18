@@ -270,6 +270,12 @@ export async function fetchCalculatorLeads() {
   return data;
 }
 
+export async function fetchCalculatorQuotes() {
+  initApiAuth();
+  const { data } = await api.get("/api/calculator-quotes/");
+  return Array.isArray(data?.quotes) ? data.quotes : [];
+}
+
 export async function updateCalculatorLead(leadId, payload) {
   initApiAuth();
   const { data } = await api.patch(`/api/calculator-leads/${leadId}/`, payload);
@@ -494,6 +500,18 @@ export async function createProject(payload) {
 export async function updateProject(projectId, payload) {
   initApiAuth();
   const { data } = await api.patch(`/api/projects/${projectId}/`, payload);
+  return data;
+}
+
+export async function linkProjectCalculatorQuote(projectId, quoteId) {
+  initApiAuth();
+  const { data } = await api.post(`/api/projects/${projectId}/calculator-quote/`, { quote_id: quoteId });
+  return data;
+}
+
+export async function unlinkProjectCalculatorQuote(projectId) {
+  initApiAuth();
+  const { data } = await api.delete(`/api/projects/${projectId}/calculator-quote/`);
   return data;
 }
 

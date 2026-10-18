@@ -69,6 +69,52 @@ class CalculatorQuoteProjectTests(APITestCase):
             "https://calc.cehcrm.ru/?quote=saved-quote-1",
         )
 
+    def test_existing_project_can_pull_quote_and_quote_total(self):
+        self.sync()
+        generated_project = Project.objects.get()
+        client = generated_project.client
+        target = Project.objects.create(
+            workspace=self.workspace,
+            manager=self.user,
+            client=client,
+            client_name=client.name,
+            client_phone=client.phone,
+            title="Проект после замера",
+            object_address="г Ростов-на-Дону, ул Тестовая, д 10",
+            apartment="15",
+            floor="3",
+            status="applications",
+            total_amount=100,
+        )
+
+        response = self.client.post(
+            f"/api/projects/{target.pk}/calculator-quote/",
+            {"quote_id": self.quote["id"]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        target.refresh_from_db()
+        quote = CalculatorQuote.objects.get(quote_id=self.quote["id"])
+        self.assertEqual(quote.project, target)
+        self.assertEqual(target.total_amount, Decimal("81000"))
+        self.assertEqual(target.object_address, "г Ростов-на-Дону, ул Тестовая, д 10")
+        self.assertEqual(target.apartment, "15")
+        self.assertEqual(response.data["moved_from_project_id"], generated_project.id)
+        self.assertEqual(response.data["project"]["calculator_quote_info"]["number"], "1001")
+
+    def test_project_can_unlink_quote_without_deleting_archive(self):
+        self.sync()
+        project = Project.objects.get()
+
+        response = self.client.delete(f"/api/projects/{project.pk}/calculator-quote/")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        quote = CalculatorQuote.objects.get(quote_id=self.quote["id"])
+        self.assertIsNone(quote.project)
+        self.assertTrue(quote.project_sync_disabled)
+        self.assertEqual(response.data["project"]["calculator_quote_info"], None)
+
     def test_stale_revision_does_not_change_project(self):
         self.sync()
         stale = deepcopy(self.quote)

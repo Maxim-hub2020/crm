@@ -991,6 +991,89 @@ class ProjectViewSet(viewsets.ModelViewSet):
         project = self.get_object()
         return Response({"project": project.id, "events": _project_activity_payload(project)})
 
+    @action(detail=True, methods=["post", "delete"], url_path="calculator-quote")
+    def calculator_quote(self, request, pk=None):
+        project = self.get_object()
+        workspace = current_workspace(request.user)
+
+        with transaction.atomic():
+            project = self.get_queryset().select_for_update().get(pk=project.pk)
+            current_quote = CalculatorQuote.objects.select_for_update().filter(project=project).first()
+
+            if request.method == "DELETE":
+                if current_quote:
+                    current_quote.project = None
+                    current_quote.project_sync_disabled = True
+                    current_quote.updated_by = request.user
+                    current_quote.save(update_fields=["project", "project_sync_disabled", "updated_by", "updated_at"])
+                    create_audit_log(
+                        request.user,
+                        "project",
+                        project.id,
+                        "update",
+                        before={"calculator_quote": current_quote.quote_id},
+                        after={"calculator_quote": None},
+                        workspace=project.workspace,
+                    )
+                project.refresh_from_db()
+                return Response({"project": self.get_serializer(project).data})
+
+            quote_id = str(request.data.get("quote_id") or "").strip()
+            if not quote_id:
+                return Response(
+                    {"detail": "Выберите КП для привязки к проекту."},
+                    status=drf_status.HTTP_400_BAD_REQUEST,
+                )
+
+            quote = CalculatorQuote.objects.select_for_update().filter(
+                workspace=workspace,
+                quote_id=quote_id,
+                lead_deleted=False,
+            ).first()
+            if quote is None:
+                return Response({"detail": "КП не найдено в архиве калькулятора."}, status=drf_status.HTTP_404_NOT_FOUND)
+
+            moved_from_project_id = quote.project_id if quote.project_id != project.id else None
+            if current_quote and current_quote.pk != quote.pk:
+                current_quote.project = None
+                current_quote.project_sync_disabled = True
+                current_quote.updated_by = request.user
+                current_quote.save(update_fields=["project", "project_sync_disabled", "updated_by", "updated_at"])
+
+            quote.project = project
+            quote.project_sync_disabled = False
+            quote.updated_by = request.user
+            quote.save(update_fields=["project", "project_sync_disabled", "updated_by", "updated_at"])
+
+            from .calculator_leads import quote_summary
+
+            quote_total, _configuration = quote_summary(quote.payload if isinstance(quote.payload, dict) else {})
+            if quote_total is not None and project.total_amount != quote_total:
+                project.total_amount = quote_total
+                project.save(update_fields=["total_amount", "updated_at"])
+                try:
+                    ensure_project_bonus_accrual(project, actor=request.user)
+                except Exception:
+                    logger.exception("Project bonus accrual failed after quote link project_id=%s", project.pk)
+
+            create_audit_log(
+                request.user,
+                "project",
+                project.id,
+                "update",
+                before={"calculator_quote": current_quote.quote_id if current_quote else None},
+                after={"calculator_quote": quote.quote_id, "total_amount": str(project.total_amount or "")},
+                workspace=project.workspace,
+            )
+
+        project.refresh_from_db()
+        return Response(
+            {
+                "project": self.get_serializer(project).data,
+                "moved_from_project_id": moved_from_project_id,
+            }
+        )
+
     @action(detail=True, methods=["post"], url_path="yandex-disk-folder")
     def yandex_disk_folder(self, request, pk=None):
         project = self.get_object()
@@ -1200,6 +1283,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
 def render_pdf_template(template, project):
     from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import BooleanObject, NameObject
 
     try:
         from pypdf._font import Font
@@ -1231,9 +1315,10 @@ def render_pdf_template(template, project):
         writer.clone_document_from_reader(reader)
 
         if "/AcroForm" in reader.trailer["/Root"]:
-            writer.set_need_appearances_writer()
             for page in writer.pages:
-                writer.update_page_form_field_values(page, values)
+                writer.update_page_form_field_values(page, values, auto_regenerate=False)
+            acro_form = writer._root_object["/AcroForm"].get_object()
+            acro_form[NameObject("/NeedAppearances")] = BooleanObject(False)
 
         output = BytesIO()
         writer.write(output)
@@ -1250,6 +1335,17 @@ def _document_money(value):
     rendered = f"{amount:,.2f}".replace(",", " ")
     rendered = rendered[:-3] if rendered.endswith(".00") else rendered.replace(".", ",")
     return f"{rendered} руб."
+
+
+def _document_address(address, entrance="", floor="", apartment=""):
+    parts = [str(address or "").strip()]
+    details = [
+        f"подъезд {str(entrance).strip()}" if str(entrance or "").strip() else "",
+        f"этаж {str(floor).strip()}" if str(floor or "").strip() else "",
+        f"кв. {str(apartment).strip()}" if str(apartment or "").strip() else "",
+    ]
+    parts.extend(detail for detail in details if detail)
+    return ", ".join(part for part in parts if part)
 
 
 def build_project_document_values(project):
@@ -1273,7 +1369,17 @@ def build_project_document_values(project):
         except (InvalidOperation, TypeError, ValueError):
             line_total = amount
         amount_label = f" – {_document_money(line_total)}" if line_total not in (None, "") else ""
-        item_lines.append(f"{index}. {title} – {quantity} шт.{amount_label}")
+        raw_details = item.get("details") if isinstance(item.get("details"), list) else []
+        detail_parts = []
+        for detail in raw_details:
+            if not isinstance(detail, dict):
+                continue
+            label = str(detail.get("label") or "").strip()
+            value = str(detail.get("value") or "").strip()
+            if label and value:
+                detail_parts.append(f"{label}: {value}")
+        detail_label = f" ({'; '.join(detail_parts)})" if detail_parts else ""
+        item_lines.append(f"{index}. {title}{detail_label} – {quantity} шт.{amount_label}")
 
     if not item_lines:
         item_lines.append(f"1. {project.title or 'Изделие'} – 1 шт. – {_document_money(project.total_amount)}")
@@ -1282,14 +1388,32 @@ def build_project_document_values(project):
     client_name = (client.name if client else project.client_name) or ""
     quote_number = str(getattr(quote, "number", "") or "")
     quote_items = "\n".join(item_lines)
+    client_address = _document_address(
+        client.address if client else "",
+        floor=client.floor if client else "",
+        apartment=client.apartment if client else "",
+    )
+    project_address = _document_address(project.object_address, project.entrance, project.floor, project.apartment)
+    quote_total = None
+    if quote:
+        from .calculator_leads import quote_summary
+
+        quote_total, _configuration = quote_summary(payload)
     values = {
         "CLIENT_NAME": full_name or client_name,
         "CLIENT_FULL_NAME": full_name,
         "CLIENT_SHORT_NAME": client_name,
         "CLIENT_PHONE": (client.phone if client else project.client_phone) or "",
         "CLIENT_EMAIL": (client.email if client else project.client_email) or "",
-        "CLIENT_ADDRESS": (client.address if client else project.object_address) or "",
-        "DEAL_VALUE": _document_money(project.total_amount),
+        "CLIENT_ADDRESS": client_address,
+        "CLIENT_ADDRESS_BASE": (client.address if client else "") or "",
+        "PROJECT_ADDRESS": project_address,
+        "OBJECT_ADDRESS": project_address,
+        "PROJECT_ADDRESS_BASE": project.object_address or "",
+        "PROJECT_ENTRANCE": project.entrance or "",
+        "PROJECT_FLOOR": project.floor or "",
+        "PROJECT_APARTMENT": project.apartment or "",
+        "DEAL_VALUE": _document_money(quote_total if quote_total is not None else project.total_amount),
         "PROJECT_NUMBER": f"{project.order_number:04d}" if project.order_number else "",
         "PROJECT_TITLE": project.title or project.client_name or "",
         "QUOTE_NUMBER": quote_number,
@@ -1299,7 +1423,7 @@ def build_project_document_values(project):
         "DOC_DATE": timezone.localdate().strftime("%d.%m.%Y"),
         "REMARKS": "Замечания отсутствуют",
     }
-    for field_name in ("CLIENT_FULL_NAME", "CLIENT_ADDRESS", "CLIENT_PHONE"):
+    for field_name in ("CLIENT_FULL_NAME", "CLIENT_ADDRESS", "CLIENT_PHONE", "PROJECT_ADDRESS"):
         for duplicate_index in range(2, 6):
             values[f"{field_name}_{duplicate_index}"] = values[field_name]
     return values

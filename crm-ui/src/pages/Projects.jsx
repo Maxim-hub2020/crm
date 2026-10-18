@@ -43,6 +43,7 @@ import {
   extractApiErrorMessage,
   fetchAddressSuggestions,
   fetchAccounts,
+  fetchCalculatorQuotes,
   fetchClients,
   fetchFinanceCategories,
   fetchMenuSettings,
@@ -55,12 +56,14 @@ import {
   fetchProjectStatuses,
   fetchTasks,
   hasDadataAddressSuggestions,
+  linkProjectCalculatorQuote,
   previewBonusPromo,
   updateClient,
   updatePayment,
   updateTask,
   updateProject,
   updateProjectComment,
+  unlinkProjectCalculatorQuote,
   uploadProjectCustomFieldFile,
 } from "../api";
 import {
@@ -260,6 +263,25 @@ function labelFor(options, value) {
 
 function formatMoney(value) {
   return moneyFormatter.format(Number(value || 0));
+}
+
+function calculatorQuotePreview(quote = {}) {
+  const items = Array.isArray(quote.items) ? quote.items.filter((item) => item && typeof item === "object") : [];
+  const firstItem = items[0] || quote;
+  const customer = quote.customer && typeof quote.customer === "object" ? quote.customer : {};
+  const form = firstItem.form && typeof firstItem.form === "object" ? firstItem.form : {};
+  const total = quote.manualTotal ?? quote.result?.total ?? firstItem.result?.total ?? 0;
+  const title = firstItem.positionName || firstItem.mirrorTitle || firstItem.constructionTitle || "Коммерческое предложение";
+  return {
+    id: String(quote.id || ""),
+    number: String(quote.number || quote.id || "").trim(),
+    title: String(title || "Коммерческое предложение").trim(),
+    clientName: String(customer.clientName || form.clientName || "").trim(),
+    clientPhone: String(customer.clientPhone || form.clientPhone || "").trim(),
+    total: Number(total || 0),
+    updatedAt: quote.updatedAt || quote.createdAt || "",
+    raw: quote,
+  };
 }
 
 function ClientInfoTile({ icon: Icon, label, value, href, onClick }) {
@@ -1211,6 +1233,13 @@ export default function Projects() {
   const [documentIdentityPrompt, setDocumentIdentityPrompt] = useState({ open: false, type: "contract", fullName: "" });
   const [documentIdentitySaving, setDocumentIdentitySaving] = useState(false);
   const [documentIdentityError, setDocumentIdentityError] = useState("");
+  const [quotePickerOpen, setQuotePickerOpen] = useState(false);
+  const [calculatorQuotes, setCalculatorQuotes] = useState([]);
+  const [quotePickerLoading, setQuotePickerLoading] = useState(false);
+  const [quotePickerSaving, setQuotePickerSaving] = useState(false);
+  const [quotePickerError, setQuotePickerError] = useState("");
+  const [quotePickerSearch, setQuotePickerSearch] = useState("");
+  const [selectedQuoteId, setSelectedQuoteId] = useState("");
   const [yandexDiskCreating, setYandexDiskCreating] = useState(false);
   const [yandexDiskPublishing, setYandexDiskPublishing] = useState(false);
   const [detailError, setDetailError] = useState("");
@@ -1620,6 +1649,33 @@ export default function Projects() {
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) || null,
     [activeProjectId, projects]
+  );
+
+  const quotePickerRows = useMemo(() => {
+    const query = normalizeSearchText(quotePickerSearch);
+    return calculatorQuotes
+      .map(calculatorQuotePreview)
+      .filter((quote) => quote.id)
+      .map((quote) => ({
+        ...quote,
+        linkedProject: projects.find((project) => project.calculator_quote_info?.id === quote.id) || null,
+      }))
+      .filter((quote) => {
+        if (!query) return true;
+        return normalizeSearchText([
+          quote.number,
+          quote.title,
+          quote.clientName,
+          quote.clientPhone,
+          quote.linkedProject?.title,
+          quote.linkedProject?.order_number_label,
+        ].filter(Boolean).join(" ")).includes(query);
+      });
+  }, [calculatorQuotes, projects, quotePickerSearch]);
+
+  const selectedQuote = useMemo(
+    () => quotePickerRows.find((quote) => quote.id === selectedQuoteId) || null,
+    [quotePickerRows, selectedQuoteId]
   );
 
   const activeProjectClient = useMemo(() => {
@@ -2118,6 +2174,10 @@ export default function Projects() {
     setProjectClientAttaching(false);
     setProjectClientQuery("");
     setProjectNewClientName("");
+    setQuotePickerOpen(false);
+    setQuotePickerError("");
+    setQuotePickerSearch("");
+    setSelectedQuoteId("");
     selectedAddressValueRef.current = "";
     loadedProjectIdRef.current = null;
     detailSnapshotRef.current = "";
@@ -2900,6 +2960,72 @@ export default function Projects() {
       setDocumentIdentityError(extractApiErrorMessage(error, "Не удалось сохранить ФИО клиента."));
     } finally {
       setDocumentIdentitySaving(false);
+    }
+  }
+
+  async function openQuotePicker() {
+    if (!activeProject) return;
+    setQuotePickerOpen(true);
+    setQuotePickerLoading(true);
+    setQuotePickerError("");
+    setQuotePickerSearch("");
+    setSelectedQuoteId(activeProject.calculator_quote_info?.id || "");
+    try {
+      setCalculatorQuotes(await fetchCalculatorQuotes());
+    } catch (error) {
+      setCalculatorQuotes([]);
+      setQuotePickerError(extractApiErrorMessage(error, "Не удалось загрузить архив КП."));
+    } finally {
+      setQuotePickerLoading(false);
+    }
+  }
+
+  function closeQuotePicker() {
+    if (quotePickerSaving) return;
+    setQuotePickerOpen(false);
+    setQuotePickerError("");
+    setQuotePickerSearch("");
+  }
+
+  async function attachSelectedQuote() {
+    if (!activeProject || !selectedQuoteId) {
+      setQuotePickerError("Выберите КП из архива.");
+      return;
+    }
+    setQuotePickerSaving(true);
+    setQuotePickerError("");
+    try {
+      const response = await linkProjectCalculatorQuote(activeProject.id, selectedQuoteId);
+      if (response.project) applyUpdatedProject(response.project);
+      if (response.moved_from_project_id) {
+        setProjects((prev) => prev.map((project) => (
+          project.id === response.moved_from_project_id
+            ? { ...project, calculator_quote_info: null }
+            : project
+        )));
+      }
+      setQuotePickerOpen(false);
+      setQuotePickerSearch("");
+    } catch (error) {
+      setQuotePickerError(extractApiErrorMessage(error, "Не удалось привязать КП к проекту."));
+    } finally {
+      setQuotePickerSaving(false);
+    }
+  }
+
+  async function detachCurrentQuote() {
+    if (!activeProject?.calculator_quote_info) return;
+    setQuotePickerSaving(true);
+    setQuotePickerError("");
+    try {
+      const response = await unlinkProjectCalculatorQuote(activeProject.id);
+      if (response.project) applyUpdatedProject(response.project);
+      setSelectedQuoteId("");
+      setQuotePickerOpen(false);
+    } catch (error) {
+      setQuotePickerError(extractApiErrorMessage(error, "Не удалось открепить КП от проекта."));
+    } finally {
+      setQuotePickerSaving(false);
     }
   }
 
@@ -4245,6 +4371,17 @@ export default function Projects() {
                         <span className="min-w-0 break-words [overflow-wrap:anywhere]">КП №{activeProject.calculator_quote_info.number}</span>
                       </Button>
                     ) : null}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="justify-center px-3"
+                      onClick={openQuotePicker}
+                    >
+                      <Link size={16} />
+                      <span className="min-w-0">
+                        {activeProject.calculator_quote_info ? "Сменить КП" : "Подтянуть КП"}
+                      </span>
+                    </Button>
                     {activeProject.yandex_disk_web_url ? (
                       <Button
                         type="button"
@@ -4870,6 +5007,98 @@ export default function Projects() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={quotePickerOpen}
+        title="КП проекта"
+        onClose={closeQuotePicker}
+        widthClassName="max-w-3xl"
+        mobileSheet
+      >
+        <div className="space-y-4">
+          <div className="rounded-[24px] bg-blue-50 px-4 py-3 text-sm font-semibold leading-6 text-blue-900">
+            Выберите КП из архива калькулятора. Состав и итог КП попадут в договор, а стоимость проекта обновится автоматически.
+          </div>
+
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              value={quotePickerSearch}
+              onChange={(event) => setQuotePickerSearch(event.target.value)}
+              placeholder="Номер КП, клиент, телефон или изделие"
+              className="pl-11"
+            />
+          </div>
+
+          {quotePickerLoading ? (
+            <div className="rounded-[24px] bg-slate-50 px-4 py-8 text-center text-sm font-semibold text-slate-500">
+              Загружаем архив КП...
+            </div>
+          ) : quotePickerRows.length ? (
+            <div className="max-h-[48dvh] space-y-2 overflow-y-auto pr-1">
+              {quotePickerRows.map((quote) => {
+                const selected = selectedQuoteId === quote.id;
+                const linkedElsewhere = quote.linkedProject && quote.linkedProject.id !== activeProject?.id;
+                return (
+                  <button
+                    key={quote.id}
+                    type="button"
+                    className={`w-full rounded-[22px] border px-4 py-3 text-left transition ${selected ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100" : "border-slate-200 bg-white hover:border-blue-200 hover:bg-slate-50"}`}
+                    onClick={() => setSelectedQuoteId(quote.id)}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-black text-slate-950">КП №{quote.number}</div>
+                        <div className="mt-1 truncate text-sm font-semibold text-slate-700">{quote.title}</div>
+                        <div className="mt-1 truncate text-xs font-semibold text-slate-400">
+                          {[quote.clientName, quote.clientPhone].filter(Boolean).join(" · ") || "Клиент не указан"}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="font-black text-slate-950">{formatMoney(quote.total)} ₽</div>
+                        {selected ? <div className="mt-1 text-xs font-black text-blue-600">Выбрано</div> : null}
+                      </div>
+                    </div>
+                    {linkedElsewhere ? (
+                      <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
+                        Сейчас связано с проектом №{quote.linkedProject.order_number_label || quote.linkedProject.order_number} · {quote.linkedProject.title}
+                      </div>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-[24px] bg-slate-50 px-4 py-8 text-center text-sm font-semibold text-slate-500">
+              {quotePickerSearch ? "По вашему запросу КП не найдено." : "В архиве калькулятора пока нет КП."}
+            </div>
+          )}
+
+          {selectedQuote?.linkedProject && selectedQuote.linkedProject.id !== activeProject?.id ? (
+            <div className="rounded-2xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+              После подтверждения КП будет перенесено из проекта №{selectedQuote.linkedProject.order_number_label || selectedQuote.linkedProject.order_number} в текущий проект. Старый проект останется в CRM без КП.
+            </div>
+          ) : null}
+
+          {quotePickerError ? <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{quotePickerError}</div> : null}
+
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
+            <div>
+              {activeProject?.calculator_quote_info ? (
+                <Button type="button" variant="danger" onClick={detachCurrentQuote} disabled={quotePickerSaving}>
+                  Открепить текущее КП
+                </Button>
+              ) : null}
+            </div>
+            <div className="flex gap-2 sm:justify-end">
+              <Button type="button" variant="secondary" onClick={closeQuotePicker} disabled={quotePickerSaving}>Закрыть</Button>
+              <Button type="button" onClick={attachSelectedQuote} disabled={quotePickerSaving || !selectedQuoteId}>
+                {quotePickerSaving ? "Сохраняем..." : "Привязать КП"}
+              </Button>
+            </div>
+          </div>
+        </div>
       </Modal>
 
       <Modal
