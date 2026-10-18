@@ -69,9 +69,11 @@ import {
   Card,
   CardBody,
   CardHeader,
+  HeaderAddButton,
   Input,
   Label,
   Modal,
+  PageHeaderAction,
   Select,
   Textarea,
 } from "../components/ui.jsx";
@@ -3399,11 +3401,9 @@ export default function Projects() {
           ) : null}
         </div>
       ) : null}
-      <div className="flex justify-end">
-        <Button type="button" className="h-11 w-11 p-0" onClick={() => openCreateModal()} disabled={offlineMode} aria-label="Создать проект" title="Создать проект">
-          <Plus size={20} />
-        </Button>
-      </div>
+      <PageHeaderAction>
+        <HeaderAddButton label="Создать проект" onClick={() => openCreateModal()} disabled={offlineMode} />
+      </PageHeaderAction>
 
       {loading ? (
         <Card>

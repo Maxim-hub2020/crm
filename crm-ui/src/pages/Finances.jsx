@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRightLeft, ArrowUpCircle, CheckCircle2, Pencil, Plus, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, ArrowUpCircle, CheckCircle2, Pencil, RefreshCw, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -15,7 +15,7 @@ import {
   fetchProjectStatuses,
   updatePayment,
 } from "../api";
-import { Badge, Button, Input, Label, Modal, Select } from "../components/ui.jsx";
+import { Badge, Button, HeaderAddButton, Input, Label, Modal, PageHeaderAction, Select } from "../components/ui.jsx";
 
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
   minimumFractionDigits: 0,
@@ -947,18 +947,17 @@ export default function Finances() {
 
   return (
     <div>
+      <PageHeaderAction>
+        <HeaderAddButton label="Добавить операцию" onClick={openPaymentCreate} />
+      </PageHeaderAction>
+
       {actionError && <div className="mb-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{actionError}</div>}
 
-      <div className="mb-4 flex items-start justify-between gap-3">
+      <div className="mb-4">
         <div>
           <div className="text-sm font-bold text-slate-900">Финансовые операции</div>
           <div className="text-xs text-slate-500">Создание, фильтрация и контроль операций по проектам.</div>
         </div>
-        {activeTab === "operations" ? (
-          <Button type="button" className="h-11 w-11 shrink-0 p-0" onClick={openPaymentCreate} aria-label="Добавить операцию" title="Добавить операцию">
-          <Plus size={20} />
-          </Button>
-        ) : null}
       </div>
 
       <div className="mb-4 grid gap-2 rounded-[28px] bg-white p-2 shadow-lg sm:inline-grid sm:grid-cols-3">

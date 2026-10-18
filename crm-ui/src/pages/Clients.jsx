@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Edit3, Gift, Mail, MapPin, Phone, Plus, Ticket, Trash2, Wallet } from "lucide-react";
+import { ChevronRight, Edit3, Gift, Mail, MapPin, Phone, Ticket, Trash2, Wallet } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -13,7 +13,7 @@ import {
   hasDadataAddressSuggestions,
   updateClient,
 } from "../api";
-import { Badge, Button, Input, Label, Modal } from "../components/ui.jsx";
+import { Badge, Button, HeaderAddButton, Input, Label, Modal, PageHeaderAction } from "../components/ui.jsx";
 import { clientPhoneValidationError, formatRussianPhoneInput, normalizeOptionalClientPhone } from "../utils/phone.js";
 
 const moneyFormatter = new Intl.NumberFormat("ru-RU", {
@@ -452,11 +452,9 @@ export default function Clients() {
 
   return (
     <div>
-      <div className="mb-5 flex justify-end">
-        <Button type="button" className="h-11 w-11 p-0" onClick={openClientCreate} aria-label="Добавить клиента" title="Добавить клиента">
-          <Plus size={20} />
-        </Button>
-      </div>
+      <PageHeaderAction>
+        <HeaderAddButton label="Добавить клиента" onClick={openClientCreate} />
+      </PageHeaderAction>
 
       {error && <div className="mb-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 

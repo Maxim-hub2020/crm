@@ -1,6 +1,6 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 
 const MOBILE_SHEET_TYPES = new Set(["text", "tel", "number", "email", "search", "url"]);
 
@@ -237,6 +237,34 @@ export function Button({ variant = "primary", className = "", ...props }) {
           : "border border-gray-200 bg-white text-gray-700 shadow-sm hover:bg-gray-50";
 
   return <button className={`${base} ${styles} ${className}`} {...props} />;
+}
+
+export function PageHeaderAction({ children }) {
+  const [target, setTarget] = useState(null);
+
+  useLayoutEffect(() => {
+    setTarget(document.getElementById("crm-header-action"));
+  }, []);
+
+  return target ? createPortal(children, target) : null;
+}
+
+export function HeaderAddButton({ label, className = "", ...props }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={`group flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white shadow-lg shadow-slate-950/20 transition duration-200 ease-out hover:scale-105 hover:bg-black active:scale-90 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+      {...props}
+    >
+      <Plus
+        size={29}
+        strokeWidth={2.6}
+        className="transition-transform duration-200 ease-out group-active:rotate-90 group-active:scale-110"
+      />
+    </button>
+  );
 }
 
 export function Input({ className = "", onKeyDown, onPointerDown, onClick, onFocus, enterKeyHint, mobileSheet = true, mobileLabel, ...props }) {

@@ -333,6 +333,8 @@ export default function Layout({ children }) {
               ) : null}
             </div>
 
+            <div id="crm-header-action" className="ml-auto flex shrink-0 items-center" />
+
         </header>
 
         <main className={`no-scrollbar relative min-h-0 flex-1 overflow-auto ${location.pathname === "/calculator" ? "p-0" : "p-4 sm:p-6"}`}>{children}</main>

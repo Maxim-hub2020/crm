@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Archive, Calendar, Check, FolderKanban, ListTodo, Plus, Trash2 } from "lucide-react";
 
 import { createTask, deleteTask, extractApiErrorMessage, fetchTasks, updateTask } from "../api";
-import { Button, Card, CardBody, CardHeader, Input, Label } from "../components/ui.jsx";
+import { Button, Card, CardBody, CardHeader, HeaderAddButton, Input, Label, Modal, PageHeaderAction } from "../components/ui.jsx";
 
 function formatDeadline(date) {
   if (!date) return "";
@@ -108,7 +108,6 @@ export default function Tasks() {
   const [deadline, setDeadline] = useState("");
   const [showArchive, setShowArchive] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
-  const formRef = React.useRef(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -182,7 +181,25 @@ export default function Tasks() {
     setDeadline(task.due_date || "");
     setLocation({ city: task.city || "", district: task.district || "", address: task.address || "", scheduled_date: task.scheduled_date || "" });
     setShowCreate(true);
-    requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }
+
+  function openTaskCreate() {
+    setEditingId(null);
+    setText("");
+    setNotes("");
+    setDeadline("");
+    setLocation({});
+    setShowArchive(false);
+    setShowCreate(true);
+  }
+
+  function closeTaskCreate() {
+    setEditingId(null);
+    setText("");
+    setNotes("");
+    setDeadline("");
+    setLocation({});
+    setShowCreate(false);
   }
 
   async function toggleTask(task) {
@@ -219,6 +236,10 @@ export default function Tasks() {
 
   return (
     <div className="mx-auto max-w-5xl">
+      <PageHeaderAction>
+        <HeaderAddButton label="Добавить задачу" onClick={openTaskCreate} />
+      </PageHeaderAction>
+
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-xl font-black text-gray-800">
           <ListTodo size={20} className="text-blue-500" />
@@ -270,45 +291,42 @@ export default function Tasks() {
                 <DaySection key={date} date={date} today={today} tomorrow={tomorrow} tasks={rows} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />
               ))}
               {grouped.undated.length > 0 && <DaySection today={today} tomorrow={tomorrow} tasks={grouped.undated} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />}
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-4">
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white transition hover:bg-black"
-                  onClick={() => setShowCreate((value) => !value)}
-                >
-                  <Plus size={16} />
-                  {showCreate ? "Скрыть форму" : "Новая задача"}
-                </button>
-
-                {showCreate && (
-                  <form ref={formRef} className="mt-4 grid gap-4 rounded-2xl bg-gray-50 p-4 md:grid-cols-2" onSubmit={addTask}>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>Наименование задачи</Label>
-                      <Input value={text} onChange={(event) => setText(event.target.value)} placeholder="Что нужно сделать?" />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>Комментарий</Label>
-                      <Input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Краткое описание или следующий шаг" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Крайний срок</Label>
-                      <Input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} />
-                    </div>
-                    <TaskLocationFields value={location} onChange={patch => setLocation(prev => ({ ...prev, ...patch }))} />
-                    <div className="flex items-end gap-2">
-                      <Button className="w-full md:w-auto" disabled={saving} type="submit">
-                        <Plus size={16} />
-                        {saving ? "Сохраняем..." : editingId ? "Сохранить изменения" : "Добавить задачу"}
-                      </Button>
-                      {editingId && <Button type="button" variant="secondary" onClick={() => { setEditingId(null); setText(""); setNotes(""); setDeadline(""); setLocation({}); setShowCreate(false); }}>Отмена</Button>}
-                    </div>
-                  </form>
-                )}
-              </div>
             </div>
           )}
         </CardBody>
       </Card>
+
+      <Modal
+        open={showCreate}
+        title={editingId ? "Изменить задачу" : "Новая задача"}
+        onClose={closeTaskCreate}
+        widthClassName="max-w-2xl"
+        mobileSheet
+      >
+        <form className="grid gap-4 md:grid-cols-2" onSubmit={addTask}>
+          <div className="space-y-2 md:col-span-2">
+            <Label>Наименование задачи</Label>
+            <Input value={text} onChange={(event) => setText(event.target.value)} placeholder="Что нужно сделать?" />
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label>Комментарий</Label>
+            <Input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Краткое описание или следующий шаг" />
+          </div>
+          <div className="space-y-2">
+            <Label>Крайний срок</Label>
+            <Input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} />
+          </div>
+          <TaskLocationFields value={location} onChange={patch => setLocation(prev => ({ ...prev, ...patch }))} />
+          {error ? <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700 md:col-span-2">{error}</div> : null}
+          <div className="flex items-end gap-2 md:col-span-2 md:justify-end">
+            <Button className="w-full md:w-auto" disabled={saving} type="submit">
+              <Plus size={16} />
+              {saving ? "Сохраняем..." : editingId ? "Сохранить изменения" : "Добавить задачу"}
+            </Button>
+            {editingId ? <Button type="button" variant="secondary" onClick={closeTaskCreate}>Отмена</Button> : null}
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
