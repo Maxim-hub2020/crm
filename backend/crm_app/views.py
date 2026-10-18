@@ -1352,9 +1352,20 @@ def render_pdf_template(template, project):
         writer = PdfWriter()
         writer.clone_document_from_reader(reader)
 
-        font_name = _register_document_font(pdfmetrics, TTFont)
-        for page in writer.pages:
-            overlay = _build_pdf_field_overlay(page, values, canvas, pdfmetrics, font_name)
+        font_names = _register_document_fonts(pdfmetrics, TTFont)
+        source_fields = set((reader.get_fields() or {}).keys())
+        standard_contract = {
+            "PROJECT_NUMBER", "CLIENT_FULL_NAME_5", "QUOTE_ITEMS", "DEAL_VALUE",
+        }.issubset(source_fields) and len(writer.pages) == 4
+        for page_index, page in enumerate(writer.pages):
+            if standard_contract and page_index in {0, 2, 3}:
+                overlay = _build_standard_contract_overlay(
+                    page, page_index, values, canvas, pdfmetrics, font_names,
+                )
+            else:
+                overlay = _build_pdf_field_overlay(
+                    page, values, canvas, pdfmetrics, font_names["regular"],
+                )
             if overlay:
                 page.merge_page(PdfReader(overlay).pages[0])
             annotations = page.get("/Annots") or []
@@ -1373,22 +1384,27 @@ def render_pdf_template(template, project):
         return output.getvalue()
 
 
-def _register_document_font(pdfmetrics, ttfont):
+def _register_document_fonts(pdfmetrics, ttfont):
     from pathlib import Path
 
-    font_name = "CRMDocumentSerif"
-    if font_name in pdfmetrics.getRegisteredFontNames():
-        return font_name
+    regular_name = "CRMDocumentSerif"
+    bold_name = "CRMDocumentSerifBold"
+    if regular_name in pdfmetrics.getRegisteredFontNames() and bold_name in pdfmetrics.getRegisteredFontNames():
+        return {"regular": regular_name, "bold": bold_name}
     candidates = (
-        Path("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"),
-        Path("C:/Windows/Fonts/times.ttf"),
-        Path("C:/Windows/Fonts/arial.ttf"),
+        (
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"),
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"),
+        ),
+        (Path("C:/Windows/Fonts/times.ttf"), Path("C:/Windows/Fonts/timesbd.ttf")),
+        (Path("C:/Windows/Fonts/arial.ttf"), Path("C:/Windows/Fonts/arialbd.ttf")),
     )
-    font_path = next((path for path in candidates if path.exists()), None)
-    if font_path is None:
+    font_paths = next(((regular, bold) for regular, bold in candidates if regular.exists() and bold.exists()), None)
+    if font_paths is None:
         raise RuntimeError("Не найден шрифт с поддержкой кириллицы для формирования PDF.")
-    pdfmetrics.registerFont(ttfont(font_name, str(font_path)))
-    return font_name
+    pdfmetrics.registerFont(ttfont(regular_name, str(font_paths[0])))
+    pdfmetrics.registerFont(ttfont(bold_name, str(font_paths[1])))
+    return {"regular": regular_name, "bold": bold_name}
 
 
 def _pdf_field_name(widget):
@@ -1436,6 +1452,205 @@ def _wrap_pdf_text(paragraphs, width, pdfmetrics, font_name, size):
                 current = word
         lines.append(current)
     return lines
+
+
+def _draw_pdf_paragraph(pdf, text, x, top, width, pdfmetrics, font_name, size=11, leading=None):
+    leading = leading or size * 1.22
+    lines = _wrap_pdf_text(str(text or "").splitlines(), width, pdfmetrics, font_name, size)
+    baseline = top - size
+    for line in lines:
+        pdf.drawString(x, baseline, line)
+        baseline -= leading
+    return baseline
+
+
+def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top, include_signatures=True):
+    regular = font_names["regular"]
+    bold = font_names["bold"]
+    left_x = 62
+    right_x = 326
+    pdf.setFillColorRGB(0, 0, 0)
+    pdf.setFont(bold, 11)
+    pdf.drawString(left_x, top, "Заказчик:")
+    pdf.drawString(right_x, top, "Подрядчик:")
+
+    client_lines = [
+        f"ФИО: {values.get('CLIENT_FULL_NAME') or values.get('CLIENT_SHORT_NAME') or ''}",
+        f"Адрес: {values.get('CLIENT_ADDRESS') or ''}",
+        f"Телефон: {values.get('CLIENT_PHONE') or ''}",
+    ]
+    contractor_lines = [
+        "ИП ЛАПУНОВ МАКСИМ ВЛАДИМИРОВИЧ",
+        "ИНН 616805532322",
+        "ОГРНИП 325619600255723",
+        "БИК 044525974",
+        "Р/С 40802810800008892772",
+        "К/с 30101810145250000974",
+        "Телефон 89298191684",
+    ]
+    pdf.setFont(regular, 10.5)
+    left_y = top - 23
+    for line in client_lines:
+        left_y = _draw_pdf_paragraph(pdf, line, left_x, left_y + 10.5, 235, pdfmetrics, regular, 10.5, 12.8)
+    right_y = top - 13
+    for line in contractor_lines:
+        pdf.drawString(right_x, right_y, line)
+        right_y -= 14
+
+    if include_signatures:
+        signature_y = min(left_y, right_y) - 58
+        pdf.line(left_x, signature_y, 297, signature_y)
+        pdf.line(right_x, signature_y, 533, signature_y)
+        pdf.setFont(regular, 8)
+        pdf.drawCentredString(180, signature_y - 10, "(подпись)")
+        pdf.drawCentredString(430, signature_y - 10, "(подпись)")
+        pdf.setFont(regular, 10.5)
+        client_name = values.get("CLIENT_FULL_NAME") or values.get("CLIENT_SHORT_NAME") or ""
+        pdf.drawString(left_x, signature_y + 4, client_name)
+        pdf.drawRightString(533, signature_y + 4, "М.В. Лапунов")
+
+
+def _draw_contract_first_page(pdf, values, font_names, pdfmetrics, page_width, page_height):
+    regular = font_names["regular"]
+    bold = font_names["bold"]
+
+    # Replace the four dynamic areas as complete text blocks so long values
+    # reflow at the same readable size as the surrounding contract.
+    pdf.setFillColorRGB(1, 1, 1)
+    pdf.rect(80, 580, page_width - 115, 103, stroke=0, fill=1)
+    pdf.rect(80, 278, page_width - 115, 292, stroke=0, fill=1)
+    pdf.rect(325, 742, 135, 22, stroke=0, fill=1)
+    pdf.rect(400, 700, 88, 22, stroke=0, fill=1)
+
+    pdf.setFillColorRGB(0, 0, 0)
+    pdf.setFont(regular, 11)
+    pdf.drawString(329, 748, str(values.get("PROJECT_NUMBER") or ""))
+    pdf.drawString(404, 706, str(values.get("DOCUMENT_DATE") or values.get("DOC_DATE") or ""))
+
+    full_name = values.get("CLIENT_FULL_NAME") or values.get("CLIENT_SHORT_NAME") or ""
+    introduction = (
+        f'{full_name}, именуемый в дальнейшем "Заказчик", с одной стороны, и '
+        "ИП ЛАПУНОВ МАКСИМ ВЛАДИМИРОВИЧ, ИНН 616805532322, ОГРНИП 325619600255723, "
+        "юридический адрес: 344090, РОССИЯ, РОСТОВСКАЯ ОБЛ, Г РОСТОВ-НА-ДОНУ, "
+        "УЛ МИЛЬЧАКОВА, Д 3, КВ 78, именуемый в дальнейшем \"Подрядчик\", с другой "
+        "стороны, заключили настоящий договор о нижеследующем:"
+    )
+    pdf.setFont(regular, 11)
+    _draw_pdf_paragraph(pdf, introduction, 84, 677, page_width - 125, pdfmetrics, regular, 11, 13.2)
+
+    object_address = values.get("PROJECT_ADDRESS") or values.get("OBJECT_ADDRESS") or ""
+    clauses = [
+        (
+            "1.1. По договору подряда Подрядчик обязуется выполнить комплекс стекольно-зеркальных "
+            "работ, указанных п. 1.2 настоящего Договора, а Заказчик обязуется принять данные "
+            "работы и уплатить стоимость работ."
+        ),
+        "1.2. Подрядчик обязуется исполнить следующие виды работ: изготовить стекольно-зеркальное "
+        "изделие по размерам и эскизам, утвержденным Заказчиком. Осуществить доставку и монтаж "
+        f"на объекте, утвержденном заказчиком, по адресу: {object_address}.",
+        "1.3. Работы выполняются из материалов Подрядчика.",
+        (
+            "1.4. Объем и стоимость работ, составляющих предмет настоящего договора, определяются "
+            "в приложении №1 (спецификация) к настоящему договору."
+        ),
+        (
+            "1.5. Приложение №1 (спецификация) к настоящему договору может меняться в связи с "
+            "изменением размеров Заказчиком или после замера на объекте Исполнителем."
+        ),
+        (
+            "1.6. Подрядчик обязуется предоставить перерасчет стоимости работ после изменения "
+            "объема, если таковые изменения имеются."
+        ),
+        (
+            "1.7. Срок выполнения работ определен сторонами и составляет 10 рабочих дней с момента "
+            "подписания настоящего договора, решения технической части замера на объекте и внесения "
+            "авансовой части оплаты. Подрядчик может выполнить работы досрочно. В позициях, содержащих "
+            "закаленное стекло, срок изготовления увеличивается до 15 рабочих дней."
+        ),
+        (
+            "1.8. Договор вступает в силу с момента его подписания Сторонами и действует до полного "
+            "исполнения Сторонами обязательств по Договору."
+        ),
+    ]
+    pdf.setFont(regular, 10.5)
+    clause_top = 544
+    for clause in clauses:
+        clause_top = _draw_pdf_paragraph(
+            pdf, clause, 84, clause_top, page_width - 125, pdfmetrics, regular, 10.5, 12.6,
+        ) + 10
+
+
+def _draw_contract_requisites_page(pdf, values, font_names, pdfmetrics, page_width):
+    pdf.setFillColorRGB(1, 1, 1)
+    pdf.rect(48, 410, page_width - 83, 230, stroke=0, fill=1)
+    _draw_contract_parties(pdf, values, font_names, pdfmetrics, 625)
+
+
+def _draw_contract_specification_page(pdf, values, font_names, pdfmetrics, page_width, page_height):
+    regular = font_names["regular"]
+    bold = font_names["bold"]
+    pdf.setFillColorRGB(1, 1, 1)
+    pdf.rect(0, 0, page_width, page_height, stroke=0, fill=1)
+    pdf.setFillColorRGB(0, 0, 0)
+
+    pdf.setFont(regular, 10.5)
+    pdf.drawString(440, 790, "Приложение № 1-п")
+    pdf.drawString(440, 776, "к Договору подряда")
+    pdf.drawString(440, 762, f"от {values.get('DOC_DATE') or values.get('DOCUMENT_DATE') or ''}")
+    pdf.setFont(bold, 13)
+    quote_number = values.get("QUOTE_NUMBER") or ""
+    pdf.drawCentredString(page_width / 2, 730, f"СПЕЦИФИКАЦИЯ № {quote_number}")
+    pdf.setFont(regular, 11)
+    pdf.drawString(72, 700, "1. Наименование, количество и стоимость продукции в партии.")
+
+    table_x = 42
+    table_top = 675
+    table_width = page_width - 84
+    number_width = 34
+    description_width = table_width - number_width
+    description = str(values.get("QUOTE_ITEMS") or "")
+    description_lines = _wrap_pdf_text(description.splitlines(), description_width - 12, pdfmetrics, regular, 10.5)
+    row_height = max(58, len(description_lines) * 13 + 14)
+    header_height = 28
+    total_height = 30
+    table_bottom = table_top - header_height - row_height - total_height
+
+    pdf.setLineWidth(0.7)
+    pdf.rect(table_x, table_bottom, table_width, header_height + row_height + total_height, stroke=1, fill=0)
+    pdf.line(table_x, table_top - header_height, table_x + table_width, table_top - header_height)
+    pdf.line(table_x, table_top - header_height - row_height, table_x + table_width, table_top - header_height - row_height)
+    pdf.line(table_x + number_width, table_bottom + total_height, table_x + number_width, table_top)
+    pdf.setFont(bold, 10.5)
+    pdf.drawCentredString(table_x + number_width / 2, table_top - 18, "№")
+    pdf.drawString(table_x + number_width + 7, table_top - 18, "Наименование, количество и стоимость")
+    pdf.setFont(regular, 10.5)
+    pdf.drawCentredString(table_x + number_width / 2, table_top - header_height - 22, "1")
+    baseline = table_top - header_height - 17
+    for line in description_lines:
+        pdf.drawString(table_x + number_width + 7, baseline, line)
+        baseline -= 13
+    pdf.setFont(bold, 11)
+    pdf.drawRightString(table_x + table_width - 145, table_bottom + 10, "ИТОГО:")
+    pdf.drawRightString(table_x + table_width - 8, table_bottom + 10, str(values.get("DEAL_VALUE") or ""))
+
+    parties_top = min(table_bottom - 65, 470)
+    _draw_contract_parties(pdf, values, font_names, pdfmetrics, parties_top)
+
+
+def _build_standard_contract_overlay(page, page_index, values, canvas_module, pdfmetrics, font_names):
+    overlay = BytesIO()
+    width = float(page.mediabox.width)
+    height = float(page.mediabox.height)
+    pdf = canvas_module.Canvas(overlay, pagesize=(width, height))
+    if page_index == 0:
+        _draw_contract_first_page(pdf, values, font_names, pdfmetrics, width, height)
+    elif page_index == 2:
+        _draw_contract_requisites_page(pdf, values, font_names, pdfmetrics, width)
+    elif page_index == 3:
+        _draw_contract_specification_page(pdf, values, font_names, pdfmetrics, width, height)
+    pdf.save()
+    overlay.seek(0)
+    return overlay
 
 
 def _build_pdf_field_overlay(page, values, canvas_module, pdfmetrics, font_name):
