@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { useLocation } from "react-router-dom";
 
-import { getRefreshToken, getToken, getUser } from "../api";
+import { getRefreshToken, getToken, getUser, isAdminUser } from "../api";
 
 const CALCULATOR_ORIGIN = "https://calc.cehcrm.ru";
 
@@ -19,8 +19,10 @@ export default function Calculator() {
   }, [location.search]);
 
   function sendCrmSession() {
+    const user = getUser();
+    if (!isAdminUser(user)) return;
     const session = {
-      username: getUser()?.username || "",
+      username: user?.username || "",
       access: getToken() || "",
       refresh: getRefreshToken() || "",
     };
