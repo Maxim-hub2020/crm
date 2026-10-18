@@ -255,11 +255,11 @@ export function HeaderAddButton({ label, className = "", ...props }) {
       type="button"
       aria-label={label}
       title={label}
-      className={`group flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white shadow-lg shadow-slate-950/20 transition duration-200 ease-out hover:scale-105 hover:bg-black active:scale-90 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+      className={`group flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white shadow-lg shadow-slate-950/20 transition duration-200 ease-out hover:scale-105 hover:bg-black active:scale-90 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
       {...props}
     >
       <Plus
-        size={29}
+        size={27}
         strokeWidth={2.6}
         className="transition-transform duration-200 ease-out group-active:rotate-90 group-active:scale-110"
       />
