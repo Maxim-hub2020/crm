@@ -1048,7 +1048,13 @@ class ProjectViewSet(viewsets.ModelViewSet):
         workspace = current_workspace(request.user)
 
         with transaction.atomic():
-            project = self.get_queryset().select_for_update().get(pk=project.pk)
+            # get_queryset() joins the optional calculator_quote relation. PostgreSQL
+            # cannot apply FOR UPDATE to the nullable side of that outer join, so lock
+            # only the project row and lock quotes with their own queries below.
+            project_queryset = Project.objects.filter(workspace=workspace)
+            if not request.user.is_admin():
+                project_queryset = project_queryset.filter(manager=request.user)
+            project = project_queryset.select_for_update().get(pk=project.pk)
             current_quote = CalculatorQuote.objects.select_for_update().filter(project=project).first()
 
             if request.method == "DELETE":
@@ -1333,30 +1339,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
 
 def render_pdf_template(template, project):
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.pdfgen import canvas
     from pypdf import PdfReader, PdfWriter
-    from pypdf.generic import BooleanObject, NameObject
-
-    try:
-        from pypdf._font import Font
-    except ImportError:
-        Font = None
-
-    # pypdf 6.4 may expose a Type0 CMap metadata entry as an integer key and
-    # then try to encode it as text while building a field appearance.
-    if Font is not None and not getattr(Font, "_crm_type0_cmap_workaround", False):
-        original_from_font_resource = Font.from_font_resource.__func__
-
-        def from_font_resource_without_metadata(cls, font_resource):
-            font = original_from_font_resource(cls, font_resource)
-            font.character_map = {
-                key: value
-                for key, value in font.character_map.items()
-                if isinstance(key, str)
-            }
-            return font
-
-        Font.from_font_resource = classmethod(from_font_resource_without_metadata)
-        Font._crm_type0_cmap_workaround = True
+    from pypdf.generic import NameObject
 
     values = build_project_document_values(project)
 
@@ -1365,15 +1352,152 @@ def render_pdf_template(template, project):
         writer = PdfWriter()
         writer.clone_document_from_reader(reader)
 
-        if "/AcroForm" in reader.trailer["/Root"]:
-            for page in writer.pages:
-                writer.update_page_form_field_values(page, values, auto_regenerate=False)
-            acro_form = writer._root_object["/AcroForm"].get_object()
-            acro_form[NameObject("/NeedAppearances")] = BooleanObject(False)
+        font_name = _register_document_font(pdfmetrics, TTFont)
+        for page in writer.pages:
+            overlay = _build_pdf_field_overlay(page, values, canvas, pdfmetrics, font_name)
+            if overlay:
+                page.merge_page(PdfReader(overlay).pages[0])
+            annotations = page.get("/Annots") or []
+            remaining = [item for item in annotations if item.get_object().get("/Subtype") != "/Widget"]
+            if remaining:
+                page[NameObject("/Annots")] = type(annotations)(remaining)
+            else:
+                page.pop(NameObject("/Annots"), None)
+
+        # Contracts and acts are final documents, not editable templates. Removing
+        # AcroForm also prevents viewers from showing stale placeholder appearances.
+        writer._root_object.pop(NameObject("/AcroForm"), None)
 
         output = BytesIO()
         writer.write(output)
         return output.getvalue()
+
+
+def _register_document_font(pdfmetrics, ttfont):
+    from pathlib import Path
+
+    font_name = "CRMDocumentSerif"
+    if font_name in pdfmetrics.getRegisteredFontNames():
+        return font_name
+    candidates = (
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"),
+        Path("C:/Windows/Fonts/times.ttf"),
+        Path("C:/Windows/Fonts/arial.ttf"),
+    )
+    font_path = next((path for path in candidates if path.exists()), None)
+    if font_path is None:
+        raise RuntimeError("Не найден шрифт с поддержкой кириллицы для формирования PDF.")
+    pdfmetrics.registerFont(ttfont(font_name, str(font_path)))
+    return font_name
+
+
+def _pdf_field_name(widget):
+    current = widget
+    while current is not None:
+        field_name = current.get("/T")
+        if field_name:
+            return str(field_name)
+        parent = current.get("/Parent")
+        current = parent.get_object() if parent else None
+    return ""
+
+
+def _fit_pdf_text(text, width, height, pdfmetrics, font_name, preferred_size, multiline=False):
+    minimum_size = 5.5
+    size = max(float(preferred_size or 9), minimum_size)
+    paragraphs = str(text or "").splitlines() or [""]
+    while size > minimum_size:
+        if multiline:
+            lines = _wrap_pdf_text(paragraphs, width, pdfmetrics, font_name, size)
+            if len(lines) * size * 1.18 <= height:
+                return lines, size
+        elif pdfmetrics.stringWidth(paragraphs[0], font_name, size) <= width:
+            return paragraphs, size
+        size -= 0.25
+    if multiline:
+        return _wrap_pdf_text(paragraphs, width, pdfmetrics, font_name, minimum_size), minimum_size
+    return paragraphs, minimum_size
+
+
+def _wrap_pdf_text(paragraphs, width, pdfmetrics, font_name, size):
+    lines = []
+    for paragraph in paragraphs:
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        current = words[0]
+        for word in words[1:]:
+            candidate = f"{current} {word}"
+            if pdfmetrics.stringWidth(candidate, font_name, size) <= width:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
+    return lines
+
+
+def _build_pdf_field_overlay(page, values, canvas_module, pdfmetrics, font_name):
+    annotations = page.get("/Annots") or []
+    widgets = [item.get_object() for item in annotations if item.get_object().get("/Subtype") == "/Widget"]
+    if not widgets:
+        return None
+
+    overlay = BytesIO()
+    width = float(page.mediabox.width)
+    height = float(page.mediabox.height)
+    pdf = canvas_module.Canvas(overlay, pagesize=(width, height))
+    for widget in widgets:
+        field_name = _pdf_field_name(widget)
+        if not field_name or field_name not in values:
+            continue
+        rect = widget.get("/Rect")
+        if not rect or len(rect) != 4:
+            continue
+        x1, y1, x2, y2 = (float(value) for value in rect)
+        box_width = max(x2 - x1, 1)
+        box_height = max(y2 - y1, 1)
+        padding = 1.5
+        text_width = max(box_width - padding * 2, 1)
+        text_height = max(box_height - padding * 2, 1)
+        value = str(values.get(field_name) or "")
+        multiline = "\n" in value or box_height >= 30
+        preferred_size = 8 if multiline else 9
+        lines, font_size = _fit_pdf_text(
+            value, text_width, text_height, pdfmetrics, font_name, preferred_size, multiline=multiline,
+        )
+
+        pdf.setFillColorRGB(1, 1, 1)
+        # Keep the mask inside the widget so table borders from the template
+        # remain intact while its visible placeholder text is covered.
+        inset = 0.6
+        pdf.rect(
+            x1 + inset,
+            y1 + inset,
+            max(box_width - inset * 2, 0.1),
+            max(box_height - inset * 2, 0.1),
+            stroke=0,
+            fill=1,
+        )
+        if not value:
+            continue
+        pdf.setFillColorRGB(0, 0, 0)
+        pdf.setFont(font_name, font_size)
+        if multiline:
+            line_height = font_size * 1.18
+            baseline = y2 - padding - font_size
+            for line in lines:
+                if baseline < y1 + padding - 0.5:
+                    break
+                pdf.drawString(x1 + padding, baseline, line)
+                baseline -= line_height
+        else:
+            baseline = y1 + max((box_height - font_size) / 2, padding)
+            pdf.drawString(x1 + padding, baseline, lines[0])
+    pdf.save()
+    overlay.seek(0)
+    return overlay
 
 
 def _document_money(value):
