@@ -433,6 +433,63 @@ class RemoteMcpTests(TestCase):
         self.assertIn("уточните у пользователя счет", payload["content"][0]["text"])
         self.assertFalse(Payment.objects.exists())
 
+    def test_mcp_payment_resolves_exact_category_and_account_names(self):
+        delivery = FinanceCategory.objects.create(
+            workspace=self.workspace,
+            name="Доставка",
+            type=FinanceCategory.Type.EXPENSE,
+        )
+        cashless = Account.objects.create(workspace=self.workspace, name="Безнал")
+        token = self.connect()
+
+        response = self.rpc("tools/call", {"name": "crm_create", "arguments": {
+            "resource": "payments",
+            "project_query": "Зеркало",
+            "confirm": True,
+            "data": {
+                "category_name": "  доставка ",
+                "account_name": "безнал",
+                "category_type": "expense",
+                "amount": "1600.00",
+                "comment": "Доставка",
+            },
+        }}, token)
+
+        payload = response.json()["result"]
+        self.assertFalse(payload.get("isError", False), payload)
+        payment = Payment.objects.get()
+        self.assertEqual(payment.category_id, delivery.id)
+        self.assertEqual(payment.account_id, cashless.id)
+        self.assertEqual(payment.project_id, self.project.id)
+        self.assertTrue(payload["structuredContent"]["operation_committed"])
+
+    def test_mcp_payment_unknown_category_returns_exact_options(self):
+        FinanceCategory.objects.create(
+            workspace=self.workspace,
+            name="Доставка",
+            type=FinanceCategory.Type.EXPENSE,
+        )
+        Account.objects.create(workspace=self.workspace, name="Безнал")
+        token = self.connect()
+
+        response = self.rpc("tools/call", {"name": "crm_create", "arguments": {
+            "resource": "payments",
+            "confirm": True,
+            "data": {
+                "category_name": "Логистика",
+                "account_name": "Безнал",
+                "amount": "1600.00",
+            },
+        }}, token)
+
+        payload = response.json()["result"]
+        self.assertTrue(payload["isError"])
+        error = payload["structuredContent"]
+        self.assertEqual(error["error_type"], "invalid_input")
+        self.assertTrue(error["retryable"])
+        self.assertIn("Доставка", str(error["details"]))
+        self.assertFalse(Payment.objects.exists())
+
     def test_mcp_can_transfer_money_between_accounts(self):
         cashless = Account.objects.create(workspace=self.workspace, name="Безнал")
         cash = Account.objects.create(workspace=self.workspace, name="Наличные")
