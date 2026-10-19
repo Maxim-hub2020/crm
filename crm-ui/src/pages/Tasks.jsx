@@ -20,7 +20,7 @@ function formatDeadline(date) {
   });
 }
 
-function TaskRow({ task, onToggle, onDelete, onEdit }) {
+function TaskRow({ task, children = [], onToggle, onDelete, onEdit, onAddSubtask }) {
   const priority = PRIORITIES[task.priority] || PRIORITIES.medium;
   return (
     <div
@@ -44,6 +44,12 @@ function TaskRow({ task, onToggle, onDelete, onEdit }) {
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ring-1 ${priority.className}`}>{priority.label}</span>
         </div>
         {onEdit && <button type="button" className="text-xs font-semibold text-blue-600" onClick={() => onEdit(task)}>Изменить задачу</button>}
+        {task.parent_task && <div className="mt-1 text-xs text-blue-600">Подзадача: {task.parent_title}</div>}
+        {children.length > 0 && <div className="mt-2 rounded-xl bg-white px-3 py-2 text-xs text-slate-600 ring-1 ring-slate-200">
+          <div className="font-bold">Подзадачи: {children.filter(child => child.status === "done").length}/{children.length}</div>
+          {children.map(child => <div key={child.id} className="mt-1">{child.status === "done" ? "✓" : "○"} {child.title}</div>)}
+        </div>}
+        {onAddSubtask && <button type="button" className="mt-2 text-xs font-semibold text-blue-600" onClick={() => onAddSubtask(task)}>+ Подзадача</button>}
         {task.notes && <div className="mt-1 text-sm text-gray-500">{task.notes}</div>}
         <TaskLocation task={task} />
         {task.project_title && (
@@ -73,7 +79,7 @@ function taskCount(count) {
   return `${count} ${teen ? "задач" : last === 1 ? "задача" : last >= 2 && last <= 4 ? "задачи" : "задач"}`;
 }
 
-function DaySection({ date, today, tomorrow, tasks, onToggle, onDelete, onEdit }) {
+function DaySection({ date, today, tomorrow, tasks, allTasks, onToggle, onDelete, onEdit, onAddSubtask }) {
   const isToday = date === today;
   const overdue = date && date < today;
   const zones = tasks.reduce((groups, task) => {
@@ -101,7 +107,7 @@ function DaySection({ date, today, tomorrow, tasks, onToggle, onDelete, onEdit }
             <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-sm font-bold text-slate-600">
               <span>{zone}</span><span className="text-xs font-medium text-slate-400">{taskCount(rows.length)}</span>
             </div>
-            {[...rows].sort((a, b) => (PRIORITIES[a.priority]?.rank ?? 1) - (PRIORITIES[b.priority]?.rank ?? 1)).map(task => <TaskRow key={task.id} task={task} onToggle={onToggle} onDelete={onDelete} onEdit={onEdit} />)}
+            {[...rows].sort((a, b) => (PRIORITIES[a.priority]?.rank ?? 1) - (PRIORITIES[b.priority]?.rank ?? 1)).map(task => <TaskRow key={task.id} task={task} children={allTasks.filter(child => child.parent_task === task.id)} onToggle={onToggle} onDelete={onDelete} onEdit={onEdit} onAddSubtask={onAddSubtask} />)}
           </div>
         )) : <div className="px-1 py-3 text-sm text-slate-400">На сегодня задач пока нет.</div>}
       </div>
@@ -117,6 +123,8 @@ export default function Tasks() {
   const [notes, setNotes] = useState("");
   const [deadline, setDeadline] = useState("");
   const [priority, setPriority] = useState("medium");
+  const [parentTask, setParentTask] = useState("");
+  const [projectId, setProjectId] = useState(null);
   const [showArchive, setShowArchive] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState("");
@@ -167,18 +175,22 @@ export default function Tasks() {
         notes: notes.trim(),
         due_date: deadline || null,
         priority,
+        parent_task: parentTask ? Number(parentTask) : null,
+        project: projectId,
         ...location,
         scheduled_date: location.scheduled_date || null,
       };
       const created = editingId ? await updateTask(editingId, payload) : await createTask(payload);
 
-      setTasks((current) => editingId ? current.map(t => t.id === editingId ? created : t) : [created, ...current]);
+      await reloadTasks();
       setEditingId(null);
       setLocation({});
       setText("");
       setNotes("");
       setDeadline("");
       setPriority("medium");
+      setParentTask("");
+      setProjectId(null);
       setShowCreate(false);
     } catch (requestError) {
       setError(extractApiErrorMessage(requestError, "Не удалось создать задачу."));
@@ -193,6 +205,8 @@ export default function Tasks() {
     setNotes(task.notes || "");
     setDeadline(task.due_date || "");
     setPriority(task.priority || "medium");
+    setParentTask(task.parent_task ? String(task.parent_task) : "");
+    setProjectId(task.project || null);
     setLocation({ city: task.city || "", district: task.district || "", address: task.address || "", scheduled_date: task.scheduled_date || "" });
     setShowCreate(true);
   }
@@ -203,6 +217,8 @@ export default function Tasks() {
     setNotes("");
     setDeadline("");
     setPriority("medium");
+    setParentTask("");
+    setProjectId(null);
     setLocation({});
     setShowArchive(false);
     setShowCreate(true);
@@ -214,8 +230,19 @@ export default function Tasks() {
     setNotes("");
     setDeadline("");
     setPriority("medium");
+    setParentTask("");
+    setProjectId(null);
     setLocation({});
     setShowCreate(false);
+  }
+
+  function addSubtask(task) {
+    openTaskCreate();
+    setParentTask(String(task.id));
+    setProjectId(task.project || null);
+    setPriority(task.priority);
+    setDeadline(task.due_date || "");
+    setLocation({ scheduled_date: task.scheduled_date || "" });
   }
 
   async function toggleTask(task) {
@@ -223,7 +250,7 @@ export default function Tasks() {
       const updated = await updateTask(task.id, {
         status: task.status === "done" ? "open" : "done",
       });
-      setTasks((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      await reloadTasks();
     } catch (requestError) {
       setError(extractApiErrorMessage(requestError, "Не удалось обновить задачу."));
     }
@@ -232,7 +259,7 @@ export default function Tasks() {
   async function removeTask(taskId) {
     try {
       await deleteTask(taskId);
-      setTasks((current) => current.filter((task) => task.id !== taskId));
+      await reloadTasks();
     } catch (requestError) {
       setError(extractApiErrorMessage(requestError, "Не удалось удалить задачу."));
     }
@@ -244,7 +271,7 @@ export default function Tasks() {
 
     try {
       await Promise.all(archiveIds.map((taskId) => deleteTask(taskId)));
-      setTasks((current) => current.filter((task) => task.status !== "done"));
+      await reloadTasks();
     } catch (requestError) {
       setError(extractApiErrorMessage(requestError, "Не удалось очистить архив."));
     }
@@ -292,7 +319,7 @@ export default function Tasks() {
               <div className="space-y-3">
                 {grouped.archive.length > 0 ? (
                   grouped.archive.map((task) => (
-                    <TaskRow key={task.id} task={task} onToggle={toggleTask} onDelete={removeTask} />
+                    <TaskRow key={task.id} task={task} children={tasks.filter(child => child.parent_task === task.id)} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} onAddSubtask={addSubtask} />
                   ))
                 ) : (
                     <div className="rounded-2xl bg-gray-50 px-5 py-8 text-center text-sm text-gray-400">
@@ -304,9 +331,9 @@ export default function Tasks() {
           ) : (
             <div className="space-y-8">
               {grouped.days.map(([date, rows]) => (
-                <DaySection key={date} date={date} today={today} tomorrow={tomorrow} tasks={rows} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />
+                <DaySection key={date} date={date} today={today} tomorrow={tomorrow} tasks={rows} allTasks={tasks} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} onAddSubtask={addSubtask} />
               ))}
-              {grouped.undated.length > 0 && <DaySection today={today} tomorrow={tomorrow} tasks={grouped.undated} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} />}
+              {grouped.undated.length > 0 && <DaySection today={today} tomorrow={tomorrow} tasks={grouped.undated} allTasks={tasks} onToggle={toggleTask} onDelete={removeTask} onEdit={editTask} onAddSubtask={addSubtask} />}
             </div>
           )}
         </CardBody>
@@ -327,6 +354,13 @@ export default function Tasks() {
           <div className="space-y-2 md:col-span-2">
             <Label>Комментарий</Label>
             <Input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Краткое описание или следующий шаг" />
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label>Основная задача</Label>
+            <Select value={parentTask} onChange={event => setParentTask(event.target.value)}>
+              <option value="">Самостоятельная задача</option>
+              {tasks.filter(task => task.id !== editingId && task.project === projectId && task.status !== "done").map(task => <option key={task.id} value={task.id}>{task.title}</option>)}
+            </Select>
           </div>
           <div className="space-y-2">
             <Label>Крайний срок</Label>

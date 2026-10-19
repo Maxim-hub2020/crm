@@ -2429,7 +2429,7 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         workspace = current_workspace(self.request.user)
-        qs = Task.objects.select_related("assignee", "created_by", "project").filter(assignee__workspace=workspace).order_by("status", "due_date", "-created_at")
+        qs = Task.objects.select_related("assignee", "created_by", "project", "parent_task").prefetch_related("subtasks").filter(assignee__workspace=workspace).order_by("status", "due_date", "-created_at")
         qs = qs.filter(Q(project__isnull=True) | Q(project__workspace=workspace))
         if not self.request.user.is_admin():
             qs = qs.filter(assignee=self.request.user)
@@ -2437,6 +2437,9 @@ class TaskViewSet(viewsets.ModelViewSet):
         project_id = self.request.query_params.get("project")
         if project_id:
             qs = qs.filter(project_id=project_id)
+        parent_id = self.request.query_params.get("parent_task")
+        if parent_id:
+            qs = qs.filter(parent_task_id=parent_id)
 
         # Legacy tasks continue to use their due date until explicitly scheduled.
         day = self.request.query_params.get("date")
@@ -2465,12 +2468,12 @@ class TaskViewSet(viewsets.ModelViewSet):
             "task",
             task.id,
             "create",
-            after=snapshot_model(task, ["id", "project_id", "title", "status", "priority", "due_date", "scheduled_date", "city", "district", "address"]),
+            after=snapshot_model(task, ["id", "project_id", "parent_task_id", "title", "status", "priority", "due_date", "scheduled_date", "city", "district", "address"]),
             workspace=getattr(task.project, "workspace", current_workspace(self.request.user)),
         )
 
     def perform_update(self, serializer):
-        before = snapshot_model(serializer.instance, ["id", "project_id", "title", "status", "priority", "due_date", "scheduled_date", "city", "district", "address"])
+        before = snapshot_model(serializer.instance, ["id", "project_id", "parent_task_id", "title", "status", "priority", "due_date", "scheduled_date", "city", "district", "address"])
         task = serializer.save()
         create_audit_log(
             self.request.user,
@@ -2478,13 +2481,13 @@ class TaskViewSet(viewsets.ModelViewSet):
             task.id,
             "update",
             before=before,
-            after=snapshot_model(task, ["id", "project_id", "title", "status", "priority", "due_date", "scheduled_date", "city", "district", "address"]),
+            after=snapshot_model(task, ["id", "project_id", "parent_task_id", "title", "status", "priority", "due_date", "scheduled_date", "city", "district", "address"]),
             workspace=getattr(task.project, "workspace", current_workspace(self.request.user)),
         )
 
     def perform_destroy(self, instance):
         workspace = getattr(instance.project, "workspace", current_workspace(self.request.user))
-        before = snapshot_model(instance, ["id", "project_id", "title", "status", "priority", "due_date", "scheduled_date", "city", "district", "address"])
+        before = snapshot_model(instance, ["id", "project_id", "parent_task_id", "title", "status", "priority", "due_date", "scheduled_date", "city", "district", "address"])
         create_audit_log(self.request.user, "task", instance.id, "delete", before=before, workspace=workspace)
         instance.delete()
 
