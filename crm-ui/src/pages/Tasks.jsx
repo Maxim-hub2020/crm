@@ -3,7 +3,13 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Archive, Calendar, Check, FolderKanban, ListTodo, Plus, Trash2 } from "lucide-react";
 
 import { createTask, deleteTask, extractApiErrorMessage, fetchTasks, updateTask } from "../api";
-import { Button, Card, CardBody, CardHeader, HeaderAddButton, Input, Label, Modal, PageHeaderAction } from "../components/ui.jsx";
+import { Button, Card, CardBody, CardHeader, HeaderAddButton, Input, Label, Modal, PageHeaderAction, Select } from "../components/ui.jsx";
+
+const PRIORITIES = {
+  high: { label: "Высокий", className: "bg-red-50 text-red-600 ring-red-100", rank: 0 },
+  medium: { label: "Обычный", className: "bg-amber-50 text-amber-700 ring-amber-100", rank: 1 },
+  low: { label: "Низкий", className: "bg-slate-100 text-slate-500 ring-slate-200", rank: 2 },
+};
 
 function formatDeadline(date) {
   if (!date) return "";
@@ -15,6 +21,7 @@ function formatDeadline(date) {
 }
 
 function TaskRow({ task, onToggle, onDelete, onEdit }) {
+  const priority = PRIORITIES[task.priority] || PRIORITIES.medium;
   return (
     <div
       className={`flex items-start gap-4 rounded-2xl p-4 transition ${
@@ -32,8 +39,11 @@ function TaskRow({ task, onToggle, onDelete, onEdit }) {
       </button>
 
       <div className="min-w-0 flex-1">
-        <div className="font-semibold">{task.title}</div>
-        {onEdit && <button type="button" className="text-xs font-semibold text-blue-600" onClick={() => onEdit(task)}>Изменить дату и адрес</button>}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="font-semibold">{task.title}</div>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ring-1 ${priority.className}`}>{priority.label}</span>
+        </div>
+        {onEdit && <button type="button" className="text-xs font-semibold text-blue-600" onClick={() => onEdit(task)}>Изменить задачу</button>}
         {task.notes && <div className="mt-1 text-sm text-gray-500">{task.notes}</div>}
         <TaskLocation task={task} />
         {task.project_title && (
@@ -91,7 +101,7 @@ function DaySection({ date, today, tomorrow, tasks, onToggle, onDelete, onEdit }
             <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-sm font-bold text-slate-600">
               <span>{zone}</span><span className="text-xs font-medium text-slate-400">{taskCount(rows.length)}</span>
             </div>
-            {rows.map(task => <TaskRow key={task.id} task={task} onToggle={onToggle} onDelete={onDelete} onEdit={onEdit} />)}
+            {[...rows].sort((a, b) => (PRIORITIES[a.priority]?.rank ?? 1) - (PRIORITIES[b.priority]?.rank ?? 1)).map(task => <TaskRow key={task.id} task={task} onToggle={onToggle} onDelete={onDelete} onEdit={onEdit} />)}
           </div>
         )) : <div className="px-1 py-3 text-sm text-slate-400">На сегодня задач пока нет.</div>}
       </div>
@@ -106,6 +116,7 @@ export default function Tasks() {
   const [text, setText] = useState("");
   const [notes, setNotes] = useState("");
   const [deadline, setDeadline] = useState("");
+  const [priority, setPriority] = useState("medium");
   const [showArchive, setShowArchive] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState("");
@@ -155,6 +166,7 @@ export default function Tasks() {
         title: text.trim(),
         notes: notes.trim(),
         due_date: deadline || null,
+        priority,
         ...location,
         scheduled_date: location.scheduled_date || null,
       };
@@ -166,6 +178,7 @@ export default function Tasks() {
       setText("");
       setNotes("");
       setDeadline("");
+      setPriority("medium");
       setShowCreate(false);
     } catch (requestError) {
       setError(extractApiErrorMessage(requestError, "Не удалось создать задачу."));
@@ -179,6 +192,7 @@ export default function Tasks() {
     setText(task.title);
     setNotes(task.notes || "");
     setDeadline(task.due_date || "");
+    setPriority(task.priority || "medium");
     setLocation({ city: task.city || "", district: task.district || "", address: task.address || "", scheduled_date: task.scheduled_date || "" });
     setShowCreate(true);
   }
@@ -188,6 +202,7 @@ export default function Tasks() {
     setText("");
     setNotes("");
     setDeadline("");
+    setPriority("medium");
     setLocation({});
     setShowArchive(false);
     setShowCreate(true);
@@ -198,6 +213,7 @@ export default function Tasks() {
     setText("");
     setNotes("");
     setDeadline("");
+    setPriority("medium");
     setLocation({});
     setShowCreate(false);
   }
@@ -315,6 +331,14 @@ export default function Tasks() {
           <div className="space-y-2">
             <Label>Крайний срок</Label>
             <Input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label>Приоритет</Label>
+            <Select value={priority} onChange={(event) => setPriority(event.target.value)}>
+              <option value="high">Высокий</option>
+              <option value="medium">Обычный</option>
+              <option value="low">Низкий</option>
+            </Select>
           </div>
           <TaskLocationFields value={location} onChange={patch => setLocation(prev => ({ ...prev, ...patch }))} />
           {error ? <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700 md:col-span-2">{error}</div> : null}

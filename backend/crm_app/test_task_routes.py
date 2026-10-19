@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from rest_framework.test import APITestCase
 
 from . import tests as api_tests
@@ -41,4 +43,43 @@ class TestTaskRoutes(api_tests.AuthenticatedApiMixin, APITestCase):
         self.assertEqual(client.get("/api/tasks/", {"date": "2026-05-26"}).data, [])
         for invalid in ("bad-date", "2026-02-31"):
             self.assertEqual(client.get("/api/tasks/", {"date": invalid}).status_code, 400)
+
+    @patch("crm_app.task_locations.suggest_dadata_address")
+    def test_address_fills_city_and_business_zone(self, suggest_address):
+        suggest_address.return_value = [{
+            "value": "г Ростов-на-Дону, ул Еременко, д 50",
+            "data": {
+                "city": "Ростов-на-Дону",
+                "city_district": "Советский район",
+                "street": "Еременко",
+            },
+        }]
+        client = self.auth_client_for(self.manager)
+
+        response = client.post("/api/tasks/", {
+            "title": "Выезд на объект",
+            "address": "Еременко 50",
+            "priority": "high",
+        }, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["city"], "Ростов-на-Дону")
+        self.assertEqual(response.data["district"], "Западный")
+        self.assertEqual(response.data["priority"], "high")
+
+    @patch("crm_app.task_locations.suggest_dadata_address")
+    def test_manual_city_and_district_are_preserved(self, suggest_address):
+        client = self.auth_client_for(self.manager)
+
+        response = client.post("/api/tasks/", {
+            "title": "Закупка",
+            "address": "Склад поставщика",
+            "city": "Аксай",
+            "district": "Промышленная зона",
+        }, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["city"], "Аксай")
+        self.assertEqual(response.data["district"], "Промышленная зона")
+        suggest_address.assert_not_called()
 

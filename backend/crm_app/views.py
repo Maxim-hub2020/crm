@@ -753,6 +753,11 @@ def address_suggestions_view(request):
                     "lon": (item.get("data") or {}).get("geo_lon") or "",
                     "apartment": (item.get("data") or {}).get("flat") or "",
                     "floor": (item.get("data") or {}).get("floor") or "",
+                    "city": (item.get("data") or {}).get("city") or "",
+                    "settlement": (item.get("data") or {}).get("settlement") or "",
+                    "city_district": (item.get("data") or {}).get("city_district") or "",
+                    "area": (item.get("data") or {}).get("area") or "",
+                    "street": (item.get("data") or {}).get("street") or "",
                 }
                 for item in suggestions
                 if isinstance(item, dict)

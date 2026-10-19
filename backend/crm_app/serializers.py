@@ -38,6 +38,7 @@ from .models import (
     YandexDiskSettings,
 )
 from .phones import PHONE_VALIDATION_ERROR, normalize_russian_phone, phone_digits
+from .task_locations import infer_task_location
 from .tenancy import current_workspace
 
 logger = logging.getLogger(__name__)
@@ -1194,6 +1195,30 @@ class TaskSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("You can assign tasks only to yourself.")
 
         return assignee
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        address_changed = "address" in attrs
+        address = attrs.get("address", getattr(self.instance, "address", ""))
+        if not str(address or "").strip():
+            return attrs
+
+        fields_to_infer = []
+        for field in ("city", "district"):
+            explicitly_set = field in attrs and str(attrs.get(field) or "").strip()
+            current_value = str(getattr(self.instance, field, "") or "").strip() if self.instance else ""
+            if explicitly_set or (not address_changed and current_value):
+                continue
+            fields_to_infer.append(field)
+
+        if not fields_to_infer:
+            return attrs
+
+        inferred = infer_task_location(address)
+        for field in fields_to_infer:
+            if inferred.get(field):
+                attrs[field] = inferred[field]
+        return attrs
 
 
 class TaskTemplateSerializer(serializers.ModelSerializer):

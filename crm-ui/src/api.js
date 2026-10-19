@@ -113,6 +113,10 @@ export async function fetchAddressSuggestions(query) {
     lon: item.lon || "",
     apartment: item.apartment || "",
     floor: item.floor || "",
+    city: item.city || item.settlement || "",
+    cityDistrict: item.city_district || "",
+    area: item.area || "",
+    street: item.street || "",
   }));
 }
 

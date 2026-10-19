@@ -792,6 +792,11 @@ function StatCard({ icon: Icon, label, value, dark = false }) {
 
 function ProjectTaskRow({ task, onToggle, onDelete }) {
   const done = task.status === "done";
+  const priority = {
+    high: { label: "Высокий", className: "bg-red-50 text-red-600 ring-red-100" },
+    medium: { label: "Обычный", className: "bg-amber-50 text-amber-700 ring-amber-100" },
+    low: { label: "Низкий", className: "bg-slate-100 text-slate-500 ring-slate-200" },
+  }[task.priority] || { label: "Обычный", className: "bg-amber-50 text-amber-700 ring-amber-100" };
 
   return (
     <div className={`flex items-start gap-4 rounded-[22px] px-4 py-4 ${done ? "bg-emerald-50" : "bg-slate-50"}`}>
@@ -805,8 +810,11 @@ function ProjectTaskRow({ task, onToggle, onDelete }) {
         <Check size={15} />
       </button>
       <div className="min-w-0 flex-1">
-        <div className={`font-black leading-5 ${done ? "text-slate-400 line-through" : "text-slate-900"}`}>
-          {task.title}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className={`font-black leading-5 ${done ? "text-slate-400 line-through" : "text-slate-900"}`}>
+            {task.title}
+          </div>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ring-1 ${priority.className}`}>{priority.label}</span>
         </div>
         {task.notes && <div className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-slate-500">{task.notes}</div>}
         <TaskLocation task={task} />
@@ -1801,6 +1809,9 @@ export default function Projects() {
         if (left.status !== right.status) {
           return left.status === "done" ? 1 : -1;
         }
+        const priorityRank = { high: 0, medium: 1, low: 2 };
+        const priorityDifference = (priorityRank[left.priority] ?? 1) - (priorityRank[right.priority] ?? 1);
+        if (priorityDifference) return priorityDifference;
         return (left.due_date || "9999-12-31").localeCompare(right.due_date || "9999-12-31");
       });
   }, [activeProjectId, tasks]);
