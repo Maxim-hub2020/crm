@@ -785,6 +785,7 @@ class Task(models.Model):
 
     title = models.CharField(max_length=200)
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="tasks", blank=True, null=True)
+    parent_task = models.ForeignKey("self", on_delete=models.SET_NULL, related_name="subtasks", blank=True, null=True, db_index=True)
     notes = models.TextField(blank=True, default="")
     due_date = models.DateField(blank=True, null=True, db_index=True)
     scheduled_date = models.DateField(blank=True, null=True, db_index=True)

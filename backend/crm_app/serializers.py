@@ -1126,6 +1126,8 @@ class TaskSerializer(serializers.ModelSerializer):
     assignee_name = serializers.SerializerMethodField()
     created_by_name = serializers.SerializerMethodField()
     project_title = serializers.SerializerMethodField()
+    parent_title = serializers.CharField(source="parent_task.title", read_only=True, default="")
+    subtasks = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
@@ -1134,6 +1136,9 @@ class TaskSerializer(serializers.ModelSerializer):
             "title",
             "project",
             "project_title",
+            "parent_task",
+            "parent_title",
+            "subtasks",
             "notes",
             "due_date",
             "scheduled_date",
@@ -1149,9 +1154,10 @@ class TaskSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_by", "created_at", "updated_at", "assignee_name", "created_by_name", "project_title"]
+        read_only_fields = ["created_by", "created_at", "updated_at", "assignee_name", "created_by_name", "project_title", "parent_title", "subtasks"]
         extra_kwargs = {
             "project": {"required": False, "allow_null": True},
+            "parent_task": {"required": False, "allow_null": True},
             "notes": {"required": False, "allow_blank": True},
             "due_date": {"required": False, "allow_null": True},
             "status": {"required": False},
@@ -1169,6 +1175,10 @@ class TaskSerializer(serializers.ModelSerializer):
         if not obj.project:
             return ""
         return obj.project.title or obj.project.client_name or f"Проект #{obj.project_id}"
+
+    def get_subtasks(self, obj):
+        return [{"id": child.id, "title": child.title, "status": child.status}
+                for child in obj.subtasks.all()]
 
     def validate_project(self, project):
         request = self.context.get("request")
@@ -1198,6 +1208,35 @@ class TaskSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        parent = attrs.get("parent_task", getattr(self.instance, "parent_task", None))
+        project = attrs.get("project", getattr(self.instance, "project", None))
+        assignee = attrs.get("assignee", getattr(self.instance, "assignee", None))
+        user = getattr(self.context.get("request"), "user", None)
+        if parent:
+            workspace = current_workspace(user) if user and user.is_authenticated else None
+            if parent.assignee.workspace_id != getattr(workspace, "id", None) or parent.project and parent.project.workspace_id != getattr(workspace, "id", None):
+                raise serializers.ValidationError({"parent_task": "Родительская задача относится к другой компании."})
+            if user and not user.is_admin() and parent.assignee_id != user.id:
+                raise serializers.ValidationError({"parent_task": "Родительская задача недоступна."})
+            if parent.project_id != getattr(project, "id", None):
+                raise serializers.ValidationError({"parent_task": "Подзадача должна относиться к тому же проекту."})
+            if parent.assignee_id != getattr(assignee or user, "id", None):
+                raise serializers.ValidationError({"parent_task": "У родителя и подзадачи должен быть один исполнитель."})
+            if parent.status == Task.Status.DONE and (not self.instance or self.instance.parent_task_id != parent.id):
+                raise serializers.ValidationError({"parent_task": "Сначала откройте завершённую родительскую задачу."})
+            if attrs.get("status") == Task.Status.OPEN and parent.status == Task.Status.DONE:
+                raise serializers.ValidationError({"status": "Сначала откройте родительскую задачу."})
+            ancestor = parent
+            while ancestor:
+                if self.instance and ancestor.id == self.instance.id:
+                    raise serializers.ValidationError({"parent_task": "Задача не может быть своей подзадачей."})
+                ancestor = ancestor.parent_task
+        if self.instance and "project" in attrs and self.instance.subtasks.exclude(project=project).exists():
+            raise serializers.ValidationError({"project": "Сначала перенесите подзадачи в тот же проект."})
+        if self.instance and "assignee" in attrs and self.instance.subtasks.exclude(assignee=assignee).exists():
+            raise serializers.ValidationError({"assignee": "Сначала назначьте подзадачам того же исполнителя."})
+        if self.instance and attrs.get("status") == Task.Status.DONE and self.instance.subtasks.exclude(status=Task.Status.DONE).exists():
+            raise serializers.ValidationError({"status": "Сначала завершите все подзадачи."})
         address_changed = "address" in attrs
         address = attrs.get("address", getattr(self.instance, "address", ""))
         if not str(address or "").strip():

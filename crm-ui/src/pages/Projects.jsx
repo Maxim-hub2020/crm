@@ -153,6 +153,7 @@ function createEmptyTaskForm() {
   return {
     title: "",
     notes: "",
+    parent_task: "",
     due_date: "",
     scheduled_date: "", city: "", district: "", address: "",
     priority: "medium",
@@ -790,7 +791,7 @@ function StatCard({ icon: Icon, label, value, dark = false }) {
   );
 }
 
-function ProjectTaskRow({ task, onToggle, onDelete }) {
+function ProjectTaskRow({ task, children = [], onToggle, onDelete, onAddSubtask }) {
   const done = task.status === "done";
   const priority = {
     high: { label: "Высокий", className: "bg-red-50 text-red-600 ring-red-100" },
@@ -817,6 +818,12 @@ function ProjectTaskRow({ task, onToggle, onDelete }) {
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ring-1 ${priority.className}`}>{priority.label}</span>
         </div>
         {task.notes && <div className="mt-1.5 whitespace-pre-wrap text-sm leading-5 text-slate-500">{task.notes}</div>}
+        {task.parent_task && <div className="mt-1 text-xs font-semibold text-blue-600">Подзадача: {task.parent_title}</div>}
+        {children.length > 0 && <div className="mt-2 rounded-xl bg-white p-2 text-xs text-slate-600">
+          <div className="font-bold">Подзадачи: {children.filter(child => child.status === "done").length}/{children.length}</div>
+          {children.map(child => <div key={child.id}>{child.status === "done" ? "✓" : "○"} {child.title}</div>)}
+        </div>}
+        <button type="button" className="mt-2 text-xs font-semibold text-blue-600" onClick={() => onAddSubtask(task)}>+ Подзадача</button>
         <TaskLocation task={task} />
         {task.due_date && (
           <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-600">
@@ -2652,6 +2659,7 @@ export default function Projects() {
 
       const created = await createProjectComment({
         project: activeProject.id,
+        parent_task: taskForm.parent_task ? Number(taskForm.parent_task) : null,
         text: commentText.trim(),
       });
 
@@ -4618,8 +4626,10 @@ export default function Projects() {
                         <ProjectTaskRow
                           key={task.id}
                           task={task}
+                          children={activeProjectTasks.filter(child => child.parent_task === task.id)}
                           onToggle={toggleProjectTask}
                           onDelete={requestDeleteTask}
+                          onAddSubtask={parent => setTaskForm(prev => ({ ...createEmptyTaskForm(), parent_task: String(parent.id), scheduled_date: parent.scheduled_date || "", due_date: parent.due_date || "", priority: parent.priority }))}
                         />
                       ))
                     )}
@@ -4648,6 +4658,13 @@ export default function Projects() {
                           onChange={(event) => setTaskForm((prev) => ({ ...prev, notes: event.target.value }))}
                           placeholder="Коротко опишите следующий шаг"
                         />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Основная задача</Label>
+                        <Select value={taskForm.parent_task} onChange={event => setTaskForm(prev => ({ ...prev, parent_task: event.target.value }))}>
+                          <option value="">Самостоятельная задача</option>
+                          {activeProjectTasks.filter(task => task.status !== "done").map(task => <option key={task.id} value={task.id}>{task.title}</option>)}
+                        </Select>
                       </div>
                       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
                         <div className="space-y-2">
