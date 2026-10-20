@@ -412,6 +412,56 @@ class RemoteMcpTests(TestCase):
         self.assertFalse(response.data["affects_margin"])
         self.assertFalse(FinanceCategory.objects.get(pk=response.data["id"]).affects_margin)
 
+    def test_payment_retry_is_detected_without_revoking_access(self):
+        account = Account.objects.create(workspace=self.workspace, name="Основной счет")
+        category = FinanceCategory.objects.create(workspace=self.workspace, name="Аванс", type="income")
+        token = self.connect()
+        args = {"resource": "payments", "confirm": True, "data": {
+            "project": self.project.pk, "account": account.pk,
+            "category": category.pk, "amount": "120000.00", "comment": "Аванс",
+        }}
+        first = self.rpc("tools/call", {"name": "crm_create", "arguments": args}, token).json()["result"]
+        self.assertTrue(first["structuredContent"]["operation_committed"])
+        payment_id = first["structuredContent"]["payment"]["id"]
+        args["data"]["comment"] = "Аванс клиента — повтор после сбоя"
+        retry = self.rpc("tools/call", {"name": "crm_create", "arguments": args}, token).json()["result"]
+        self.assertTrue(retry["isError"])
+        self.assertEqual(retry["structuredContent"]["error_type"], "possible_duplicate")
+        self.assertEqual(retry["structuredContent"]["existing_payment_ids"], [payment_id])
+        self.assertEqual(Payment.objects.count(), 1)
+        read = self.rpc("tools/call", {"name": "crm_profile"}, token).json()["result"]
+        self.assertNotIn("isError", read)
+        args["data"]["amount"] = "100.00"
+        other = self.rpc("tools/call", {"name": "crm_create", "arguments": args}, token).json()["result"]
+        self.assertTrue(other["structuredContent"]["operation_committed"])
+        args["data"]["amount"] = "120000.00"
+        args["allow_duplicate"] = True
+        distinct = self.rpc("tools/call", {"name": "crm_create", "arguments": args}, token).json()["result"]
+        self.assertTrue(distinct["structuredContent"]["operation_committed"])
+        self.assertEqual(Payment.objects.count(), 3)
+
+    def test_duplicate_detection_keeps_distinct_accounts_and_projects(self):
+        from .mcp_gateway import _create_payment
+        category = FinanceCategory.objects.create(workspace=self.workspace, name="Аванс", type="income")
+        first_account = Account.objects.create(workspace=self.workspace, name="Первый")
+        second_account = Account.objects.create(workspace=self.workspace, name="Второй")
+        second_project = Project.objects.create(workspace=self.workspace, manager=self.user, title="Другой")
+        data = {"account": first_account.pk, "category": category.pk, "amount": "120000", "project": self.project.pk}
+        _create_payment(self.user, data)
+        _create_payment(self.user, {**data, "account": second_account.pk})
+        _create_payment(self.user, {**data, "project": second_project.pk})
+        self.assertEqual(Payment.objects.count(), 3)
+
+    def test_duplicate_check_preserves_workspace_and_project_permissions(self):
+        from .mcp_gateway import _create_payment, McpToolError
+        foreign_workspace = Workspace.objects.create(name="Другая", slug="foreign")
+        foreign_account = Account.objects.create(workspace=foreign_workspace, name="Счёт")
+        category = FinanceCategory.objects.create(workspace=self.workspace, name="Аванс", type="income")
+        with self.assertRaises(McpToolError) as error:
+            _create_payment(self.user, {"account": foreign_account.pk, "category": category.pk, "amount": "120000"}, True)
+        self.assertEqual(error.exception.payload["error_type"], "invalid_input")
+        self.assertFalse(Payment.objects.exists())
+
     def test_mcp_payment_requires_explicit_account(self):
         category = FinanceCategory.objects.create(
             workspace=self.workspace,

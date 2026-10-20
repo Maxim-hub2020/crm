@@ -2,12 +2,15 @@ import base64
 import hashlib
 import json
 import re
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import requests
 from django.conf import settings
 from django.http import JsonResponse
+from django.db import transaction
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -239,11 +242,12 @@ TOOLS = [
     {
         "name": "crm_create",
         "title": "Создать объект CRM",
-        "description": "Для tasks поддерживаются parent_task (внутренний ID основной задачи), scheduled_date (дата выполнения YYYY-MM-DD), due_date (крайний срок), priority=low|medium|high, city, district, address. Из речи извлекайте краткое действие; создавайте отдельные подзадачи с parent_task, а не список шагов в notes. Проект и исполнитель подзадачи должны совпадать с родителем. Передавайте полный известный адрес действия: CRM автоматически определит недостающие город и район через DaData. Для выездной задачи используйте адрес проекта, для закупки — фактический адрес магазина. Создать проект, клиента, задачу, платёж, комментарий, замер или другой разрешённый объект CRM. Для payments предпочтительно передавайте точные названия в data.category_name и data.account_name, например «Доставка» и «Безнал»: сервер сам найдёт их ID без подмены категории. Для объекта существующего проекта передайте известный пользователю номер, адрес, клиента или телефон в project_query: сервер сам найдёт внутренний project_id за один вызов. Доход или расход без проекта создавайте как payments без project и без project_query. Для любого платежа сначала явно уточните счёт. Если ответ содержит operation_committed=true, операция уже сохранена: сообщите об успехе и не повторяйте вызов.",
+        "description": "Для tasks поддерживаются parent_task (внутренний ID основной задачи), scheduled_date (дата выполнения YYYY-MM-DD), due_date (крайний срок), priority=low|medium|high, city, district, address. Из речи извлекайте краткое действие; создавайте отдельные подзадачи с parent_task, а не список шагов в notes. Проект и исполнитель подзадачи должны совпадать с родителем. Передавайте полный известный адрес действия: CRM автоматически определит недостающие город и район через DaData. Для выездной задачи используйте адрес проекта, для закупки — фактический адрес магазина. Создать проект, клиента, задачу, платёж, комментарий, замер или другой разрешённый объект CRM. Для payments предпочтительно передавайте точные названия в data.category_name и data.account_name, например «Доставка» и «Безнал»: сервер сам найдёт их ID без подмены категории. Для объекта существующего проекта передайте известный пользователю номер, адрес, клиента или телефон в project_query: сервер сам найдёт внутренний project_id за один вызов. Доход или расход без проекта создавайте как payments без project и без project_query. Используйте счёт, уже названный пользователем; уточняйте только отсутствующий или неоднозначный счёт. Прямая команда с суммой, проектом и счётом является подтверждением: передайте confirm=true. possible_duplicate означает, что новая запись не создана; проверьте existing_payment_ids. Если ответ содержит operation_committed=true, операция уже сохранена: сообщите об успехе и не повторяйте вызов.",
         "inputSchema": {"type": "object", "properties": {
             "resource": {"type": "string", "enum": _resource_enum()},
             "project_query": {"type": "string", "minLength": 1, "description": "Номер заказа, адрес, клиент, телефон или название проекта. Используйте для project-comments, проектных payments, tasks, production-plans и measurement-sheets вместо предварительного поиска. Для общего дохода или расхода без проекта не передавайте."},
             "data": {"type": "object", "additionalProperties": True},
+            "allow_duplicate": {"type": "boolean", "description": "Только после подтверждения пользователем отдельного нового платежа при possible_duplicate."},
             "confirm": {"type": "boolean", "description": "True только после явного подтверждения пользователя для финансовых и административных операций."},
         }, "required": ["resource", "data"], "additionalProperties": False},
         "securitySchemes": [OAUTH_SCHEME],
@@ -259,6 +263,7 @@ TOOLS = [
             "amount": {"type": "number", "exclusiveMinimum": 0, "description": "Абсолютная сумма расхождения в рублях."},
             "comment": {"type": "string", "minLength": 1, "maxLength": 500, "description": "Причина сверки, например «Сверка фактического остатка на 07.10.2026»."},
             "paid_at": {"type": "string", "format": "date-time", "description": "Дата и время корректировки; если не передано, используется текущее время."},
+            "allow_duplicate": {"type": "boolean", "description": "Только после подтверждения пользователем отдельного нового платежа при possible_duplicate."},
             "confirm": {"type": "boolean", "const": True},
         }, "required": ["account_id", "direction", "amount", "comment", "confirm"], "additionalProperties": False},
         "securitySchemes": [OAUTH_SCHEME],
@@ -274,6 +279,7 @@ TOOLS = [
             "amount": {"type": "number", "exclusiveMinimum": 0, "description": "Сумма перевода в рублях."},
             "comment": {"type": "string", "maxLength": 500, "description": "Необязательный комментарий к переводу."},
             "paid_at": {"type": "string", "format": "date-time", "description": "Дата и время перевода; если не передано, используется текущее время."},
+            "allow_duplicate": {"type": "boolean", "description": "Только после подтверждения пользователем отдельного нового платежа при possible_duplicate."},
             "confirm": {"type": "boolean", "const": True},
         }, "required": ["source_account_id", "destination_account_id", "amount", "confirm"], "additionalProperties": False},
         "securitySchemes": [OAUTH_SCHEME],
@@ -420,6 +426,47 @@ def _committed_payment_result(result):
         "message": "Финансовая операция успешно сохранена в CRM. Не повторяйте создание.",
         "payment": payment,
     }
+
+
+def _create_payment(user, data, allow_duplicate=False):
+    """Validate access first; serialize MCP writes per account before checking repeats."""
+    from .models import Account
+    from .serializers import PaymentSerializer
+    from .views import _visible_payments
+
+    request = APIRequestFactory().post("/api/payments/", data, format="json")
+    request.user = user
+    serializer = PaymentSerializer(data=data, context={"request": request})
+    if not serializer.is_valid():
+        raise McpToolError(_api_error_payload(400, serializer.errors))
+    values = serializer.validated_data
+    account = values.get("account")
+    if not account:
+        raise McpToolError(_api_error_payload(400, {"account": "Укажите счёт операции."}))
+    paid_date = timezone.localtime(values["paid_at"]).date()
+    start = timezone.make_aware(datetime.combine(paid_date, time.min))
+    end = timezone.make_aware(datetime.combine(paid_date + timedelta(days=1), time.min))
+    with transaction.atomic():
+        Account.objects.select_for_update().get(pk=account.pk)
+        candidates = _visible_payments(user).filter(
+            account=account,
+            project=values.get("project"),
+            category=values.get("category"),
+            amount=values["amount"],
+            operation_kind=values.get("operation_kind", "standard"),
+            destination_account=values.get("destination_account"),
+            adjustment_direction=values.get("adjustment_direction", ""),
+            paid_at__gte=start, paid_at__lt=end,
+        ).order_by("-id")
+        if not allow_duplicate and candidates.exists():
+            raise McpToolError({
+                "error_type": "possible_duplicate", "status": 409,
+                "message": "Похожая финансовая операция уже есть. Новая запись не создана.",
+                "existing_payment_ids": list(candidates.values_list("id", flat=True)[:5]),
+                "connection_active": True, "retryable": False,
+                "recovery": "Покажите существующую операцию. Только если пользователь подтвердит отдельный новый платёж, повторите с allow_duplicate=true.",
+            })
+        return _committed_payment_result(_dispatch_viewset(user, "payments", "create", data=data))
 
 
 def _normalized_directory_name(value):
@@ -948,10 +995,9 @@ def _execute_tool(user, token_record, name, args):
             raise ValueError(
                 "Перед финансовой операцией уточните у пользователя счет и передайте его в поле account"
             )
-        result = _dispatch_viewset(user, args["resource"], "create", data=data)
         if args["resource"] == "payments":
-            return _committed_payment_result(result)
-        return result
+            return _create_payment(user, data, args.get("allow_duplicate", False))
+        return _dispatch_viewset(user, args["resource"], "create", data=data)
     if name == "crm_adjust_balance":
         if not args.get("confirm"):
             raise ValueError("Корректировка баланса требует confirm=true после подтверждения пользователя")
@@ -964,9 +1010,7 @@ def _execute_tool(user, token_record, name, args):
         }
         if args.get("paid_at"):
             data["paid_at"] = args["paid_at"]
-        return _committed_payment_result(
-            _dispatch_viewset(user, "payments", "create", data=data)
-        )
+        return _create_payment(user, data, args.get("allow_duplicate", False))
     if name == "crm_transfer_money":
         if not args.get("confirm"):
             raise ValueError("Перевод между счетами требует confirm=true после подтверждения пользователя")
@@ -981,9 +1025,7 @@ def _execute_tool(user, token_record, name, args):
         }
         if args.get("paid_at"):
             data["paid_at"] = args["paid_at"]
-        return _committed_payment_result(
-            _dispatch_viewset(user, "payments", "create", data=data)
-        )
+        return _create_payment(user, data, args.get("allow_duplicate", False))
     if name == "crm_update":
         sensitive = args["resource"] in {"payments", "accounts", "users", "project-statuses", "finance-categories"}
         if sensitive and not args.get("confirm"):
@@ -1121,7 +1163,7 @@ def mcp_view(request):
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {"listChanged": False}, "resources": {}, "extensions": {"io.modelcontextprotocol/skills": {}}},
             "serverInfo": {"name": "ceh-crm-production", "version": "1.0.0"},
-            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. Use crm_finance_overview for company or project financial health; it returns deterministic CRM analytics and cash forecast without external AI. For a shower or mirror price, call crm_calculator_catalog first and then crm_calculate_product with exact catalog IDs; never invent IDs or calculate the price manually. Save a calculation to a project with crm_save_calculator_quote only after showing the total and receiving explicit confirmation. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. For tasks, set priority to low, medium, or high from urgency and deadline, and pass the complete known action address; CRM fills missing city and district through DaData. Use the project address only for work at the client site, never for a procurement trip. Create general income or expenses not tied to an order as payments without project and without project_query. Before every financial create or update, always list accounts and explicitly ask the user which account is used, even if only one account exists; never infer cash versus cashless. For payments, pass exact human-readable names in data.category_name and data.account_name; never substitute a similar category after an error. For transfers, explicitly ask for both source and destination accounts and use crm_transfer_money; transfers change account balances but never income, expense, profit, margin, or project costs. The categories 'Личные доходы' and 'Личные траты' must have affects_margin=false: they change the selected account and cash forecast but never business profit or margin. Use crm_adjust_balance only for a confirmed reconciliation difference: it changes cash balance but never monthly income, expenses, profit, or margin. A financial response with operation_committed=true is definitive confirmation that the operation is already saved: report success, include its ID, and never retry it or describe it as rejected. Tool errors do not revoke CRM access. For retryable invalid_input or not_found errors, inspect details, refresh the relevant CRM directory, correct the parameters, and retry the original action. If a payment category is invalid, use only an exact category from details or finance-categories and retry; never replace it with another category. Only invalid_token requires reconnecting. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
+            "instructions": "For fast voice replies, call crm_resolve_project once: it already returns the full project card, so do not follow it with crm_get. Use crm_finance_overview for company or project financial health; it returns deterministic CRM analytics and cash forecast without external AI. For a shower or mirror price, call crm_calculator_catalog first and then crm_calculate_product with exact catalog IDs; never invent IDs or calculate the price manually. Save a calculation to a project with crm_save_calculator_quote only after showing the total and receiving explicit confirmation. For project comments, tasks, project payments, updates, and uploads, pass the user's order number, address, client, or phone directly as project_query in the write tool; do not pre-search unless the result is ambiguous. For tasks, set priority to low, medium, or high from urgency and deadline, and pass the complete known action address; CRM fills missing city and district through DaData. Use the project address only for work at the client site, never for a procurement trip. Create general income or expenses not tied to an order as payments without project and without project_query. Before financial writes, resolve the account from the user’s explicit instruction and current account directory. Ask only if the account is missing or ambiguous. A direct instruction specifying the action and its parameters is confirmation; pass confirm=true without asking again. Never infer cash versus cashless. On possible_duplicate, inspect existing_payment_ids and do not write again unless the user confirms a distinct new payment with allow_duplicate=true. Never call a parameter error a denial of access. If the host blocks a tool before a CRM response, identify that as a host approval rejection, not a CRM error; do not bypass it. For payments, pass exact human-readable names in data.category_name and data.account_name; never substitute a similar category after an error. For transfers, explicitly ask for both source and destination accounts and use crm_transfer_money; transfers change account balances but never income, expense, profit, margin, or project costs. The categories 'Личные доходы' and 'Личные траты' must have affects_margin=false: they change the selected account and cash forecast but never business profit or margin. Use crm_adjust_balance only for a confirmed reconciliation difference: it changes cash balance but never monthly income, expenses, profit, or margin. A financial response with operation_committed=true is definitive confirmation that the operation is already saved: report success, include its ID, and never retry it or describe it as rejected. Tool errors do not revoke CRM access. For retryable invalid_input or not_found errors, inspect details, refresh the relevant CRM directory, correct the parameters, and retry the original action. If a payment category is invalid, use only an exact category from details or finance-categories and retry; never replace it with another category. Only invalid_token requires reconnecting. Never treat an order number as an internal ID. Confirm destructive, financial, approval, and administrative changes.",
         })
     if method in {"notifications/initialized", "ping"}:
         return _rpc_result(message_id, {})
