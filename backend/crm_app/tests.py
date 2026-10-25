@@ -1503,6 +1503,44 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(response.data["category_type"], FinanceCategory.Type.INCOME)
         self.assertEqual(response.data["account_name"], self.account.name)
 
+    def test_new_payment_for_today_uses_current_time(self):
+        client = self.auth_client_for(self.manager)
+        before_create = timezone.now()
+
+        response = client.post(
+            "/api/payments/",
+            {
+                "amount": "20000.00",
+                "category": self.expense_category.id,
+                "account": self.account.id,
+                "paid_at": f"{timezone.localdate().isoformat()}T12:00:00",
+            },
+            format="json",
+        )
+        after_create = timezone.now()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        created_payment = Payment.objects.get(id=response.data["id"])
+        self.assertGreaterEqual(created_payment.paid_at, before_create)
+        self.assertLessEqual(created_payment.paid_at, after_create)
+
+    def test_editing_today_payment_preserves_original_time(self):
+        original_paid_at = self.manager_payment.paid_at
+        client = self.auth_client_for(self.manager)
+
+        response = client.patch(
+            f"/api/payments/{self.manager_payment.id}/",
+            {
+                "amount": "21000.00",
+                "paid_at": f"{timezone.localdate().isoformat()}T12:00:00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.manager_payment.refresh_from_db()
+        self.assertEqual(self.manager_payment.paid_at, original_paid_at)
+
     def test_account_transfer_moves_balance_without_changing_financial_results(self):
         cash_account = Account.objects.create(workspace=self.manager.workspace, name="Наличные")
         client = self.auth_client_for(self.manager)

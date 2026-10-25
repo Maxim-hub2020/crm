@@ -835,6 +835,11 @@ class PaymentSerializer(serializers.ModelSerializer):
             is_existing_unchanged_date = self.instance is not None and paid_date == current_paid_date
             if paid_date < timezone.localdate() and not is_existing_unchanged_date:
                 raise serializers.ValidationError({"paid_at": "Нельзя ставить операцию задним числом."})
+            if paid_date == timezone.localdate():
+                if self.instance is None or current_paid_date != paid_date:
+                    attrs["paid_at"] = timezone.now()
+                else:
+                    attrs["paid_at"] = current_paid_at
 
         account = attrs.get("account", getattr(self.instance, "account", None))
         account_queryset = Account.objects.filter(workspace=workspace)

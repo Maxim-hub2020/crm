@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from .models import Account, CalculatorQuote, CalculatorSettings, Client, FinanceCategory, Payment, Project, ProjectComment, ProjectCustomField, User, Workspace
@@ -512,6 +513,34 @@ class RemoteMcpTests(TestCase):
         self.assertEqual(payment.account_id, cashless.id)
         self.assertEqual(payment.project_id, self.project.id)
         self.assertTrue(payload["structuredContent"]["operation_committed"])
+
+    def test_mcp_payment_for_today_uses_current_time(self):
+        salary = FinanceCategory.objects.create(
+            workspace=self.workspace,
+            name="Заработная плата",
+            type=FinanceCategory.Type.EXPENSE,
+        )
+        account = Account.objects.create(workspace=self.workspace, name="Основной счет")
+        token = self.connect()
+        before_create = timezone.now()
+
+        response = self.rpc("tools/call", {"name": "crm_create", "arguments": {
+            "resource": "payments",
+            "confirm": True,
+            "data": {
+                "category_name": salary.name,
+                "account_name": account.name,
+                "amount": "20000.00",
+                "paid_at": f"{timezone.localdate().isoformat()}T12:00:00",
+            },
+        }}, token)
+        after_create = timezone.now()
+
+        payload = response.json()["result"]
+        self.assertFalse(payload.get("isError", False), payload)
+        payment = Payment.objects.get()
+        self.assertGreaterEqual(payment.paid_at, before_create)
+        self.assertLessEqual(payment.paid_at, after_create)
 
     def test_mcp_payment_unknown_category_returns_exact_options(self):
         FinanceCategory.objects.create(

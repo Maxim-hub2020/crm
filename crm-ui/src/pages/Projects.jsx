@@ -575,7 +575,8 @@ function toDateInputValue(value) {
 }
 
 function toPaymentDateTime(value) {
-  return value ? `${value}T12:00:00` : undefined;
+  if (!value) return undefined;
+  return value === todayDateValue() ? new Date().toISOString() : `${value}T12:00:00`;
 }
 
 function isPastDateValue(value) {
