@@ -6,6 +6,7 @@ from math import ceil
 from django.utils import timezone
 
 from .models import Account, FinanceCategory, Payment, ProjectStatus
+from .payment_dates import payment_is_future, payment_local_date
 
 
 MARGIN_WARNING_PERCENT = Decimal("30")
@@ -105,12 +106,11 @@ def _expense_group_for_payment(payment):
 
 
 def _current_expense_payments(project):
-    now = timezone.now()
     payments = list(project.payments.select_related("category", "account").order_by("paid_at", "id"))
     return [
         payment
         for payment in payments
-        if (not payment.paid_at or payment.paid_at <= now)
+        if not payment_is_future(payment.paid_at)
         and _payment_kind(payment) == FinanceCategory.Type.EXPENSE
         and _payment_affects_margin(payment)
     ]
@@ -187,13 +187,14 @@ def _is_expense_review_status(project):
 
 def build_project_finance_analytics(project):
     now = timezone.now()
+    today = timezone.localdate()
     expected_income = _money(Decimal(project.total_amount or 0) - Decimal(project.referral_bonus_used or 0))
     if expected_income < 0:
         expected_income = Decimal("0.00")
 
     all_payments = list(project.payments.select_related("category", "account").order_by("paid_at", "id"))
-    current_payments = [payment for payment in all_payments if payment.paid_at <= now]
-    future_payments = [payment for payment in all_payments if payment.paid_at > now]
+    current_payments = [payment for payment in all_payments if not payment_is_future(payment.paid_at, today)]
+    future_payments = [payment for payment in all_payments if payment_is_future(payment.paid_at, today)]
 
     income_payments = [payment for payment in current_payments if _payment_kind(payment) == FinanceCategory.Type.INCOME]
     margin_income_payments = [payment for payment in income_payments if _payment_affects_margin(payment)]
@@ -340,7 +341,7 @@ def _serialize_payment_for_analytics(payment):
         "signed_amount": _decimal_string(signed_amount),
         "comment": payment.comment or "",
         "paid_at": payment.paid_at.isoformat() if payment.paid_at else "",
-        "is_future": bool(payment.paid_at and payment.paid_at > timezone.now()),
+        "is_future": payment_is_future(payment.paid_at),
     }
 
 
@@ -664,14 +665,15 @@ def _history_aware_missing_expenses(analytics, expense_prediction):
 
 def build_finance_overview(projects_queryset, payments_queryset, filters=None, reference_projects_queryset=None):
     now = timezone.now()
+    today = timezone.localdate()
     projects = list(projects_queryset.select_related("client").order_by("-created_at", "-id"))
     reference_queryset = reference_projects_queryset if reference_projects_queryset is not None else projects_queryset
     reference_projects = list(reference_queryset.select_related("client").order_by("-created_at", "-id"))
     payments = list(
         payments_queryset.select_related("project", "category", "account", "destination_account").order_by("-paid_at", "-id")
     )
-    current_payments = [payment for payment in payments if not payment.paid_at or payment.paid_at <= now]
-    future_payments = [payment for payment in payments if payment.paid_at and payment.paid_at > now]
+    current_payments = [payment for payment in payments if not payment_is_future(payment.paid_at, today)]
+    future_payments = [payment for payment in payments if payment_is_future(payment.paid_at, today)]
     analytical_payments = [
         payment
         for payment in current_payments
@@ -883,7 +885,7 @@ def _add_cash_item(bucket, item):
     bucket["items"].append({**item, "amount": _decimal_string(amount)})
 
 
-def _account_balance_rows(workspace, payments, now, selected_account_id=None):
+def _account_balance_rows(workspace, payments, today, selected_account_id=None):
     accounts = Account.objects.filter(workspace=workspace).order_by("name", "id") if workspace else Account.objects.none()
     if selected_account_id:
         accounts = accounts.filter(pk=selected_account_id)
@@ -891,7 +893,7 @@ def _account_balance_rows(workspace, payments, now, selected_account_id=None):
     account_names = {account.id: account.name for account in accounts}
 
     for payment in payments:
-        if payment.paid_at and payment.paid_at > now:
+        if payment_is_future(payment.paid_at, today):
             continue
         amount = _money(payment.amount)
         if payment.operation_kind == Payment.OperationKind.ACCOUNT_TRANSFER:
@@ -933,7 +935,7 @@ def build_cash_forecast(
         workspace = getattr(payments[0].account, "workspace", None) or getattr(payments[0].created_by, "workspace", None)
     statuses = list(ProjectStatus.objects.filter(workspace=workspace).order_by("sort_order", "id"))
     selected_account_id = int(selected_account_id) if selected_account_id else None
-    account_balances = _account_balance_rows(workspace, payments, now, selected_account_id)
+    account_balances = _account_balance_rows(workspace, payments, today, selected_account_id)
 
     buckets = {
         "today": _empty_cash_bucket("today", "Сегодня", 0),
@@ -957,7 +959,7 @@ def build_cash_forecast(
                 signed = Decimal("0")
         else:
             signed = -amount if kind == FinanceCategory.Type.EXPENSE else amount
-        if not payment.paid_at or payment.paid_at <= now:
+        if not payment_is_future(payment.paid_at, today):
             current_balance += signed
             continue
 
@@ -966,7 +968,7 @@ def build_cash_forecast(
             continue
         if is_transfer:
             kind = FinanceCategory.Type.EXPENSE if signed < 0 else FinanceCategory.Type.INCOME
-        paid_date = timezone.localtime(payment.paid_at).date()
+        paid_date = payment_local_date(payment.paid_at)
         bucket = buckets[_bucket_key_for_date(paid_date, today)]
         _add_cash_item(
             bucket,

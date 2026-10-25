@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+from datetime import datetime, timedelta
 from decimal import Decimal
 from io import StringIO
 from urllib.parse import parse_qs, urlparse
@@ -1550,6 +1551,68 @@ class TestPaymentApi(AuthenticatedApiMixin, APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("destination_account", response.data)
+
+    def test_today_operation_reduces_account_balance_even_if_stored_time_is_later(self):
+        salary_category = FinanceCategory.objects.create(
+            workspace=self.manager.workspace,
+            name="Заработная плата",
+            type=FinanceCategory.Type.EXPENSE,
+        )
+        today = timezone.localdate()
+        later_today = timezone.make_aware(
+            datetime.combine(today, datetime.max.time()),
+            timezone.get_current_timezone(),
+        )
+        Payment.objects.create(
+            created_by=self.manager,
+            category=salary_category,
+            account=self.account,
+            paid_at=later_today,
+            amount=Decimal("20000.00"),
+            type=Payment.Type.CORRECTION,
+            comment="Заработная плата",
+        )
+        client = self.auth_client_for(self.manager)
+
+        analytics = client.get("/api/finance-analytics/")
+        forecast = client.get("/api/cash-forecast/")
+
+        self.assertEqual(analytics.status_code, status.HTTP_200_OK)
+        self.assertEqual(analytics.data["summary"]["expense_total"], "20000.00")
+        self.assertEqual(analytics.data["summary"]["future_operation_count"], 0)
+        self.assertEqual(forecast.status_code, status.HTTP_200_OK)
+        self.assertEqual(forecast.data["current_balance"], "-5000.00")
+        self.assertEqual(forecast.data["planned_operation_count"], 0)
+        balances = {row["name"]: row["balance"] for row in forecast.data["account_balances"]}
+        self.assertEqual(balances[self.account.name], "-5000.00")
+
+    def test_tomorrow_operation_stays_in_forecast(self):
+        salary_category = FinanceCategory.objects.create(
+            workspace=self.manager.workspace,
+            name="Заработная плата",
+            type=FinanceCategory.Type.EXPENSE,
+        )
+        tomorrow_at_noon = timezone.make_aware(
+            datetime.combine(timezone.localdate() + timedelta(days=1), datetime.min.time()),
+            timezone.get_current_timezone(),
+        )
+        Payment.objects.create(
+            created_by=self.manager,
+            category=salary_category,
+            account=self.account,
+            paid_at=tomorrow_at_noon,
+            amount=Decimal("20000.00"),
+            type=Payment.Type.CORRECTION,
+        )
+        client = self.auth_client_for(self.manager)
+
+        forecast = client.get("/api/cash-forecast/")
+
+        self.assertEqual(forecast.status_code, status.HTTP_200_OK)
+        self.assertEqual(forecast.data["current_balance"], "15000.00")
+        self.assertEqual(forecast.data["planned_operation_count"], 1)
+        balances = {row["name"]: row["balance"] for row in forecast.data["account_balances"]}
+        self.assertEqual(balances[self.account.name], "15000.00")
 
     def test_bonus_is_accrued_once_after_advance_for_large_project(self):
         project_client = Client.objects.create(

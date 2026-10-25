@@ -7,6 +7,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from .models import Client, ClientBonusTransaction, FinanceCategory, Payment, Project
+from .payment_dates import start_of_next_local_day
 
 BONUS_ORDER_THRESHOLD = Decimal("30000")
 BONUS_RATE = Decimal("0.03")
@@ -112,7 +113,7 @@ def _is_bonus_advance_payment(payment):
 def _has_advance_payment(project):
     payments = (
         Payment.objects.select_related("category")
-        .filter(project=project, amount__gt=0, paid_at__lte=timezone.now())
+        .filter(project=project, amount__gt=0, paid_at__lt=start_of_next_local_day())
         .order_by("id")
     )
     return any(_is_bonus_advance_payment(payment) for payment in payments)
