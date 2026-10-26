@@ -361,8 +361,7 @@ def sync_project_measurement_files_to_yandex(project, field, file_values, actor=
             storage_path = str(file_value.get("path") or "").strip()
             if not storage_path or not default_storage.exists(storage_path):
                 continue
-            original_name = str(file_value.get("original_name") or file_value.get("name") or "файл").strip()
-            filename = f"Лист {index:02d} - {original_name}"
+            filename = str(file_value.get("name") or file_value.get("original_name") or "файл").strip()
             disk_file_path = join_disk_path(measurement_path, filename)
             with default_storage.open(storage_path, "rb") as stored_file:
                 upload_bytes(

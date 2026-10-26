@@ -729,7 +729,8 @@ class RemoteMcpTests(TestCase):
 
         payload = response.json()["result"]
         self.assertFalse(payload.get("isError", False), payload)
-        self.assertEqual(payload["structuredContent"]["uploaded"][0]["name"], "замер.jpg")
+        self.assertEqual(payload["structuredContent"]["uploaded"][0]["name"], "Замер — Зеркало — лист 01.jpg")
+        self.assertEqual(payload["structuredContent"]["uploaded"][0]["original_name"], "замер.jpg")
         self.assertEqual(payload["structuredContent"]["uploaded"][0]["content_type"], "image/jpeg")
         self.assertTrue(payload["structuredContent"]["uploaded"][0]["url"].startswith("https://testserver/"))
         self.assertFalse(payload["structuredContent"]["yandex_disk"]["ok"])

@@ -904,7 +904,17 @@ function formatFileSize(bytes) {
   return `${(size / (1024 * 1024)).toFixed(1).replace(".", ",")} МБ`;
 }
 
-function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUpload, onFilePreview, uploadingFiles = {} }) {
+function projectCustomFileName(project, fileValue) {
+  const sourceName = String(fileValue?.originalName || fileValue?.name || "");
+  const extensionMatch = sourceName.match(/(\.[a-zа-яё0-9]{1,10})$/i);
+  const extension = extensionMatch?.[1]?.toLowerCase() || "";
+  const fieldName = String(fileValue?.fieldName || "Файл").trim() || "Файл";
+  const projectName = projectDisplayName(project);
+  const sheetNumber = String(Number(fileValue?.fileIndex || 0) + 1).padStart(2, "0");
+  return `${fieldName} — ${projectName} — лист ${sheetNumber}${extension}`;
+}
+
+function ProjectCustomFieldsGrid({ fields, values, onChange, project, projectId, onFileUpload, onFilePreview, uploadingFiles = {} }) {
   if (!fields.length) return null;
 
   return (
@@ -933,6 +943,13 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
                   {fileValues.length ? (
                     <div className="min-w-0 space-y-1">
                       {fileValues.map((fileValue, fileIndex) => {
+                        const previewFile = {
+                          ...fileValue,
+                          fieldName: field.name,
+                          fileIndex,
+                          fileCount: fileValues.length,
+                        };
+                        const displayName = projectCustomFileName(project, previewFile);
                         const removeFile = () => {
                           const nextFiles = fileValues.filter((_, index) => index !== fileIndex);
                           onChange(fieldKey, nextFiles.length ? nextFiles.map(customFieldFilePayload) : "");
@@ -943,11 +960,15 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
                             {fileValue.url && isPreviewableImage(fileValue) ? (
                               <button
                                 type="button"
-                                onClick={() => onFilePreview?.(fileValue)}
+                                onClick={() => onFilePreview?.({
+                                  ...previewFile,
+                                  originalView: false,
+                                  actualSize: false,
+                                })}
                                 className="inline-flex min-w-0 items-center gap-2 text-left text-sm font-bold text-blue-600 hover:text-blue-700"
                               >
                                 <FileText size={16} className="shrink-0" />
-                                <span className="truncate">{fileValue.name}</span>
+                                <span className="truncate">{displayName}</span>
                               </button>
                             ) : fileValue.url ? (
                               <a
@@ -957,12 +978,12 @@ function ProjectCustomFieldsGrid({ fields, values, onChange, projectId, onFileUp
                                 className="inline-flex min-w-0 items-center gap-2 text-sm font-bold text-blue-600 hover:text-blue-700"
                               >
                                 <FileText size={16} className="shrink-0" />
-                                <span className="truncate">{fileValue.name}</span>
+                                <span className="truncate">{displayName}</span>
                               </a>
                             ) : (
                               <div className="inline-flex min-w-0 items-center gap-2 text-sm font-bold text-slate-700">
                                 <FileText size={16} className="shrink-0" />
-                                <span className="truncate">{fileValue.name}</span>
+                                <span className="truncate">{displayName}</span>
                               </div>
                             )}
                             <div className="flex shrink-0 items-center gap-1">
@@ -4338,6 +4359,7 @@ export default function Projects() {
                 <ProjectCustomFieldsGrid
                   fields={customFields}
                   values={detailForm.custom_fields}
+                  project={activeProject}
                   projectId={activeProject.id}
                   onFileUpload={handleCustomFieldFileUpload}
                   onFilePreview={setCustomFieldPreview}
@@ -5132,29 +5154,50 @@ export default function Projects() {
 
       <Modal
         open={Boolean(customFieldPreview)}
-        title={customFieldPreview?.name || "Просмотр файла"}
+        title={customFieldPreview ? projectCustomFileName(activeProject, customFieldPreview) : "Просмотр файла"}
         onClose={() => setCustomFieldPreview(null)}
-        widthClassName="max-w-5xl"
-        bodyClassName="bg-slate-950/95 p-3 sm:p-5"
+        widthClassName={customFieldPreview?.originalView ? "max-w-[calc(100vw-1rem)] sm:max-w-[calc(100vw-2rem)]" : "max-w-5xl"}
+        bodyClassName={customFieldPreview?.originalView ? "bg-slate-950 p-2 sm:p-3" : "bg-slate-950/95 p-3 sm:p-5"}
         positionClassName="items-center"
         overlayClassName="bg-slate-950/70 backdrop-blur-sm"
       >
         {customFieldPreview ? (
           <div className="space-y-4">
-            <div className="overflow-hidden rounded-[24px] bg-black">
+            <div
+              className={`${customFieldPreview.originalView ? "max-h-[calc(var(--app-height,100dvh)-10rem)] overflow-auto" : "overflow-hidden rounded-[24px]"} bg-black`}
+              style={{ touchAction: "pan-x pan-y pinch-zoom" }}
+            >
               <img
                 src={customFieldPreview.url}
-                alt={customFieldPreview.name || "Файл проекта"}
-                className="mx-auto max-h-[68dvh] w-auto max-w-full object-contain"
+                alt={projectCustomFileName(activeProject, customFieldPreview)}
+                onClick={() => customFieldPreview.originalView && setCustomFieldPreview((current) => ({ ...current, actualSize: !current.actualSize }))}
+                className={`mx-auto h-auto object-contain ${
+                  customFieldPreview.originalView && customFieldPreview.actualSize
+                    ? "max-w-none cursor-zoom-out"
+                    : `max-w-full ${customFieldPreview.originalView ? "cursor-zoom-in" : "max-h-[68dvh] w-auto"}`
+                }`}
               />
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-              <Button type="button" variant="secondary" onClick={() => setCustomFieldPreview(null)}>
-                Вернуться в CRM
-              </Button>
-              <Button type="button" onClick={() => window.open(customFieldPreview.url, "_blank", "noopener,noreferrer")}>
-                Открыть оригинал
-              </Button>
+              {customFieldPreview.originalView ? (
+                <>
+                  <Button type="button" variant="secondary" onClick={() => setCustomFieldPreview((current) => ({ ...current, originalView: false, actualSize: false }))}>
+                    Назад к просмотру
+                  </Button>
+                  <Button type="button" onClick={() => setCustomFieldPreview((current) => ({ ...current, actualSize: !current.actualSize }))}>
+                    {customFieldPreview.actualSize ? "По размеру экрана" : "Масштаб 100%"}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button type="button" variant="secondary" onClick={() => setCustomFieldPreview(null)}>
+                    Вернуться в CRM
+                  </Button>
+                  <Button type="button" onClick={() => setCustomFieldPreview((current) => ({ ...current, originalView: true, actualSize: false }))}>
+                    Открыть оригинал
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         ) : null}

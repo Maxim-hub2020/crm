@@ -704,13 +704,14 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
 
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             self.assertEqual(response.data["field_id"], str(custom_field.id))
-            self.assertEqual(response.data["value"][0]["name"], "measurement.jpg")
+            self.assertEqual(response.data["value"][0]["name"], "Photo — Client One — лист 01.jpg")
+            self.assertEqual(response.data["value"][0]["original_name"], "measurement.jpg")
             self.assertEqual(response.data["value"][0]["content_type"], "image/jpeg")
             self.assertIn("/media/project_custom_fields/", response.data["value"][0]["url"])
 
             self.manager_project.refresh_from_db()
             stored_value = self.manager_project.custom_fields[str(custom_field.id)]
-            self.assertEqual(stored_value[0]["name"], "measurement.jpg")
+            self.assertEqual(stored_value[0]["name"], "Photo — Client One — лист 01.jpg")
             self.assertTrue(os.path.exists(os.path.join(media_root, stored_value[0]["path"])))
 
     def test_project_custom_field_files_are_appended(self):
@@ -739,11 +740,17 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
             )
 
             self.assertEqual(second_response.status_code, status.HTTP_200_OK)
-            self.assertEqual([item["name"] for item in second_response.data["value"]], ["measurement.jpg", "drawing.pdf"])
+            self.assertEqual(
+                [item["name"] for item in second_response.data["value"]],
+                ["Photos — Client One — лист 01.jpg", "Photos — Client One — лист 02.pdf"],
+            )
 
             self.manager_project.refresh_from_db()
             stored_value = self.manager_project.custom_fields[str(custom_field.id)]
-            self.assertEqual([item["name"] for item in stored_value], ["measurement.jpg", "drawing.pdf"])
+            self.assertEqual(
+                [item["name"] for item in stored_value],
+                ["Photos — Client One — лист 01.jpg", "Photos — Client One — лист 02.pdf"],
+            )
             self.assertTrue(os.path.exists(os.path.join(media_root, stored_value[0]["path"])))
             self.assertTrue(os.path.exists(os.path.join(media_root, stored_value[1]["path"])))
 
@@ -766,11 +773,17 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
             )
 
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual([item["name"] for item in response.data["value"]], ["measurement.jpg", "drawing.pdf"])
+            self.assertEqual(
+                [item["name"] for item in response.data["value"]],
+                ["Photos — Client One — лист 01.jpg", "Photos — Client One — лист 02.pdf"],
+            )
 
             self.manager_project.refresh_from_db()
             stored_value = self.manager_project.custom_fields[str(custom_field.id)]
-            self.assertEqual([item["name"] for item in stored_value], ["measurement.jpg", "drawing.pdf"])
+            self.assertEqual(
+                [item["name"] for item in stored_value],
+                ["Photos — Client One — лист 01.jpg", "Photos — Client One — лист 02.pdf"],
+            )
             self.assertTrue(os.path.exists(os.path.join(media_root, stored_value[0]["path"])))
             self.assertTrue(os.path.exists(os.path.join(media_root, stored_value[1]["path"])))
 
@@ -807,8 +820,8 @@ class TestProjectApi(AuthenticatedApiMixin, APITestCase):
         self.assertEqual(
             [call.args[1] for call in upload_bytes_mock.call_args_list],
             [
-                f"{measurement_path}/Лист 01 - page-1.jpg",
-                f"{measurement_path}/Лист 02 - page-2.jpg",
+                f"{measurement_path}/Замер — Client One — лист 01.jpg",
+                f"{measurement_path}/Замер — Client One — лист 02.jpg",
             ],
         )
         self.assertEqual(upload_bytes_mock.call_args_list[0].args[2], b"first-page")

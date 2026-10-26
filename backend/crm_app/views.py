@@ -125,6 +125,22 @@ def json_contains_text(value, query):
     return str(query or "").casefold() in json.dumps(value or {}, ensure_ascii=False, default=str).casefold()
 
 
+def project_custom_file_name(project, field, original_name, index):
+    extension = os.path.splitext(str(original_name or ""))[1].lower()
+    if not re.fullmatch(r"\.[a-zа-яё0-9]{1,10}", extension, flags=re.IGNORECASE):
+        extension = ""
+    field_name = re.sub(r'[\\/:*?"<>|]+', "-", str(getattr(field, "name", "") or "Файл"))
+    field_name = re.sub(r"\s+", " ", field_name).strip(" .-") or "Файл"
+    project_name = re.sub(
+        r'[\\/:*?"<>|]+',
+        "-",
+        str(getattr(project, "title", "") or getattr(project, "client_name", "") or f"Проект {project.pk}"),
+    )
+    project_name = re.sub(r"\s+", " ", project_name).strip(" .-") or f"Проект {project.pk}"
+    base_name = f"{field_name} — {project_name} — лист {index:02d}"
+    return f"{base_name[: max(1, 240 - len(extension))].rstrip()}{extension}"
+
+
 def _request_params(request):
     return request.data if request.method == "POST" else request.query_params
 
@@ -1178,11 +1194,30 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if not field:
             return Response({"detail": "Поле файла не найдено."}, status=drf_status.HTTP_404_NOT_FOUND)
 
+        raw_custom_fields = project.custom_fields
+        if isinstance(raw_custom_fields, dict):
+            custom_fields = dict(raw_custom_fields)
+        else:
+            logger.warning(
+                "Resetting legacy non-object custom_fields during file upload project_id=%s type=%s",
+                project.id,
+                type(raw_custom_fields).__name__,
+            )
+            custom_fields = {}
+        existing_value = custom_fields.get(str(field.id))
+        if isinstance(existing_value, list):
+            existing_files = [item for item in existing_value if isinstance(item, dict)]
+        elif isinstance(existing_value, dict):
+            existing_files = [existing_value]
+        else:
+            existing_files = []
+
         file_values = []
         saved_paths = []
-        for uploaded_file in uploaded_files:
+        for upload_index, uploaded_file in enumerate(uploaded_files, start=len(existing_files) + 1):
             original_name = uploaded_file.name or "file"
-            safe_name = get_valid_filename(original_name) or "file"
+            display_name = project_custom_file_name(project, field, original_name, upload_index)
+            safe_name = get_valid_filename(display_name) or f"file-{upload_index:02d}"
             storage_path = f"project_custom_fields/{project.id}/{field.id}/{uuid.uuid4().hex}-{safe_name}"
             try:
                 saved_path = default_storage.save(storage_path, uploaded_file)
@@ -1209,7 +1244,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
             file_values.append(
                 {
-                    "name": original_name,
+                    "name": display_name,
                     "original_name": original_name,
                     "url": file_url,
                     "path": saved_path,
@@ -1217,24 +1252,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     "size": uploaded_file.size,
                 }
             )
-
-        raw_custom_fields = project.custom_fields
-        if isinstance(raw_custom_fields, dict):
-            custom_fields = dict(raw_custom_fields)
-        else:
-            logger.warning(
-                "Resetting legacy non-object custom_fields during file upload project_id=%s type=%s",
-                project.id,
-                type(raw_custom_fields).__name__,
-            )
-            custom_fields = {}
-        existing_value = custom_fields.get(str(field.id))
-        if isinstance(existing_value, list):
-            existing_files = [item for item in existing_value if isinstance(item, dict)]
-        elif isinstance(existing_value, dict):
-            existing_files = [existing_value]
-        else:
-            existing_files = []
 
         custom_fields[str(field.id)] = existing_files + file_values
         project.custom_fields = custom_fields
