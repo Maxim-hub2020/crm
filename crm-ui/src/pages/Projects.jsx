@@ -3336,6 +3336,7 @@ export default function Projects() {
   }
 
   function cleanupKanbanPan() {
+    kanbanScrollRef.current?.style.removeProperty("scroll-snap-type");
     const previousBodyStyle = kanbanPanBodyStyleRef.current;
     if (previousBodyStyle) {
       document.body.style.cursor = previousBodyStyle.cursor;
@@ -3381,6 +3382,7 @@ export default function Projects() {
         return;
       }
       pan.panning = true;
+      scrollContainer.style.scrollSnapType = "none";
       startKanbanPanCursor();
     }
 
@@ -3579,14 +3581,14 @@ export default function Projects() {
       ) : viewMode === "kanban" ? (
         <div
           ref={kanbanScrollRef}
-          className="-mx-4 cursor-grab select-none overflow-x-auto px-4 pb-3 active:cursor-grabbing sm:mx-0 sm:px-0"
+          className="no-scrollbar -mx-4 cursor-grab select-none snap-x snap-mandatory scroll-px-4 overflow-x-auto overscroll-x-contain px-4 pb-3 active:cursor-grabbing sm:mx-0 sm:scroll-px-0 sm:px-0"
           onPointerDown={handleKanbanPanPointerDown}
           onPointerMove={handleKanbanPanPointerMove}
           onPointerUp={handleKanbanPanPointerEnd}
           onPointerCancel={handleKanbanPanPointerEnd}
           style={{ touchAction: "pan-x pan-y" }}
         >
-          <div className="grid snap-x snap-mandatory grid-flow-col auto-cols-[calc(100vw-2rem)] gap-5 sm:auto-cols-[minmax(360px,420px)]">
+          <div className="grid grid-flow-col auto-cols-[calc(100vw-2rem)] gap-5 sm:auto-cols-[minmax(360px,420px)]">
           {statusOptions.map((status) => {
             const columnProjects = groupedProjects[status.value] || [];
             const columnTotal = columnProjects.reduce((sum, project) => {
@@ -3597,7 +3599,7 @@ export default function Projects() {
               <div
                 key={status.value}
                 data-status-column={status.value}
-                className={`flex min-h-[calc(100dvh-235px)] snap-start flex-col overflow-hidden rounded-[28px] border border-slate-200/90 bg-white shadow-[0_14px_36px_rgba(15,23,42,0.05)] transition ${
+                className={`flex min-h-[calc(100dvh-235px)] snap-start [scroll-snap-stop:always] flex-col overflow-hidden rounded-[28px] border border-slate-200/90 bg-white shadow-[0_14px_36px_rgba(15,23,42,0.05)] transition ${
                   dragTargetStatus === status.value ? "scale-[1.01] ring-2 ring-blue-400" : touchDragProjectId ? "ring-2 ring-blue-100" : ""
                 }`}
               >

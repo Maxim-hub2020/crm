@@ -78,14 +78,15 @@
     .crm-modal-bottom-sheet-overlay {
       padding-top: max(1rem, env(safe-area-inset-top, 0px));
       padding-right: 0;
-      padding-bottom: 0;
+      padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
       padding-left: 0;
       overflow: hidden;
+      align-items: flex-start;
     }
 
     .crm-modal-bottom-sheet {
-      max-height: calc(var(--app-height, 100dvh) - max(1rem, env(safe-area-inset-top, 0px)));
-      border-radius: 32px 32px 0 0;
+      max-height: calc(var(--app-height, 100dvh) - max(1rem, env(safe-area-inset-top, 0px)) - max(1rem, env(safe-area-inset-bottom, 0px)));
+      border-radius: 32px;
       animation: crm-bottom-sheet-enter 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
       backface-visibility: hidden;
       will-change: transform;

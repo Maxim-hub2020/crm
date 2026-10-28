@@ -25,7 +25,7 @@ function closestFieldLabel(input, explicitLabel, placeholder) {
 function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueChange, onClose }) {
   const fieldRef = useRef(null);
   const closeTimerRef = useRef(null);
-  const revealTimerRef = useRef(null);
+  const viewportRef = useRef(null);
   const blurTimerRef = useRef(null);
   const dragRef = useRef({ pointerId: null, startY: 0, startedAt: 0 });
   const [entered, setEntered] = useState(false);
@@ -38,23 +38,30 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
     document.body.style.overflow = "hidden";
     setDragY(0);
     setDragging(false);
-    // iOS only opens the software keyboard when focus happens during the
-    // original tap. The sheet is mounted synchronously by begin().
-    fieldRef.current?.focus({ preventScroll: true });
-    const reveal = () => {
-      window.clearTimeout(revealTimerRef.current);
-      revealTimerRef.current = window.setTimeout(() => {
-        window.requestAnimationFrame(() => setEntered(true));
-      }, 60);
-    };
     const viewport = window.visualViewport;
-    viewport?.addEventListener("resize", reveal);
-    revealTimerRef.current = window.setTimeout(() => {
-      window.requestAnimationFrame(() => setEntered(true));
-    }, 120);
+    let viewportFrame = 0;
+    const updateViewport = () => {
+      const container = viewportRef.current;
+      if (!container) return;
+      container.style.height = `${viewport?.height || window.innerHeight}px`;
+      container.style.top = `${viewport?.offsetTop || 0}px`;
+    };
+    const scheduleViewport = () => {
+      window.cancelAnimationFrame(viewportFrame);
+      viewportFrame = window.requestAnimationFrame(updateViewport);
+    };
+    updateViewport();
+    viewport?.addEventListener("resize", scheduleViewport);
+    viewport?.addEventListener("scroll", scheduleViewport);
+    // Keep focus in the original tap, but animate only once instead of
+    // restarting the entrance after every keyboard viewport resize.
+    fieldRef.current?.focus({ preventScroll: true });
+    const enterFrame = window.requestAnimationFrame(() => setEntered(true));
     return () => {
-      viewport?.removeEventListener("resize", reveal);
-      window.clearTimeout(revealTimerRef.current);
+      viewport?.removeEventListener("resize", scheduleViewport);
+      viewport?.removeEventListener("scroll", scheduleViewport);
+      window.cancelAnimationFrame(viewportFrame);
+      window.cancelAnimationFrame(enterFrame);
       window.clearTimeout(closeTimerRef.current);
       window.clearTimeout(blurTimerRef.current);
       document.body.style.overflow = previousOverflow;
@@ -128,7 +135,7 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[90]" role="presentation">
+    <div ref={viewportRef} data-mobile-field-sheet="true" className="fixed inset-x-0 top-0 z-[90]" role="presentation">
       <button
         type="button"
         aria-label="Закрыть ввод"
@@ -137,7 +144,7 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
         onClick={close}
       />
       <section
-        className="fixed inset-x-0 bottom-0 z-10 w-full rounded-t-[34px] bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-24px_70px_rgba(15,23,42,0.24)] will-change-transform"
+        className="absolute inset-x-0 bottom-0 z-10 max-h-full w-full overflow-y-auto overscroll-contain rounded-t-[34px] bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-24px_70px_rgba(15,23,42,0.24)] will-change-transform"
         style={{
           transform: entered ? `translate3d(0, ${dragY}px, 0)` : "translate3d(0, 100%, 0)",
           transition: dragging ? "none" : "transform 280ms cubic-bezier(0.22, 1, 0.36, 1)",

@@ -13,6 +13,7 @@ function isFormControl(element) {
 }
 
 function setAppHeight(force = false) {
+  if (document.querySelector("[data-mobile-field-sheet]")) return;
   const widthChanged = Math.abs(window.innerWidth - viewportWidth) > 2;
   if (!force && !widthChanged && isFormControl(document.activeElement)) return;
   viewportWidth = window.innerWidth;
@@ -41,8 +42,11 @@ document.addEventListener("focusout", () => {
 let revealFocusedControlTimer;
 document.addEventListener("focusin", (event) => {
   const control = event.target;
-  if (!(control instanceof HTMLElement) || !control.matches("input, textarea, [contenteditable='true']") || window.innerWidth > 639) return;
   window.clearTimeout(revealFocusedControlTimer);
+  // The sheet tracks the visual viewport itself; scrolling its input also
+  // scrolls the underlying page in WKWebView while the keyboard animates.
+  if (control instanceof Element && control.closest("[data-mobile-field-sheet]")) return;
+  if (!(control instanceof HTMLElement) || !control.matches("input, textarea, [contenteditable='true']") || window.innerWidth > 639) return;
   revealFocusedControlTimer = window.setTimeout(() => {
     if (document.activeElement !== control) return;
     const viewport = window.visualViewport;

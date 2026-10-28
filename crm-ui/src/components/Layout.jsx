@@ -337,7 +337,7 @@ export default function Layout({ children }) {
 
         </header>
 
-        <main className={`no-scrollbar relative min-h-0 flex-1 overflow-auto ${location.pathname === "/calculator" ? "p-0" : "p-4 sm:p-6"}`}>{children}</main>
+        <main className={`no-scrollbar relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto ${location.pathname === "/calculator" ? "p-0" : "p-4 sm:p-6"}`}>{children}</main>
       </div>
 
       <Modal open={Boolean(visitProject)} title="Карточка выезда" onClose={closeVisitCard} widthClassName="max-w-lg">
