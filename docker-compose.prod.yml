@@ -50,6 +50,12 @@ services:
     volumes:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
+      - type: bind
+        source: /opt/ceh-production-skills/production-technologist
+        target: /app/crm_app/mcp_skills/production-technologist
+        read_only: true
+        bind:
+          create_host_path: false
     expose:
       - "8000"
     healthcheck:
