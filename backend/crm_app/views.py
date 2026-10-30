@@ -631,8 +631,9 @@ def calculator_quotes_view(request):
                 record.lead_deleted = False
                 restoring_legacy_archive = True
             current_updated_at = _calculator_quote_updated_at(record.payload) or record.updated_at
+            if not created and not restoring_legacy_archive and payload == record.payload:
+                continue
             if not restoring_legacy_archive and not created and (not incoming_updated_at or incoming_updated_at < current_updated_at):
-                sync_quote_lead(record)
                 continue
             record.number = str(payload.get("number") or "")[:32]
             record.payload = payload

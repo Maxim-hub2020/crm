@@ -57,6 +57,14 @@ class CalculatorQuoteProjectTests(APITestCase):
         self.assertEqual(project.pk, project_id)
         self.assertEqual(project.total_amount, Decimal("75500"))
 
+    def test_unchanged_quote_sync_preserves_project_amount(self):
+        self.sync()
+        project = Project.objects.get()
+        Project.objects.filter(pk=project.pk).update(total_amount=Decimal("90000"))
+        self.sync()
+        project.refresh_from_db()
+        self.assertEqual(project.total_amount, Decimal("90000"))
+
     def test_project_exposes_direct_link_to_linked_quote(self):
         self.sync()
         project = Project.objects.get()

@@ -4408,7 +4408,11 @@ export default function Projects() {
                         type="button"
                         variant="secondary"
                         className="justify-center px-3"
-                        onClick={() => window.open(activeProject.calculator_quote_info.url, "_blank", "noopener,noreferrer")}
+                        onClick={() => {
+                          const quoteUrl = new URL(activeProject.calculator_quote_info.url, window.location.origin);
+                          const quoteId = quoteUrl.searchParams.get("quote") || activeProject.calculator_quote_info.quote_id;
+                          if (quoteId) navigate(`/calculator?quote=${encodeURIComponent(quoteId)}`);
+                        }}
                         title="Открыть связанное коммерческое предложение в калькуляторе"
                       >
                         <Link size={16} />
