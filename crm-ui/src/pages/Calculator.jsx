@@ -12,7 +12,7 @@ export default function Calculator() {
   const [loaded, setLoaded] = useState(false);
   const calculatorUrl = useMemo(() => {
     const crmParams = new URLSearchParams(location.search);
-    const calculatorParams = new URLSearchParams({ embedded: "crm" });
+    const calculatorParams = new URLSearchParams({ embedded: "crm", ui: "compact-20261102" });
     const quoteId = crmParams.get("quote")?.trim();
     if (quoteId) calculatorParams.set("quote", quoteId);
     return `${CALCULATOR_ORIGIN}/?${calculatorParams.toString()}`;
