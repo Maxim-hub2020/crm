@@ -13,7 +13,7 @@ function isFormControl(element) {
 }
 
 function setAppHeight(force = false) {
-  if (document.querySelector("[data-mobile-field-sheet]")) return;
+  if (document.querySelector("[data-mobile-field-sheet]") || document.documentElement.hasAttribute("data-calculator-frame-input")) return;
   const widthChanged = Math.abs(window.innerWidth - viewportWidth) > 2;
   if (!force && !widthChanged && isFormControl(document.activeElement)) return;
   viewportWidth = window.innerWidth;

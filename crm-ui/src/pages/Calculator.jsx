@@ -34,13 +34,37 @@ export default function Calculator() {
   }
 
   useEffect(() => {
+    const viewport = window.visualViewport;
+    const sendViewport = () => {
+      const frame = iframeRef.current;
+      if (!frame) return;
+      const rect = frame.getBoundingClientRect();
+      const top = Math.max(rect.top, viewport?.offsetTop || 0);
+      const bottom = Math.min(rect.bottom, (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight));
+      frame.contentWindow?.postMessage({ type: "cehcrm:calculator-viewport", top: Math.max(0, top - rect.top), height: Math.max(0, bottom - top) }, CALCULATOR_ORIGIN);
+    };
+    let inputOpen = false;
     function handleCalculatorMessage(event) {
       if (event.origin !== CALCULATOR_ORIGIN || event.source !== iframeRef.current?.contentWindow) return;
       if (event.data?.type === "cehcrm:calculator-ready") sendCrmSession();
+      if (event.data?.type === "cehcrm:calculator-input") {
+        inputOpen = event.data.open === true;
+        if (inputOpen) document.documentElement.setAttribute("data-calculator-frame-input", "true");
+        else document.documentElement.removeAttribute("data-calculator-frame-input");
+        sendViewport();
+      }
+      if (event.data?.type === "cehcrm:calculator-viewport-request") sendViewport();
     }
 
     window.addEventListener("message", handleCalculatorMessage);
-    return () => window.removeEventListener("message", handleCalculatorMessage);
+    viewport?.addEventListener("resize", sendViewport);
+    viewport?.addEventListener("scroll", sendViewport);
+    return () => {
+      window.removeEventListener("message", handleCalculatorMessage);
+      viewport?.removeEventListener("resize", sendViewport);
+      viewport?.removeEventListener("scroll", sendViewport);
+      if (inputOpen) document.documentElement.removeAttribute("data-calculator-frame-input");
+    };
   }, []);
 
   return (
