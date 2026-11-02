@@ -1261,7 +1261,7 @@ export default function Finances() {
         </>
       ) : null}
 
-      <Modal open={paymentModalOpen} title={editingPayment ? "Редактировать операцию" : "Добавить операцию"} onClose={closePaymentModal} widthClassName="max-w-2xl" mobileSheet={!editingPayment}>
+      <Modal open={paymentModalOpen} title={editingPayment ? "Редактировать операцию" : "Добавить операцию"} onClose={closePaymentModal} widthClassName="max-w-2xl" overlayClassName="crm-finance-modal-overlay bg-gray-900/40 backdrop-blur-md" mobileSheet={!editingPayment}>
         <form className="space-y-4" onSubmit={submitPaymentForm}>
           <div className="grid gap-4 md:grid-cols-2">
             {paymentForm.category_kind !== "account_transfer" && !paymentForm.category_kind.startsWith("balance_adjustment_") ? (

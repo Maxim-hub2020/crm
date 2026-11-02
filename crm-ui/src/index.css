@@ -54,6 +54,17 @@
 }
 
 @layer components {
+  html[data-field-sheet-open] #root {
+    height: var(--app-height, 100vh);
+    min-height: var(--app-height, 100vh);
+  }
+
+  html[data-field-sheet-open] .crm-modal-overlay {
+    height: var(--app-height, 100vh);
+    bottom: auto;
+    overflow: hidden;
+  }
+
   .crm-modal-overlay {
     padding-top: max(5.75rem, calc(env(safe-area-inset-top, 0px) + 3.75rem));
     padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.75rem);
@@ -64,6 +75,11 @@
   }
 
   @media (max-width: 639px) {
+    .crm-modal-overlay.crm-finance-modal-overlay {
+      align-items: flex-start;
+      padding-top: max(0.5rem, env(safe-area-inset-top, 0px));
+    }
+
     @keyframes crm-bottom-sheet-enter {
       from {
         opacity: 0.85;

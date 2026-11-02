@@ -26,7 +26,6 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
   const fieldRef = useRef(null);
   const closeTimerRef = useRef(null);
   const viewportRef = useRef(null);
-  const blurTimerRef = useRef(null);
   const dragRef = useRef({ pointerId: null, startY: 0, startedAt: 0 });
   const [entered, setEntered] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -35,6 +34,9 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
   useLayoutEffect(() => {
     if (!open) return undefined;
     const previousOverflow = document.body.style.overflow;
+    const root = document.documentElement;
+    const previousLock = root.getAttribute("data-field-sheet-open");
+    root.setAttribute("data-field-sheet-open", "true");
     document.body.style.overflow = "hidden";
     setDragY(0);
     setDragging(false);
@@ -63,8 +65,9 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
       window.cancelAnimationFrame(viewportFrame);
       window.cancelAnimationFrame(enterFrame);
       window.clearTimeout(closeTimerRef.current);
-      window.clearTimeout(blurTimerRef.current);
       document.body.style.overflow = previousOverflow;
+      if (previousLock === null) root.removeAttribute("data-field-sheet-open");
+      else root.setAttribute("data-field-sheet-open", previousLock);
     };
   }, [open]);
 
@@ -74,12 +77,12 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
     if (closeTimerRef.current) return;
     setDragging(false);
     setEntered(false);
-    blurTimerRef.current = window.setTimeout(() => fieldRef.current?.blur(), 90);
+    fieldRef.current?.blur();
     closeTimerRef.current = window.setTimeout(() => {
       closeTimerRef.current = null;
       setDragY(0);
       onClose();
-    }, 280);
+    }, 360);
   };
 
   const startDrag = (event) => {
@@ -139,15 +142,19 @@ function MobileFieldSheet({ open, title, multiline, value, inputProps, onValueCh
       <button
         type="button"
         aria-label="Закрыть ввод"
-        className="absolute inset-0 cursor-default bg-slate-950/45 backdrop-blur-sm transition-opacity duration-200"
-        style={{ opacity: entered ? 1 : 0 }}
+        className="fixed inset-x-0 top-0 cursor-default bg-slate-950/45 transition-opacity duration-300"
+        aria-hidden={!entered}
+        style={{ opacity: entered ? 1 : 0, height: "var(--app-height, 100vh)" }}
         onClick={close}
       />
       <section
         className="absolute inset-x-0 bottom-0 z-10 max-h-full w-full overflow-y-auto overscroll-contain rounded-t-[34px] bg-white px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-24px_70px_rgba(15,23,42,0.24)] will-change-transform"
         style={{
-          transform: entered ? `translate3d(0, ${dragY}px, 0)` : "translate3d(0, 100%, 0)",
-          transition: dragging ? "none" : "transform 280ms cubic-bezier(0.22, 1, 0.36, 1)",
+          // The keyboard moves the viewport; a second entrance translation
+          // would make the input panel slide independently above it.
+          transform: `translate3d(0, ${dragY}px, 0)`,
+          opacity: entered ? 1 : 0,
+          transition: dragging ? "none" : "transform 300ms cubic-bezier(0.22, 1, 0.36, 1), opacity 250ms ease",
           backfaceVisibility: "hidden",
         }}
         role="dialog"

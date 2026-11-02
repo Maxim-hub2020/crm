@@ -27,6 +27,7 @@ window.addEventListener("orientationchange", () => window.setTimeout(() => setAp
 // WKWebView keeps the iOS keyboard open when the user taps outside a field.
 // Blurring here also prevents the whole modal from jumping while focus changes.
 document.addEventListener("pointerdown", (event) => {
+  if (event.target instanceof Element && event.target.closest("[data-mobile-field-sheet]")) return;
   const active = document.activeElement;
   if (!isFormControl(active) || active === event.target || active?.contains?.(event.target)) return;
   if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true']")) return;
