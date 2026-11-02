@@ -84,7 +84,7 @@ export default function Calculator() {
         className="h-full min-h-[520px] w-full border-0 bg-white"
         src={calculatorUrl}
         title="Калькулятор изделий AMALGAMA"
-        allow="clipboard-read; clipboard-write"
+        allow="clipboard-read; clipboard-write; web-share"
         referrerPolicy="strict-origin-when-cross-origin"
         onLoad={() => {
           setLoaded(true);
