@@ -13,6 +13,7 @@ from django.utils.text import slugify
 
 from .bonuses import apply_project_bonus_promo_code, ensure_project_bonus_accrual, normalize_bonus_promo_code, promo_code_for_phone
 from .dadata import suggest_dadata_address
+from .legal_details import LEGAL_FIELDS, NUMERIC_LEGAL_FIELDS
 from .models import (
     Account,
     AuditLog,
@@ -97,6 +98,8 @@ class ClientSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "contract_full_name",
+            "is_legal_entity",
+            "legal_details",
             "phone",
             "max_chat_url",
             "email",
@@ -125,6 +128,27 @@ class ClientSerializer(serializers.ModelSerializer):
             "floor": {"required": False, "allow_blank": True},
             "works_with_contract": {"required": False},
         }
+
+    def validate_legal_details(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Передайте реквизиты как объект.")
+        result = {}
+        for key, text in value.items():
+            if key not in LEGAL_FIELDS or not isinstance(text, str):
+                raise serializers.ValidationError({key: "Неизвестное поле или значение не является строкой."})
+            label, length = LEGAL_FIELDS[key]
+            text = " ".join(text.split())
+            if len(text) > length:
+                raise serializers.ValidationError({key: f"{label}: максимум {length} символов."})
+            if text and key in NUMERIC_LEGAL_FIELDS and (len(text) != length or not text.isascii() or not text.isdecimal()):
+                raise serializers.ValidationError({key: f"{label}: укажите {length} цифр."})
+            result[key] = text
+        return result
+
+    def update(self, instance, validated_data):
+        if "legal_details" in validated_data:
+            validated_data["legal_details"] = {**instance.legal_details, **validated_data["legal_details"]}
+        return super().update(instance, validated_data)
 
     def get_project_count(self, obj):
         return obj.projects.count()

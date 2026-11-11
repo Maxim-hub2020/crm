@@ -1330,7 +1330,19 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 {"detail": "Сначала прикрепите к проекту карточку клиента."},
                 status=drf_status.HTTP_400_BAD_REQUEST,
             )
-        if not project.client.contract_full_name.strip():
+        if project.client.is_legal_entity:
+            from .legal_details import LEGAL_FIELDS, REQUIRED_LEGAL_FIELDS
+
+            missing = [key for key in REQUIRED_LEGAL_FIELDS if not project.client.legal_details.get(key)]
+            if missing:
+                return Response(
+                    {
+                        "detail": "Заполните реквизиты юрлица: " + ", ".join(LEGAL_FIELDS[key][0] for key in missing) + ".",
+                        "missing_fields": [f"legal_details.{key}" for key in missing],
+                    },
+                    status=drf_status.HTTP_400_BAD_REQUEST,
+                )
+        elif not project.client.contract_full_name.strip():
             return Response(
                 {"detail": "Укажите ФИО клиента для договора.", "missing_fields": ["contract_full_name"]},
                 status=drf_status.HTTP_400_BAD_REQUEST,
@@ -1380,6 +1392,8 @@ def render_pdf_template(template, project):
         standard_contract = {
             "PROJECT_NUMBER", "CLIENT_FULL_NAME_5", "QUOTE_ITEMS", "DEAL_VALUE",
         }.issubset(source_fields) and len(writer.pages) == 4
+        if values["_IS_LEGAL_ENTITY"] and not standard_contract and "CLIENT_LEGAL_REQUISITES" not in source_fields:
+            raise ValueError("Для юрлица нужен шаблон с полем CLIENT_LEGAL_REQUISITES для реквизитов заказчика.")
         for page_index, page in enumerate(writer.pages):
             if standard_contract and page_index in {0, 2, 3}:
                 overlay = _build_standard_contract_overlay(
@@ -1504,7 +1518,7 @@ def _fit_contract_clauses(clauses, width, pdfmetrics, font_name, top, minimum_ba
     return size, size, size - 0.5
 
 
-def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top, include_signatures=True):
+def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top, include_signatures=True, full_requisites=False):
     regular = font_names["regular"]
     bold = font_names["bold"]
     left_x = 62
@@ -1519,6 +1533,13 @@ def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top, include_sig
         f"Адрес: {values.get('CLIENT_ADDRESS') or ''}",
         f"Телефон: {values.get('CLIENT_PHONE') or ''}",
     ]
+    legal = values["_IS_LEGAL_ENTITY"]
+    if legal:
+        client_lines = (
+            values["CLIENT_LEGAL_REQUISITES"].splitlines()
+            if full_requisites
+            else [values["CLIENT_NAME"], f"ИНН: {values['CLIENT_LEGAL_INN']}"]
+        )
     contractor_lines = [
         "ИП ЛАПУНОВ МАКСИМ ВЛАДИМИРОВИЧ",
         "ИНН 616805532322",
@@ -1528,17 +1549,28 @@ def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top, include_sig
         "К/с 30101810145250000974",
         "Телефон 89298191684",
     ]
-    pdf.setFont(regular, 10.5)
     left_y = top - 23
-    for line in client_lines:
-        left_y = _draw_pdf_paragraph(pdf, line, left_x, left_y + 10.5, 235, pdfmetrics, regular, 10.5, 12.8)
+    if legal and full_requisites:
+        lines, size = _fit_pdf_text("\n".join(client_lines), 235, left_y - 451, pdfmetrics, regular, 10.5, multiline=True)
+        if size < 8 or any(pdfmetrics.stringWidth(line, regular, size) > 235 for line in lines):
+            raise ValueError("Реквизиты юрлица не помещаются в шаблон. Сократите длинные значения.")
+        pdf.setFont(regular, size)
+        for line in lines:
+            pdf.drawString(left_x, left_y, line)
+            left_y -= size * 1.18
+    else:
+        for line in client_lines:
+            left_y = _draw_pdf_paragraph(pdf, line, left_x, left_y + 10.5, 235, pdfmetrics, regular, 10.5, 12.8)
+    pdf.setFont(regular, 10.5)
     right_y = top - 13
     for line in contractor_lines:
         pdf.drawString(right_x, right_y, line)
         right_y -= 14
 
     if include_signatures:
-        signature_y = min(left_y, right_y) - 58
+        signature_y = min(left_y, right_y) - (28 if legal else 58)
+        if legal and full_requisites and signature_y < 423:
+            raise ValueError("Реквизиты юрлица не помещаются в шаблон. Сократите длинные значения.")
         pdf.line(left_x, signature_y, 297, signature_y)
         pdf.line(right_x, signature_y, 533, signature_y)
         pdf.setFont(regular, 8)
@@ -1546,7 +1578,17 @@ def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top, include_sig
         pdf.drawCentredString(430, signature_y - 10, "(подпись)")
         pdf.setFont(regular, 10.5)
         client_name = values.get("CLIENT_FULL_NAME") or values.get("CLIENT_SHORT_NAME") or ""
-        pdf.drawString(left_x, signature_y + 4, client_name)
+        if legal:
+            client_name = values["CLIENT_LEGAL_SIGNATORY"]
+            lines, size = _fit_pdf_text(client_name, 235, 24, pdfmetrics, regular, 10.5, multiline=True)
+            if size < 8 or any(pdfmetrics.stringWidth(line, regular, size) > 235 for line in lines):
+                raise ValueError("ФИО подписанта не помещается в шаблон.")
+            pdf.setFont(regular, size)
+            for index, line in enumerate(reversed(lines)):
+                pdf.drawString(left_x, signature_y + 4 + index * size * 1.18, line)
+            pdf.setFont(regular, 10.5)
+        else:
+            pdf.drawString(left_x, signature_y + 4, client_name)
         pdf.drawRightString(533, signature_y + 4, "М.В. Лапунов")
 
 
@@ -1568,8 +1610,9 @@ def _draw_contract_first_page(pdf, values, font_names, pdfmetrics, page_width, p
     pdf.drawString(404, 706, str(values.get("DOCUMENT_DATE") or values.get("DOC_DATE") or ""))
 
     full_name = values.get("CLIENT_FULL_NAME") or values.get("CLIENT_SHORT_NAME") or ""
+    customer = f'Заказчик: {full_name}' if values["_IS_LEGAL_ENTITY"] else f'{full_name}, именуемый в дальнейшем "Заказчик"'
     introduction = (
-        f'{full_name}, именуемый в дальнейшем "Заказчик", с одной стороны, и '
+        f'{customer}, с одной стороны, и '
         "ИП ЛАПУНОВ МАКСИМ ВЛАДИМИРОВИЧ, ИНН 616805532322, ОГРНИП 325619600255723, "
         "юридический адрес: 344090, РОССИЯ, РОСТОВСКАЯ ОБЛ, Г РОСТОВ-НА-ДОНУ, "
         "УЛ МИЛЬЧАКОВА, Д 3, КВ 78, именуемый в дальнейшем \"Подрядчик\", с другой "
@@ -1645,7 +1688,7 @@ def _draw_contract_first_page(pdf, values, font_names, pdfmetrics, page_width, p
 def _draw_contract_requisites_page(pdf, values, font_names, pdfmetrics, page_width):
     pdf.setFillColorRGB(1, 1, 1)
     pdf.rect(48, 410, page_width - 83, 230, stroke=0, fill=1)
-    _draw_contract_parties(pdf, values, font_names, pdfmetrics, 625)
+    _draw_contract_parties(pdf, values, font_names, pdfmetrics, 625, full_requisites=True)
 
 
 def _draw_contract_specification_page(pdf, values, font_names, pdfmetrics, page_width, page_height):
@@ -1784,6 +1827,11 @@ def _build_pdf_field_overlay(page, values, canvas_module, pdfmetrics, font_name)
         lines, font_size = _fit_pdf_text(
             value, text_width, text_height, pdfmetrics, font_name, preferred_size, multiline=multiline,
         )
+        if field_name == "CLIENT_LEGAL_REQUISITES" and value and (
+            len(lines) * font_size * 1.18 > text_height
+            or any(pdfmetrics.stringWidth(line, font_name, font_size) > text_width for line in lines)
+        ):
+            raise ValueError("Поле CLIENT_LEGAL_REQUISITES в шаблоне слишком маленькое для реквизитов.")
 
         pdf.setFillColorRGB(1, 1, 1)
         # Keep the mask inside the widget so table borders from the template
@@ -1886,7 +1934,11 @@ def build_project_document_values(project):
     if not item_lines:
         item_lines.append(f"1. {project.title or 'Изделие'} – 1 шт. – {_document_money(project.total_amount)}")
 
-    full_name = (client.contract_full_name if client else "").strip()
+    from .legal_details import LEGAL_FIELDS
+
+    is_legal_entity = bool(client and client.is_legal_entity)
+    legal_details = client.legal_details if is_legal_entity else {}
+    full_name = (legal_details.get("name", "") if is_legal_entity else client.contract_full_name if client else "").strip()
     client_name = (client.name if client else project.client_name) or ""
     quote_number = str(getattr(quote, "number", "") or "")
     quote_items = "\n".join(item_lines)
@@ -1925,14 +1977,21 @@ def build_project_document_values(project):
             "amount": _document_money(document_total),
             "amount_value": document_total,
         })
+    if is_legal_entity:
+        client_address = legal_details.get("address", "")
     values = {
+        "_IS_LEGAL_ENTITY": is_legal_entity,
+        "CLIENT_LEGAL_REQUISITES": "\n".join(
+            f"{label}: {legal_details[key]}" for key, (label, _) in LEGAL_FIELDS.items() if legal_details.get(key)
+        ),
+        **{f"CLIENT_LEGAL_{key.upper()}": legal_details.get(key, "") for key in LEGAL_FIELDS},
         "CLIENT_NAME": full_name or client_name,
         "CLIENT_FULL_NAME": full_name,
         "CLIENT_SHORT_NAME": client_name,
         "CLIENT_PHONE": (client.phone if client else project.client_phone) or "",
         "CLIENT_EMAIL": (client.email if client else project.client_email) or "",
         "CLIENT_ADDRESS": client_address,
-        "CLIENT_ADDRESS_BASE": (client.address if client else "") or "",
+        "CLIENT_ADDRESS_BASE": client_address if is_legal_entity else (client.address if client else "") or "",
         "PROJECT_ADDRESS": project_address,
         "OBJECT_ADDRESS": project_address,
         "PROJECT_ADDRESS_BASE": project.object_address or "",

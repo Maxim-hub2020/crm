@@ -103,6 +103,8 @@ class Client(models.Model):
     )
     name = models.CharField(max_length=200)
     contract_full_name = models.CharField(max_length=300, blank=True, default="")
+    is_legal_entity = models.BooleanField(default=False)
+    legal_details = models.JSONField(default=dict, blank=True)
     phone = models.CharField(max_length=50, blank=True, default="", db_index=True)
     max_chat_url = models.URLField(max_length=500, blank=True, default="")
     email = models.EmailField(blank=True, null=True)

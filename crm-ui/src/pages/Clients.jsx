@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import ClientContractFields from "../components/ClientContractFields.jsx";
 import { ChevronRight, Edit3, Gift, Mail, MapPin, Phone, Ticket, Trash2, Wallet } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -55,6 +56,8 @@ function createClientEditForm(client = {}) {
   return {
     name: client.name || "",
     contract_full_name: client.contract_full_name || "",
+    is_legal_entity: Boolean(client.is_legal_entity),
+    legal_details: client.legal_details || {},
     phone: client.phone || "",
     max_chat_url: client.max_chat_url || "",
     email: client.email || "",
@@ -282,6 +285,8 @@ export default function Clients() {
           id: client.id,
           name: client.name,
           contract_full_name: client.contract_full_name || "",
+          is_legal_entity: Boolean(client.is_legal_entity),
+          legal_details: client.legal_details || {},
           phone: client.phone,
           max_chat_url: client.max_chat_url || "",
           email: client.email,
@@ -355,6 +360,8 @@ export default function Clients() {
       const updated = await updateClient(selectedClient.id, {
         name: editForm.name.trim(),
         contract_full_name: editForm.contract_full_name.trim(),
+        is_legal_entity: editForm.is_legal_entity,
+        legal_details: editForm.legal_details,
         phone: normalizeOptionalClientPhone(editForm.phone),
         max_chat_url: editForm.max_chat_url.trim(),
         email: editForm.email.trim() || null,
@@ -423,6 +430,8 @@ export default function Clients() {
       const created = await createClient({
         name: createForm.name.trim(),
         contract_full_name: createForm.contract_full_name.trim(),
+        is_legal_entity: createForm.is_legal_entity,
+        legal_details: createForm.legal_details,
         phone: normalizeOptionalClientPhone(createForm.phone),
         max_chat_url: createForm.max_chat_url.trim(),
         email: createForm.email.trim() || null,
@@ -528,7 +537,7 @@ export default function Clients() {
                     <InfoRow icon={Mail} label="Email" value={selectedClient.email} href={selectedClient.email ? `mailto:${selectedClient.email}` : ""} />
                     {selectedClient.worksWithContract ? (
                       <div className="md:col-span-2">
-                        <InfoRow icon={Edit3} label="ФИО для договора" value={selectedClient.contract_full_name} />
+                        <InfoRow icon={Edit3} label={selectedClient.is_legal_entity ? "Организация" : "ФИО для договора"} value={selectedClient.is_legal_entity ? selectedClient.legal_details?.name : selectedClient.contract_full_name} />
                       </div>
                     ) : null}
                     <InfoRow icon={Gift} label="Бонусный счёт" value={`${formatMoney(selectedClient.bonusBalance)} ₽`} />
@@ -578,15 +587,7 @@ export default function Clients() {
                     Работает по договору
                   </label>
                   {editForm.works_with_contract ? (
-                    <div className="space-y-2">
-                      <Label>ФИО для договора и акта</Label>
-                      <Input
-                        value={editForm.contract_full_name}
-                        onChange={(event) => setEditForm((prev) => ({ ...prev, contract_full_name: event.target.value }))}
-                        placeholder="Иванов Иван Иванович"
-                        autoComplete="name"
-                      />
-                    </div>
+                    <ClientContractFields form={editForm} setForm={setEditForm} />
                   ) : null}
                   <div className="flex justify-end gap-3">
                     <Button type="button" variant="secondary" disabled={savingClient} onClick={() => setClientEditMode(false)}>
@@ -670,15 +671,7 @@ export default function Clients() {
             Работает по договору
           </label>
           {createForm.works_with_contract ? (
-            <div className="space-y-2">
-              <Label>ФИО для договора и акта</Label>
-              <Input
-                value={createForm.contract_full_name}
-                onChange={(event) => setCreateForm((prev) => ({ ...prev, contract_full_name: event.target.value }))}
-                placeholder="Можно заполнить позже"
-                autoComplete="name"
-              />
-            </div>
+            <ClientContractFields form={createForm} setForm={setCreateForm} />
           ) : null}
 
           {error && <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}

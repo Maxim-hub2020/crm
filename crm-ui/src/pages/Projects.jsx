@@ -1,5 +1,6 @@
 import { TaskLocation, TaskLocationFields } from "../components/TaskLocation.jsx";
 import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import ClientContractFields from "../components/ClientContractFields.jsx";
 import {
   AlertTriangle,
   Calendar,
@@ -164,6 +165,8 @@ function createClientEditForm(client = {}) {
   return {
     name: client.name || client.client_name || "",
     contract_full_name: client.contract_full_name || "",
+    is_legal_entity: Boolean(client.is_legal_entity),
+    legal_details: client.legal_details || {},
     phone: client.phone || client.client_phone || "",
     max_chat_url: client.max_chat_url || "",
     email: client.email || client.client_email || "",
@@ -2441,6 +2444,8 @@ export default function Projects() {
       const updated = await updateClient(activeProjectClient.id, {
         name: projectClientForm.name.trim(),
         contract_full_name: projectClientForm.contract_full_name.trim(),
+        is_legal_entity: projectClientForm.is_legal_entity,
+        legal_details: projectClientForm.legal_details,
         phone: normalizeOptionalClientPhone(projectClientForm.phone),
         max_chat_url: projectClientForm.max_chat_url.trim(),
         email: projectClientForm.email.trim() || null,
@@ -2962,7 +2967,7 @@ export default function Projects() {
       setDetailError("Сначала прикрепите к проекту карточку клиента.");
       return;
     }
-    if (!String(activeProjectClient.contract_full_name || "").trim()) {
+    if (!activeProjectClient.is_legal_entity && !String(activeProjectClient.contract_full_name || "").trim()) {
       const suggestedName = String(activeProjectClient.name || "").trim().split(/\s+/).length >= 2
         ? activeProjectClient.name
         : "";
@@ -5306,15 +5311,7 @@ export default function Projects() {
               />
             </div>
             {projectClientForm.works_with_contract ? (
-              <div className="space-y-2 sm:col-span-2">
-                <Label>ФИО для договора и акта</Label>
-                <Input
-                  value={projectClientForm.contract_full_name}
-                  onChange={(event) => setProjectClientForm((prev) => ({ ...prev, contract_full_name: event.target.value }))}
-                  placeholder="Иванов Иван Иванович"
-                  autoComplete="name"
-                />
-              </div>
+              <ClientContractFields form={projectClientForm} setForm={setProjectClientForm} />
             ) : null}
             <div className="space-y-2">
               <Label>Телефон</Label>

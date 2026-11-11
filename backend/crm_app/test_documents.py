@@ -47,6 +47,47 @@ class ProjectDocumentTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["missing_fields"], ["contract_full_name"])
 
+    def test_legal_entity_contract_uses_company_details_without_personal_full_name(self):
+        details = {
+            "name": "ООО «Тестовое стекло»",
+            "inn": "6168000001",
+            "kpp": "616801001",
+            "ogrn": "1266100000001",
+            "address": "г Ростов-на-Дону, ул Юридическая, д 1",
+            "signatory": "Петров Пётр Петрович",
+            "position": "Генеральный директор",
+            "authority": "Устав",
+            "bank": "АО «Тестовый банк»",
+            "bik": "044525974",
+            "account": "40702810000000000001",
+            "correspondent_account": "30101810000000000001",
+        }
+        client_url = f"/api/clients/{self.client_card.pk}/"
+        document_url = f"/api/projects/{self.project.pk}/documents/contract/"
+        response = self.client.patch(client_url, {"is_legal_entity": True, "legal_details": {"name": details["name"]}}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        response = self.client.get(document_url)
+        self.assertIn("legal_details.inn", response.data["missing_fields"])
+        self.assertNotIn("contract_full_name", response.data["missing_fields"])
+        response = self.client.patch(client_url, {"legal_details": {key: value for key, value in details.items() if key != "name"}}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["legal_details"], details)
+        response = self.client.patch(client_url, {"legal_details": {"inn": "123"}}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.project.refresh_from_db()
+        values = build_project_document_values(self.project)
+        self.assertEqual(values["CLIENT_NAME"], details["name"])
+        self.assertEqual(values["CLIENT_ADDRESS"], details["address"])
+        self.assertIn("ул Объектная", values["PROJECT_ADDRESS"])
+
+        template_path = Path(__file__).resolve().parents[2] / "output" / "pdf" / "Шаблон договора CRM.pdf"
+        with template_path.open("rb") as template_stream:
+            rendered = render_pdf_template(SimpleNamespace(file=File(template_stream)), self.project)
+        pages = PdfReader(BytesIO(rendered)).pages
+        self.assertIn(details["name"], pages[0].extract_text())
+        self.assertIn(details["account"], pages[2].extract_text())
+        self.assertIn(details["signatory"], pages[2].extract_text())
+
     def test_document_values_include_linked_quote_items(self):
         self.client_card.contract_full_name = "Иванов Иван Иванович"
         self.client_card.save(update_fields=["contract_full_name", "updated_at"])
