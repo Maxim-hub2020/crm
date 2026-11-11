@@ -99,51 +99,6 @@ def _quote_client(quote, name, phone):
     return client, normalized_phone
 
 
-def _sync_internal_quote_project(quote, payload, customer, name, phone, amount, configuration):
-    manager = _project_manager(quote)
-    status = _application_status(quote.workspace_id)
-    if manager is None or status is None:
-        return None
-    client, normalized_phone = _quote_client(quote, name, phone)
-    item_titles = [line["title"] for line in configuration["items"] if line.get("title")]
-    title = item_titles[0] if len(set(item_titles)) == 1 else f"КП №{quote.number or quote.quote_id[:8]}"
-    description = f"Создано из КП калькулятора №{quote.number or quote.quote_id}."
-    customer_note = str(customer.get("note") or "").strip()
-    if customer_note:
-        description += f"\n{customer_note}"
-    project = quote.project
-    created = project is None
-    if created:
-        project = Project(
-            workspace_id=quote.workspace_id,
-            manager=manager,
-            status=status.code,
-            description=description,
-        )
-    project.client = client
-    project.client_name = name or client.name
-    project.client_phone = normalized_phone or phone
-    project.title = title[:200]
-    project.total_amount = amount
-    project.categories = configuration["product"] if configuration["product"] in {"shower", "mirror"} else ""
-    project.save()
-    quote.project = project
-    quote.save(update_fields=["project", "updated_at"])
-    # Remove the temporary request created by the previous integration version.
-    CalculatorLead.objects.filter(quote=quote).delete()
-    if created:
-        apply_task_templates_for_project(project, actor=manager)
-        create_audit_log(
-            manager,
-            "project",
-            project.id,
-            "create",
-            after=snapshot_model(project, ["id", "title", "client_name", "client_phone", "total_amount", "status"]),
-            workspace=project.workspace,
-        )
-    return project
-
-
 def create_public_production_project(quote, lead):
     """Create a CRM project and a safe needs-input production draft.
 
@@ -281,10 +236,18 @@ def create_public_production_project(quote, lead):
 
 
 def sync_quote_lead(quote):
-    """Caller holds the quote row lock. Internal quotes become kanban projects."""
+    """Caller holds the quote row lock. Internal quotes never create projects."""
     if quote.lead_deleted:
         return None
     payload = _dict(quote.payload)
+    if not quote.quote_id.startswith("public-"):
+        if quote.project_id and not quote.project_sync_disabled:
+            amount, _ = quote_summary(payload)
+            if amount is not None:
+                Project.objects.filter(
+                    pk=quote.project_id, workspace_id=quote.workspace_id,
+                ).exclude(total_amount=amount).update(total_amount=amount, updated_at=quote.updated_at)
+        return None
     customer = _dict(payload.get("customer") if payload.get("customer") is not None else payload.get("form"))
     name = str(customer.get("clientName") or customer.get("name") or "").strip()[:200]
     phone = str(customer.get("clientPhone") or "").strip()[:50]
@@ -294,10 +257,6 @@ def sync_quote_lead(quote):
     if amount is None:
         return None
     configuration["customer_note"] = str(customer.get("note") or "")[:5000]
-    if not quote.quote_id.startswith("public-"):
-        if quote.project_sync_disabled:
-            return None
-        return _sync_internal_quote_project(quote, payload, customer, name, phone, amount, configuration)
     # Public-site requests predate this link. Attach them instead of duplicating them.
     lead = CalculatorLead.objects.filter(quote=quote).first()
     if lead is None and quote.quote_id.startswith("public-"):

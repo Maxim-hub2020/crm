@@ -1,9 +1,7 @@
 from copy import deepcopy
 from decimal import Decimal
-from io import StringIO
 from unittest.mock import patch
 
-from django.core.management import call_command
 from rest_framework.test import APITestCase
 
 from .models import CalculatorLead, CalculatorQuote, Client, Project, ProjectStatus, User, Workspace
@@ -31,43 +29,56 @@ class CalculatorQuoteProjectTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         return response
 
-    def test_saved_quote_creates_project_in_applications_and_client(self):
-        self.sync()
-        project = Project.objects.select_related("client").get()
-        quote = CalculatorQuote.objects.get()
-        self.assertEqual(quote.project, project)
-        self.assertEqual(project.status, "applications")
-        self.assertEqual(project.manager, self.user)
-        self.assertEqual(project.title, "Душевая")
-        self.assertEqual(project.total_amount, Decimal("81000"))
-        self.assertEqual(project.client_phone, "+7-914-070-70-07")
-        self.assertEqual(project.client.phone, "+7-914-070-70-07")
-        self.assertIn("КП калькулятора №1001", project.description)
+    def create_project(self):
+        return Project.objects.create(
+            workspace=self.workspace, manager=self.user, title="Проект после замера",
+            client_name="Андрей", status="applications", total_amount=100,
+        )
+
+    def link_quote(self, project):
+        response = self.client.post(
+            f"/api/projects/{project.pk}/calculator-quote/",
+            {"quote_id": self.quote["id"]}, format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        return response
+
+    def test_saved_quote_stays_in_archive_without_creating_project_or_client(self):
+        response = self.sync()
+        self.assertEqual(response.data["quotes"][0]["id"], self.quote["id"])
+        self.assertIsNone(CalculatorQuote.objects.get().project_id)
+        self.assertFalse(Project.objects.exists())
+        self.assertFalse(Client.objects.exists())
         self.assertFalse(CalculatorLead.objects.exists())
 
     def test_repeat_and_new_revision_update_same_project(self):
+        project = self.create_project()
         self.sync()
-        project_id = Project.objects.get().pk
+        self.link_quote(project)
         self.sync()
         updated = deepcopy(self.quote)
         updated.update(updatedAt="2026-09-02T10:00:00Z", manualTotal=75500)
         self.sync(updated)
         self.assertEqual(Project.objects.count(), 1)
-        project = Project.objects.get()
-        self.assertEqual(project.pk, project_id)
+        project.refresh_from_db()
         self.assertEqual(project.total_amount, Decimal("75500"))
+        self.assertEqual(project.title, "Проект после замера")
+        self.assertEqual(project.client_name, "Андрей")
+        self.assertIsNone(project.client_id)
 
     def test_unchanged_quote_sync_preserves_project_amount(self):
+        project = self.create_project()
         self.sync()
-        project = Project.objects.get()
+        self.link_quote(project)
         Project.objects.filter(pk=project.pk).update(total_amount=Decimal("90000"))
         self.sync()
         project.refresh_from_db()
         self.assertEqual(project.total_amount, Decimal("90000"))
 
     def test_project_exposes_direct_link_to_linked_quote(self):
+        project = self.create_project()
         self.sync()
-        project = Project.objects.get()
+        self.link_quote(project)
         response = self.client.get(f"/api/projects/{project.pk}/")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["calculator_quote_info"]["id"], self.quote["id"])
@@ -78,9 +89,7 @@ class CalculatorQuoteProjectTests(APITestCase):
         )
 
     def test_existing_project_can_pull_quote_and_quote_total(self):
-        self.sync()
-        generated_project = Project.objects.get()
-        client = generated_project.client
+        client = Client.objects.create(workspace=self.workspace, name="Существующий", phone="+7-914-070-70-07")
         target = Project.objects.create(
             workspace=self.workspace,
             manager=self.user,
@@ -95,11 +104,10 @@ class CalculatorQuoteProjectTests(APITestCase):
             total_amount=100,
         )
 
-        response = self.client.post(
-            f"/api/projects/{target.pk}/calculator-quote/",
-            {"quote_id": self.quote["id"]},
-            format="json",
-        )
+        self.sync()
+        self.assertEqual(Project.objects.count(), 1)
+        self.assertIsNone(CalculatorQuote.objects.get().project_id)
+        response = self.link_quote(target)
 
         self.assertEqual(response.status_code, 200, response.data)
         target.refresh_from_db()
@@ -108,12 +116,13 @@ class CalculatorQuoteProjectTests(APITestCase):
         self.assertEqual(target.total_amount, Decimal("81000"))
         self.assertEqual(target.object_address, "г Ростов-на-Дону, ул Тестовая, д 10")
         self.assertEqual(target.apartment, "15")
-        self.assertEqual(response.data["moved_from_project_id"], generated_project.id)
+        self.assertIsNone(response.data["moved_from_project_id"])
         self.assertEqual(response.data["project"]["calculator_quote_info"]["number"], "1001")
 
     def test_project_can_unlink_quote_without_deleting_archive(self):
+        project = self.create_project()
         self.sync()
-        project = Project.objects.get()
+        self.link_quote(project)
 
         response = self.client.delete(f"/api/projects/{project.pk}/calculator-quote/")
 
@@ -122,9 +131,16 @@ class CalculatorQuoteProjectTests(APITestCase):
         self.assertIsNone(quote.project)
         self.assertTrue(quote.project_sync_disabled)
         self.assertEqual(response.data["project"]["calculator_quote_info"], None)
+        self.quote.update(updatedAt="2026-09-02T10:00:00Z", manualTotal=75500)
+        self.sync()
+        quote.refresh_from_db()
+        project.refresh_from_db()
+        self.assertIsNone(quote.project_id)
+        self.assertEqual(project.total_amount, Decimal("81000"))
 
     def test_stale_revision_does_not_change_project(self):
         self.sync()
+        self.link_quote(self.create_project())
         stale = deepcopy(self.quote)
         stale.update(updatedAt="2026-08-01T10:00:00Z", manualTotal=100)
         self.sync(stale)
@@ -141,44 +157,10 @@ class CalculatorQuoteProjectTests(APITestCase):
         self.sync(invalid)
         self.assertFalse(Project.objects.exists())
 
-    def test_existing_client_is_reused_by_phone(self):
-        client = Client.objects.create(workspace=self.workspace, name="Существующий", phone="+7-914-070-70-07")
+    def test_deleting_linked_project_keeps_quote_archive_and_prevents_resurrection(self):
+        project = self.create_project()
         self.sync()
-        self.assertEqual(Project.objects.get().client, client)
-        self.assertEqual(Client.objects.count(), 1)
-
-    def test_existing_request_from_previous_version_is_removed(self):
-        quote = CalculatorQuote.objects.create(
-            workspace=self.workspace, quote_id=self.quote["id"], payload=self.quote,
-            created_by=self.user, updated_by=self.user,
-        )
-        CalculatorLead.objects.create(
-            workspace=self.workspace, quote=quote, calculation_id="legacy", client_name="Максим",
-            client_phone="89140707007", product="shower", configuration={}, amount=81000, price_version="",
-        )
-        call_command("backfill_calculator_projects", stdout=StringIO())
-        self.assertTrue(Project.objects.exists())
-        self.assertFalse(CalculatorLead.objects.exists())
-
-    def test_backfill_is_idempotent_and_isolated_by_workspace(self):
-        CalculatorQuote.objects.create(
-            workspace=self.workspace, quote_id=self.quote["id"], payload=self.quote,
-            created_by=self.user, updated_by=self.user,
-        )
-        call_command("backfill_calculator_projects", stdout=StringIO())
-        call_command("backfill_calculator_projects", stdout=StringIO())
-        self.assertEqual(Project.objects.count(), 1)
-        other = Workspace.objects.create(name="Other", slug="other")
-        other_user = User.objects.create_user(username="other-admin", role="admin", workspace=other)
-        ProjectStatus.objects.create(workspace=other, code="lead", name="Заявки", is_default=True)
-        self.client.force_authenticate(other_user)
-        self.sync()
-        self.assertEqual(Project.objects.count(), 2)
-        self.assertEqual(Project.objects.filter(workspace=other).get().status, "lead")
-
-    def test_deleting_generated_project_keeps_quote_archive_and_prevents_resurrection(self):
-        self.sync()
-        project = Project.objects.get()
+        self.link_quote(project)
         response = self.client.delete(f"/api/projects/{project.pk}/")
         self.assertEqual(response.status_code, 204)
         quote = CalculatorQuote.objects.get()
@@ -200,8 +182,9 @@ class CalculatorQuoteProjectTests(APITestCase):
         ProjectStatus.objects.create(
             workspace=self.workspace, code="completed", name="Завершён", sort_order=30,
         )
+        project = self.create_project()
         self.sync()
-        project = Project.objects.get()
+        self.link_quote(project)
         ensure_folder.assert_not_called()
 
         response = self.client.patch(
