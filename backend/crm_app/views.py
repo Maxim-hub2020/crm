@@ -1574,20 +1574,11 @@ def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top, include_sig
         pdf.line(left_x, signature_y, 297, signature_y)
         pdf.line(right_x, signature_y, 533, signature_y)
         pdf.setFont(regular, 8)
-        pdf.drawCentredString(180, signature_y - 10, "(подпись)")
+        pdf.drawCentredString(180, signature_y - 10, "(подпись, расшифровка)" if legal else "(подпись)")
         pdf.drawCentredString(430, signature_y - 10, "(подпись)")
         pdf.setFont(regular, 10.5)
         client_name = values.get("CLIENT_FULL_NAME") or values.get("CLIENT_SHORT_NAME") or ""
-        if legal:
-            client_name = values["CLIENT_LEGAL_SIGNATORY"]
-            lines, size = _fit_pdf_text(client_name, 235, 24, pdfmetrics, regular, 10.5, multiline=True)
-            if size < 8 or any(pdfmetrics.stringWidth(line, regular, size) > 235 for line in lines):
-                raise ValueError("ФИО подписанта не помещается в шаблон.")
-            pdf.setFont(regular, size)
-            for index, line in enumerate(reversed(lines)):
-                pdf.drawString(left_x, signature_y + 4 + index * size * 1.18, line)
-            pdf.setFont(regular, 10.5)
-        else:
+        if not legal:
             pdf.drawString(left_x, signature_y + 4, client_name)
         pdf.drawRightString(533, signature_y + 4, "М.В. Лапунов")
 
@@ -1888,11 +1879,55 @@ def _document_address(address, entrance="", floor="", apartment=""):
     return ", ".join(part for part in parts if part)
 
 
+def _mirror_document_description(item):
+    form = item.get("form") if isinstance(item.get("form"), dict) else {}
+    position = str(item.get("positionName") or "").strip()
+    product = str(item.get("mirrorTitle") or "Зеркало").strip()
+    if "зеркал" not in product.casefold():
+        product = f"Зеркало: {product}"
+    material = str(item.get("materialLabel") or "").strip()
+    width, height = form.get("width"), form.get("height")
+    size = f"{width} × {height} мм" if width and height else ""
+    details = item.get("details") if isinstance(item.get("details"), list) else []
+    services = item.get("serviceLines") if isinstance(item.get("serviceLines"), list) else details
+    options = form.get("options") if isinstance(form.get("options"), list) else []
+    service_ids = {str(option.get("serviceId") or "") for option in options if isinstance(option, dict)}
+    labels = [
+        str(service.get("label") or "").strip().casefold()
+        for service in services if isinstance(service, dict)
+    ]
+    inclusions = []
+    if any(service.startswith("installation-") for service in service_ids) or any(label.startswith("монтаж") for label in labels):
+        inclusions.append("монтаж")
+    for service_id, label in (("backlight-background", "фоновая подсветка"), ("backlight-front", "лицевая подсветка")):
+        if service_id in service_ids or any(label in value for value in labels):
+            inclusions.append(label)
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        label = str(detail.get("label") or "").strip().casefold()
+        value = str(detail.get("value") or "").strip()
+        if label == "размер" and not size:
+            size = value
+        elif label == "материал" and not material:
+            material = value
+    parts = [product]
+    if material and material.casefold() not in product.casefold():
+        parts.append(material)
+    if size and size not in product:
+        parts.append(size)
+    parts.extend(inclusions)
+    description = ", ".join(parts)
+    return f"{position}: {description}" if position and position.casefold() != product.casefold() else description
+
+
 def build_project_document_values(project):
     client = project.client
     quote = CalculatorQuote.objects.filter(project=project).first()
     payload = quote.payload if quote and isinstance(quote.payload, dict) else {}
     raw_items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    if not raw_items and (payload.get("mirrorTitle") or payload.get("constructionTitle")):
+        raw_items = [payload]
     item_lines = []
     quote_rows = []
     items_total = Decimal("0")
@@ -1921,11 +1956,12 @@ def build_project_document_values(project):
             if label and value:
                 detail_parts.append(f"{label}: {value}")
         detail_label = f" ({'; '.join(detail_parts)})" if detail_parts else ""
-        item_lines.append(f"{index}. {title}{detail_label} – {quantity} шт.{amount_label}")
+        description = _mirror_document_description(item) if item.get("kind") == "mirror" or item.get("mirrorTitle") else f"{title}{detail_label}"
+        item_lines.append(f"{index}. {description} – {quantity} шт.{amount_label}")
         if line_total is not None:
             items_total += line_total
         quote_rows.append({
-            "description": f"{title}{detail_label}",
+            "description": description,
             "quantity": str(quantity),
             "amount": _document_money(line_total) if line_total is not None else "",
             "amount_value": line_total,

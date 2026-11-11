@@ -1310,7 +1310,7 @@ export default function Settings() {
           </p>
           <div className="mb-4 rounded-2xl bg-slate-50 px-4 py-3 text-xs font-semibold leading-6 text-slate-600">
             <div><code>CLIENT_FULL_NAME</code> — ФИО, <code>CLIENT_PHONE</code> — телефон, <code>CLIENT_ADDRESS</code> — адрес клиента.</div>
-            <div>Для юрлица <code>CLIENT_FULL_NAME</code> — название компании, <code>CLIENT_ADDRESS</code> — юридический адрес. В пользовательском шаблоне добавьте большое многострочное поле <code>CLIENT_LEGAL_REQUISITES</code> для реквизитов и подписанта.</div>
+            <div>Для юрлица <code>CLIENT_FULL_NAME</code> — название компании, <code>CLIENT_ADDRESS</code> — юридический адрес. В пользовательском шаблоне добавьте большое многострочное поле <code>CLIENT_LEGAL_REQUISITES</code> для реквизитов компании.</div>
             <div><code>PROJECT_NUMBER</code> — номер проекта, <code>PROJECT_TITLE</code> — название, <code>DEAL_VALUE</code> — сумма.</div>
             <div><code>PROJECT_ADDRESS</code> — адрес объекта с подъездом, этажом и квартирой.</div>
             <div><code>QUOTE_NUMBER</code> — номер КП, <code>QUOTE_ITEMS</code> — позиции и параметры КП, <code>DOCUMENT_DATE</code> — дата.</div>

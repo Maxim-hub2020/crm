@@ -54,8 +54,6 @@ class ProjectDocumentTests(APITestCase):
             "kpp": "616801001",
             "ogrn": "1266100000001",
             "address": "г Ростов-на-Дону, ул Юридическая, д 1",
-            "signatory": "Петров Пётр Петрович",
-            "position": "Генеральный директор",
             "bank": "АО «Тестовый банк»",
             "bik": "044525974",
             "account": "40702810000000000001",
@@ -72,6 +70,9 @@ class ProjectDocumentTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["legal_details"], details)
         self.assertEqual(self.client.get(document_url).status_code, 404)
+        Client.objects.filter(pk=self.client_card.pk).update(legal_details={
+            **details, "signatory": "Петров Пётр Петрович", "position": "Генеральный директор",
+        })
         response = self.client.patch(client_url, {"legal_details": {"inn": "123"}}, format="json")
         self.assertEqual(response.status_code, 400)
         self.project.refresh_from_db()
@@ -86,7 +87,41 @@ class ProjectDocumentTests(APITestCase):
         pages = PdfReader(BytesIO(rendered)).pages
         self.assertIn(details["name"], pages[0].extract_text())
         self.assertIn(details["account"], pages[2].extract_text())
-        self.assertIn(details["signatory"], pages[2].extract_text())
+        requisites = pages[2].extract_text()
+        self.assertNotIn("Петров Пётр Петрович", requisites)
+        self.assertNotIn("Генеральный директор", requisites)
+        self.assertIn("подпись, расшифровка", requisites)
+
+    def test_mirror_specification_uses_room_and_saved_quote_composition(self):
+        mirror = {
+            "kind": "mirror", "mirrorTitle": "Зеркало осветлённое",
+            "form": {"width": 520, "height": 2600, "options": [{"serviceId": "backlight-background"}]},
+            "materialLabel": "Осветлённое",
+            "serviceLines": [{"label": "Монтаж: навеска"}, {"label": "Упаковка"}],
+            "details": [{"label": "Размер", "value": "Текст для клиента"}],
+            "result": {"total": 27000},
+        }
+        CalculatorQuote.objects.create(
+            workspace=self.workspace, quote_id="mirror-rooms", project=self.project,
+            payload={
+                "result": {"total": 81000},
+                "items": [
+                    {**mirror, "positionName": "Прихожая"},
+                    {**mirror, "positionName": "Гостиная", "form": {"width": 685, "height": 2600},
+                     "serviceLines": [{"label": "Лицевая подсветка"}]},
+                    {**mirror, "positionName": "Колонна", "form": {"width": 639, "height": 2528},
+                     "serviceLines": []},
+                ],
+            },
+        )
+        values = build_project_document_values(self.project)
+        self.assertEqual([row["description"] for row in values["_QUOTE_ROWS"]], [
+            "Прихожая: Зеркало осветлённое, 520 × 2600 мм, монтаж, фоновая подсветка",
+            "Гостиная: Зеркало осветлённое, 685 × 2600 мм, лицевая подсветка",
+            "Колонна: Зеркало осветлённое, 639 × 2528 мм",
+        ])
+        self.assertNotIn("Упаковка", values["QUOTE_ITEMS"])
+        self.assertNotIn("Текст для клиента", values["QUOTE_ITEMS"])
 
     def test_document_values_include_linked_quote_items(self):
         self.client_card.contract_full_name = "Иванов Иван Иванович"
