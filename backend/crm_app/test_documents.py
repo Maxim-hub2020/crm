@@ -56,7 +56,6 @@ class ProjectDocumentTests(APITestCase):
             "address": "г Ростов-на-Дону, ул Юридическая, д 1",
             "signatory": "Петров Пётр Петрович",
             "position": "Генеральный директор",
-            "authority": "Устав",
             "bank": "АО «Тестовый банк»",
             "bik": "044525974",
             "account": "40702810000000000001",
@@ -72,6 +71,7 @@ class ProjectDocumentTests(APITestCase):
         response = self.client.patch(client_url, {"legal_details": {key: value for key, value in details.items() if key != "name"}}, format="json")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["legal_details"], details)
+        self.assertEqual(self.client.get(document_url).status_code, 404)
         response = self.client.patch(client_url, {"legal_details": {"inn": "123"}}, format="json")
         self.assertEqual(response.status_code, 400)
         self.project.refresh_from_db()

@@ -134,6 +134,8 @@ class ClientSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Передайте реквизиты как объект.")
         result = {}
         for key, text in value.items():
+            if key == "authority":
+                continue
             if key not in LEGAL_FIELDS or not isinstance(text, str):
                 raise serializers.ValidationError({key: "Неизвестное поле или значение не является строкой."})
             label, length = LEGAL_FIELDS[key]

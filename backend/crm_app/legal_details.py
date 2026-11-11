@@ -6,11 +6,10 @@ LEGAL_FIELDS = {
     "address": ("Юридический адрес", 350),
     "signatory": ("ФИО подписанта", 150),
     "position": ("Должность подписанта", 100),
-    "authority": ("Основание полномочий", 150),
     "bank": ("Банк", 150),
     "bik": ("БИК", 9),
     "account": ("Расчётный счёт", 20),
     "correspondent_account": ("Корреспондентский счёт", 20),
 }
-REQUIRED_LEGAL_FIELDS = ("name", "inn", "address", "signatory", "position", "authority")
+REQUIRED_LEGAL_FIELDS = ("name", "inn", "address", "signatory", "position")
 NUMERIC_LEGAL_FIELDS = {"inn", "kpp", "ogrn", "bik", "account", "correspondent_account"}
