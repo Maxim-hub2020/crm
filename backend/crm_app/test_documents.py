@@ -91,6 +91,26 @@ class ProjectDocumentTests(APITestCase):
         self.assertNotIn("Петров Пётр Петрович", requisites)
         self.assertNotIn("Генеральный директор", requisites)
         self.assertIn("подпись, расшифровка", requisites)
+        specification = pages[3].extract_text()
+        for key in ("inn", "kpp", "ogrn", "bik", "account", "correspondent_account"):
+            self.assertIn(details[key], requisites)
+            self.assertIn(details[key], specification)
+        self.assertIn("ул Юридическая", " ".join(specification.split()))
+        self.assertIn(details["bank"], specification)
+        self.assertIn("подпись, расшифровка", specification)
+
+        CalculatorQuote.objects.create(
+            workspace=self.workspace, project=self.project, quote_id="long-specification",
+            payload={"items": [{"constructionTitle": f"Изделие {index}", "result": {"total": 1000}}
+                               for index in range(14)], "result": {"total": 14000}},
+        )
+        with template_path.open("rb") as template_stream:
+            rendered = render_pdf_template(SimpleNamespace(file=File(template_stream)), self.project)
+        pages = PdfReader(BytesIO(rendered)).pages
+        self.assertEqual(len(pages), 5)
+        self.assertIn("ИТОГО:", pages[3].extract_text())
+        self.assertIn("продолжение", pages[4].extract_text())
+        self.assertIn(details["account"], pages[4].extract_text())
 
     def test_mirror_specification_uses_room_and_saved_quote_composition(self):
         mirror = {

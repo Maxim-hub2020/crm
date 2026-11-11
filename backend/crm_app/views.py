@@ -1394,6 +1394,7 @@ def render_pdf_template(template, project):
         }.issubset(source_fields) and len(writer.pages) == 4
         if values["_IS_LEGAL_ENTITY"] and not standard_contract and "CLIENT_LEGAL_REQUISITES" not in source_fields:
             raise ValueError("Для юрлица нужен шаблон с полем CLIENT_LEGAL_REQUISITES для реквизитов заказчика.")
+        extra_pages = []
         for page_index, page in enumerate(writer.pages):
             if standard_contract and page_index in {0, 2, 3}:
                 overlay = _build_standard_contract_overlay(
@@ -1404,13 +1405,18 @@ def render_pdf_template(template, project):
                     page, values, canvas, pdfmetrics, font_names["regular"],
                 )
             if overlay:
-                page.merge_page(PdfReader(overlay).pages[0])
+                overlay_pages = PdfReader(overlay).pages
+                page.merge_page(overlay_pages[0])
+                if standard_contract and page_index == 3:
+                    extra_pages.extend(overlay_pages[1:])
             annotations = page.get("/Annots") or []
             remaining = [item for item in annotations if item.get_object().get("/Subtype") != "/Widget"]
             if remaining:
                 page[NameObject("/Annots")] = type(annotations)(remaining)
             else:
                 page.pop(NameObject("/Annots"), None)
+        for extra_page in extra_pages:
+            writer.add_page(extra_page)
 
         # Contracts and acts are final documents, not editable templates. Removing
         # AcroForm also prevents viewers from showing stale placeholder appearances.
@@ -1518,7 +1524,7 @@ def _fit_contract_clauses(clauses, width, pdfmetrics, font_name, top, minimum_ba
     return size, size, size - 0.5
 
 
-def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top, include_signatures=True, full_requisites=False):
+def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top):
     regular = font_names["regular"]
     bold = font_names["bold"]
     left_x = 62
@@ -1535,11 +1541,7 @@ def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top, include_sig
     ]
     legal = values["_IS_LEGAL_ENTITY"]
     if legal:
-        client_lines = (
-            values["CLIENT_LEGAL_REQUISITES"].splitlines()
-            if full_requisites
-            else [values["CLIENT_NAME"], f"ИНН: {values['CLIENT_LEGAL_INN']}"]
-        )
+        client_lines = values["CLIENT_LEGAL_REQUISITES"].splitlines()
     contractor_lines = [
         "ИП ЛАПУНОВ МАКСИМ ВЛАДИМИРОВИЧ",
         "ИНН 616805532322",
@@ -1550,8 +1552,8 @@ def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top, include_sig
         "Телефон 89298191684",
     ]
     left_y = top - 23
-    if legal and full_requisites:
-        lines, size = _fit_pdf_text("\n".join(client_lines), 235, left_y - 451, pdfmetrics, regular, 10.5, multiline=True)
+    if legal:
+        lines, size = _fit_pdf_text("\n".join(client_lines), 235, 151, pdfmetrics, regular, 10.5, multiline=True)
         if size < 8 or any(pdfmetrics.stringWidth(line, regular, size) > 235 for line in lines):
             raise ValueError("Реквизиты юрлица не помещаются в шаблон. Сократите длинные значения.")
         pdf.setFont(regular, size)
@@ -1567,20 +1569,17 @@ def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top, include_sig
         pdf.drawString(right_x, right_y, line)
         right_y -= 14
 
-    if include_signatures:
-        signature_y = min(left_y, right_y) - (28 if legal else 58)
-        if legal and full_requisites and signature_y < 423:
-            raise ValueError("Реквизиты юрлица не помещаются в шаблон. Сократите длинные значения.")
-        pdf.line(left_x, signature_y, 297, signature_y)
-        pdf.line(right_x, signature_y, 533, signature_y)
-        pdf.setFont(regular, 8)
-        pdf.drawCentredString(180, signature_y - 10, "(подпись, расшифровка)" if legal else "(подпись)")
-        pdf.drawCentredString(430, signature_y - 10, "(подпись)")
-        pdf.setFont(regular, 10.5)
-        client_name = values.get("CLIENT_FULL_NAME") or values.get("CLIENT_SHORT_NAME") or ""
-        if not legal:
-            pdf.drawString(left_x, signature_y + 4, client_name)
-        pdf.drawRightString(533, signature_y + 4, "М.В. Лапунов")
+    signature_y = min(left_y, right_y) - (28 if legal else 58)
+    pdf.line(left_x, signature_y, 297, signature_y)
+    pdf.line(right_x, signature_y, 533, signature_y)
+    pdf.setFont(regular, 8)
+    pdf.drawCentredString(180, signature_y - 10, "(подпись, расшифровка)" if legal else "(подпись)")
+    pdf.drawCentredString(430, signature_y - 10, "(подпись)")
+    pdf.setFont(regular, 10.5)
+    client_name = values.get("CLIENT_FULL_NAME") or values.get("CLIENT_SHORT_NAME") or ""
+    if not legal:
+        pdf.drawString(left_x, signature_y + 4, client_name)
+    pdf.drawRightString(533, signature_y + 4, "М.В. Лапунов")
 
 
 def _draw_contract_first_page(pdf, values, font_names, pdfmetrics, page_width, page_height):
@@ -1679,7 +1678,7 @@ def _draw_contract_first_page(pdf, values, font_names, pdfmetrics, page_width, p
 def _draw_contract_requisites_page(pdf, values, font_names, pdfmetrics, page_width):
     pdf.setFillColorRGB(1, 1, 1)
     pdf.rect(48, 410, page_width - 83, 230, stroke=0, fill=1)
-    _draw_contract_parties(pdf, values, font_names, pdfmetrics, 625, full_requisites=True)
+    _draw_contract_parties(pdf, values, font_names, pdfmetrics, 625)
 
 
 def _draw_contract_specification_page(pdf, values, font_names, pdfmetrics, page_width, page_height):
@@ -1770,6 +1769,11 @@ def _draw_contract_specification_page(pdf, values, font_names, pdfmetrics, page_
     pdf.drawRightString(table_x + table_width - 8, table_bottom + 10, str(values.get("DEAL_VALUE") or ""))
 
     parties_top = min(table_bottom - 65, 470)
+    if parties_top < 260:
+        pdf.showPage()
+        pdf.setFont(bold, 13)
+        pdf.drawCentredString(page_width / 2, 730, f"СПЕЦИФИКАЦИЯ № {quote_number} (продолжение)")
+        parties_top = 675
     _draw_contract_parties(pdf, values, font_names, pdfmetrics, parties_top)
 
 
