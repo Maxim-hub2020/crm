@@ -1573,11 +1573,16 @@ def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top):
     pdf.line(left_x, signature_y, 297, signature_y)
     pdf.line(right_x, signature_y, 533, signature_y)
     pdf.setFont(regular, 8)
-    pdf.drawCentredString(180, signature_y - 10, "(подпись, расшифровка)" if legal else "(подпись)")
+    pdf.drawCentredString(180, signature_y - 10, "(подпись)")
     pdf.drawCentredString(430, signature_y - 10, "(подпись)")
     pdf.setFont(regular, 10.5)
     client_name = values.get("CLIENT_FULL_NAME") or values.get("CLIENT_SHORT_NAME") or ""
-    if not legal:
+    if legal:
+        if values["CLIENT_LEGAL_SIGNATORY"].strip():
+            surname, *names = values["CLIENT_LEGAL_SIGNATORY"].split()
+            initials = "".join(f"{name[0]}." for name in names)
+            pdf.drawString(left_x, signature_y + 4, f"{surname} {initials}".rstrip())
+    else:
         pdf.drawString(left_x, signature_y + 4, client_name)
     pdf.drawRightString(533, signature_y + 4, "М.В. Лапунов")
 
