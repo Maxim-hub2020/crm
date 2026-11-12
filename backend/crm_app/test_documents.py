@@ -90,14 +90,14 @@ class ProjectDocumentTests(APITestCase):
         requisites = pages[2].extract_text()
         self.assertIn("Петров Пётр Петрович", " ".join(requisites.split()))
         self.assertIn("Генеральный директор", " ".join(requisites.split()))
-        self.assertIn("Петров П.П.", requisites)
+        self.assertIn("П.П. Петров", requisites)
         specification = pages[3].extract_text()
         for key in ("inn", "kpp", "ogrn", "bik", "account", "correspondent_account"):
             self.assertIn(details[key], requisites)
             self.assertIn(details[key], specification)
         self.assertIn("ул Юридическая", " ".join(specification.split()))
         self.assertIn(details["bank"], specification)
-        self.assertIn("Петров П.П.", specification)
+        self.assertIn("П.П. Петров", specification)
 
         CalculatorQuote.objects.create(
             workspace=self.workspace, project=self.project, quote_id="long-specification",

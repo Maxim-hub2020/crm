@@ -1570,19 +1570,24 @@ def _draw_contract_parties(pdf, values, font_names, pdfmetrics, top):
         right_y -= 14
 
     signature_y = min(left_y, right_y) - (28 if legal else 58)
-    pdf.line(left_x, signature_y, 297, signature_y)
+    customer_signature = ""
+    if legal and values["CLIENT_LEGAL_SIGNATORY"].strip():
+        surname, *names = values["CLIENT_LEGAL_SIGNATORY"].split()
+        initials = "".join(f"{name[0]}." for name in names)
+        customer_signature = f"{initials} {surname}".strip()
+    customer_line_end = 297
+    if customer_signature:
+        customer_line_end = max(left_x + 55, 289 - pdfmetrics.stringWidth(customer_signature, regular, 10.5))
+    pdf.line(left_x, signature_y, customer_line_end, signature_y)
     pdf.line(right_x, signature_y, 533, signature_y)
     pdf.setFont(regular, 8)
-    pdf.drawCentredString(180, signature_y - 10, "(подпись)")
+    pdf.drawCentredString((left_x + customer_line_end) / 2, signature_y - 10, "(подпись)")
     pdf.drawCentredString(430, signature_y - 10, "(подпись)")
     pdf.setFont(regular, 10.5)
     client_name = values.get("CLIENT_FULL_NAME") or values.get("CLIENT_SHORT_NAME") or ""
-    if legal:
-        if values["CLIENT_LEGAL_SIGNATORY"].strip():
-            surname, *names = values["CLIENT_LEGAL_SIGNATORY"].split()
-            initials = "".join(f"{name[0]}." for name in names)
-            pdf.drawString(left_x, signature_y + 4, f"{surname} {initials}".rstrip())
-    else:
+    if customer_signature:
+        pdf.drawString(customer_line_end + 8, signature_y, customer_signature)
+    elif not legal:
         pdf.drawString(left_x, signature_y + 4, client_name)
     pdf.drawRightString(533, signature_y + 4, "М.В. Лапунов")
 
