@@ -1,0 +1,85 @@
+import Foundation
+
+struct ScanRequest: Equatable {
+    let sessionID: String
+    let token: String
+    let uploadURL: URL
+    let roomName: String
+
+    init?(url: URL) {
+        guard url.scheme == "cehcrm-lidar",
+              url.host == "scan",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        let items = components.queryItems ?? []
+        guard Set(items.map(\.name)).count == items.count else { return nil }
+        let values = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+        guard let sessionID = values["session"], !sessionID.isEmpty,
+              let token = values["token"], !token.isEmpty,
+              UUID(uuidString: sessionID) != nil,
+              let uploadURL = URL(string: values["upload_url"] ?? ""),
+              CRMOrigin.allows(uploadURL), uploadURL.query == nil, uploadURL.fragment == nil,
+              URLComponents(url: uploadURL, resolvingAgainstBaseURL: false)?.percentEncodedPath
+                == "/api/measurement-scan-sessions/\(sessionID)/complete/" else { return nil }
+        self.sessionID = sessionID
+        self.token = token
+        self.uploadURL = uploadURL
+        self.roomName = values["room"] ?? "Комната"
+    }
+}
+
+struct NormalizedPoint: Codable {
+    let x: Double
+    let y: Double
+}
+
+struct ScannedWall: Codable {
+    let contour: [NormalizedPoint]
+    let confidence: Double
+    let width_mm: Int?
+    let height_mm: Int?
+
+    init(contour: [NormalizedPoint], confidence: Double, width_mm: Int? = nil, height_mm: Int? = nil) {
+        self.contour = contour
+        self.confidence = confidence
+        self.width_mm = width_mm
+        self.height_mm = height_mm
+    }
+}
+
+struct ScannedElement: Codable, Identifiable {
+    var id: UUID = UUID()
+    let type: String
+    let x: Double
+    let y: Double
+    let width: Double?
+    let height: Double?
+    let diameter: Double?
+    let confidence: Double
+    let label: String
+
+    enum CodingKeys: String, CodingKey {
+        case type, x, y, width, height, diameter, confidence, label
+    }
+
+    init(id: UUID = UUID(), type: String, x: Double, y: Double, width: Double? = nil, height: Double? = nil, diameter: Double? = nil, confidence: Double, label: String) {
+        self.id = id
+        self.type = type
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.diameter = diameter
+        self.confidence = confidence
+        self.label = label
+    }
+}
+
+struct ScanResult: Codable {
+    let wall: ScannedWall
+    let elements: [ScannedElement]
+    let warnings: [String]
+}
+
+struct ScanUploadEnvelope: Codable {
+    let result: ScanResult
+}

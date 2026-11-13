@@ -1,0 +1,278 @@
+(() => {
+  const form = document.querySelector('[data-chat-form]');
+  const textarea = form.elements.message;
+  const fileInput = form.elements.files;
+  const messages = document.querySelector('[data-messages]');
+  const status = document.querySelector('[data-chat-status]');
+  const send = form.querySelector('.send');
+  const fileLabel = document.querySelector('[data-file-label]');
+  const onlineText = document.querySelector('[data-online-text]');
+  const quick = document.querySelector('[data-quick-replies]');
+  const params = new URLSearchParams(location.search);
+  const selectedModel = params.get('model') || '';
+  const selectedName = params.get('name') || '';
+  const storageKey = `amalgama-designer-state:${selectedModel || 'new'}`;
+  let stateToken = sessionStorage.getItem(storageKey) || '';
+  let pendingOption = '';
+
+  const turnTime = () => new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit' }).format(new Date());
+
+  function addMessage(role, text, files = []) {
+    const article = document.createElement('article');
+    article.className = `message ${role}`;
+    const avatar = document.createElement('span');
+    avatar.className = 'avatar';
+    avatar.textContent = role === 'assistant' ? 'A' : 'Вы';
+    const box = document.createElement('div');
+    if (files.length) {
+      const list = document.createElement('small');
+      list.className = 'attachments';
+      list.textContent = files.map((file) => file.name).join(' · ');
+      box.append(list);
+    }
+    const paragraph = document.createElement('p');
+    paragraph.textContent = text;
+    box.append(paragraph);
+    const time = document.createElement('time');
+    time.textContent = role === 'assistant' ? `Технолог AMALGAMA · ${turnTime()}` : turnTime();
+    box.append(time);
+    article.append(avatar, box);
+    messages.append(article);
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function renderOptions(options = []) {
+    quick.replaceChildren();
+    quick.classList.toggle('visual-options', options.some((option) => option.image));
+    options.forEach((option) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.value = option.value;
+      if (option.image) {
+        const image = document.createElement('img');
+        image.src = option.image;
+        image.alt = option.label;
+        const copy = document.createElement('span');
+        const title = document.createElement('b');
+        const description = document.createElement('small');
+        title.textContent = option.label;
+        description.textContent = option.description || '';
+        copy.append(title, description);
+        button.append(image, copy);
+      } else {
+        button.textContent = option.label;
+      }
+      quick.append(button);
+    });
+    quick.hidden = !options.length;
+  }
+
+  function renderLayout(layout = {}) {
+    const svg = document.querySelector('[data-layout-drawing]');
+    const summary = document.querySelector('[data-layout-summary]');
+    const ns = 'http://www.w3.org/2000/svg';
+    const line = (x1, y1, x2, y2, className) => {
+      const node = document.createElementNS(ns, 'line');
+      Object.entries({ x1, y1, x2, y2 }).forEach(([key, value]) => node.setAttribute(key, value));
+      node.setAttribute('class', className);
+      return node;
+    };
+    svg.replaceChildren();
+    svg.append(line(52, 54, 308, 54, 'room-line'), line(52, 54, 52, 245, 'room-line'));
+    if (layout.shape === 'wall-to-wall') {
+      svg.append(line(52, 236, 308, 236, 'tray-line'), line(66, 218, 294, 218, 'axis-line'));
+    } else if (layout.shape === 'l-shaped') {
+      svg.append(line(52, 236, 285, 236, 'tray-line'), line(285, 236, 285, 80, 'tray-line'), line(66, 218, 268, 218, 'axis-line'), line(268, 218, 268, 94, 'axis-line'));
+    } else {
+      const text = document.createElementNS(ns, 'text');
+      text.setAttribute('x', '180'); text.setAttribute('y', '155'); text.setAttribute('text-anchor', 'middle');
+      text.textContent = 'Выберите форму поддона';
+      svg.append(text);
+    }
+    if (layout.width && layout.depth) {
+      const label = document.createElementNS(ns, 'text');
+      label.setAttribute('x', '180'); label.setAttribute('y', '270'); label.setAttribute('text-anchor', 'middle');
+      label.textContent = `${layout.width} × ${layout.depth} мм`;
+      svg.append(label);
+    }
+    summary.replaceChildren();
+    (layout.panels || []).forEach((panel) => {
+      const row = document.createElement('article');
+      const copy = document.createElement('span');
+      const id = document.createElement('b');
+      const label = document.createElement('small');
+      const size = document.createElement('strong');
+      id.textContent = panel.id;
+      label.textContent = panel.label;
+      size.textContent = panel.nominal;
+      copy.append(id, label);
+      row.append(copy, size);
+      summary.append(row);
+    });
+    if (!summary.children.length) {
+      const empty = document.createElement('p');
+      empty.className = 'empty';
+      empty.textContent = 'Схема появится после ширины и глубины.';
+      summary.append(empty);
+    }
+  }
+
+  function updateResult(result) {
+    const stages = ['intro', 'geometry', 'configuration', 'hardware', 'review', 'complete'];
+    const current = Math.max(0, stages.indexOf(result.stage));
+    document.querySelectorAll('[data-step]').forEach((element, index) => {
+      element.classList.toggle('active', index === Math.min(current, 4));
+      element.classList.toggle('done', index < current);
+    });
+    const names = {
+      intro: 'Выбор конструкции', geometry: 'Уточнение размеров', configuration: 'Конструкция',
+      hardware: 'Подбор фурнитуры', review: 'Проверочный проект', complete: 'Проект готов',
+    };
+    document.querySelector('[data-current-stage]').textContent = names[result.stage] || 'Проектирование';
+    document.querySelector('[data-project-type]').textContent = result.project_title || 'Новая конструкция';
+    document.querySelector('[data-result-title]').textContent = result.project_title || 'Исходные данные';
+    const progress = Math.max(0, Math.min(100, result.progress || 0));
+    document.querySelector('[data-progress-value]').textContent = `${progress}%`;
+    document.querySelector('[data-progress-bar]').value = progress;
+    document.querySelector('[data-score]').textContent = `${Math.round(progress / 10)} из 10`;
+    document.querySelector('[data-score-caption]').textContent = result.ready_for_final
+      ? 'Все критичные данные подтверждены'
+      : 'Продолжаем технологическую проверку';
+    renderLayout(result.layout);
+
+    const missing = document.querySelector('[data-missing]');
+    missing.replaceChildren();
+    (result.missing || []).slice(0, 5).forEach((text) => {
+      const item = document.createElement('li');
+      item.textContent = text;
+      missing.append(item);
+    });
+    if (!missing.children.length) {
+      const item = document.createElement('li');
+      item.textContent = 'Блокирующих вопросов не осталось';
+      missing.append(item);
+    }
+
+    const hardware = document.querySelector('[data-hardware]');
+    hardware.replaceChildren();
+    (result.hardware || []).forEach((item) => {
+      const row = document.createElement('article');
+      const copy = document.createElement('div');
+      const name = document.createElement('b');
+      const reason = document.createElement('small');
+      const links = document.createElement('nav');
+      const quantity = document.createElement('span');
+      name.textContent = item.label;
+      reason.textContent = item.reason;
+      links.className = 'hardware-links';
+      if (item.drawing_url) {
+        const drawing = document.createElement('a');
+        drawing.href = item.drawing_url;
+        drawing.target = '_blank';
+        drawing.rel = 'noopener noreferrer';
+        drawing.textContent = 'Техкарта PDF';
+        links.append(drawing);
+      }
+      if (item.source_url) {
+        const source = document.createElement('a');
+        source.href = item.source_url;
+        source.target = '_blank';
+        source.rel = 'noopener noreferrer';
+        source.textContent = 'Карточка AV24';
+        links.append(source);
+      }
+      quantity.textContent = `${item.quantity} шт.`;
+      copy.append(name, reason, links);
+      row.append(copy, quantity);
+      hardware.append(row);
+    });
+    if (!hardware.children.length) {
+      const empty = document.createElement('p');
+      empty.className = 'empty';
+      empty.textContent = 'Комплект появится автоматически после выбора конструкции и толщины стекла.';
+      hardware.append(empty);
+    }
+    document.querySelector('[data-downloads]').setAttribute('aria-disabled', String(!result.documents_unlocked));
+    renderOptions(result.options);
+    textarea.placeholder = result.input_mode === 'number' || result.input_mode === 'number_zero'
+        ? 'Размер в миллиметрах'
+        : 'Напишите ответ…';
+  }
+
+  async function checkConnection() {
+    try {
+      const response = await fetch('/api/public-production/chat/');
+      const data = await response.json();
+      onlineText.textContent = data.enabled ? 'Технолог онлайн' : 'Каталог временно недоступен';
+      document.body.classList.toggle('ai-offline', !data.enabled);
+    } catch (_) {
+      onlineText.textContent = 'Связь восстанавливается';
+    }
+  }
+
+  fileInput.addEventListener('change', () => {
+    const count = fileInput.files.length;
+    fileLabel.textContent = count ? `${count} файл${count > 1 ? 'а' : ''}` : 'Эскиз / фото';
+  });
+
+  quick.addEventListener('click', (event) => {
+    const button = event.target.closest('button');
+    if (!button) return;
+    pendingOption = button.dataset.value || '';
+    textarea.value = button.textContent;
+    form.requestSubmit();
+  });
+
+  textarea.addEventListener('input', () => { pendingOption = ''; });
+  textarea.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      form.requestSubmit();
+    }
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const text = textarea.value.trim();
+    const files = [...fileInput.files];
+    if (!text && !files.length && !pendingOption) return;
+    addMessage('user', text || 'Прикладываю материалы замера.', files);
+    textarea.value = '';
+    fileInput.value = '';
+    fileLabel.textContent = 'Эскиз / фото';
+    quick.hidden = true;
+    send.disabled = true;
+    status.textContent = 'Проверяю данные по производственным правилам…';
+    const payload = new FormData();
+    payload.set('message', text);
+    if (pendingOption) payload.set('option_value', pendingOption);
+    if (selectedModel) payload.set('selected_model', selectedModel);
+    if (stateToken) payload.set('state_token', stateToken);
+    files.forEach((file) => payload.append('files', file));
+    pendingOption = '';
+    try {
+      const response = await fetch('/api/public-production/chat/', { method: 'POST', body: payload, headers: { Accept: 'application/json' } });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || 'Не удалось получить ответ.');
+      stateToken = result.state_token || stateToken;
+      if (stateToken) sessionStorage.setItem(storageKey, stateToken);
+      addMessage('assistant', result.message);
+      updateResult(result);
+      status.textContent = result.ai_connected
+        ? 'AI-технолог работает через производственный MCP CEH CRM.'
+        : result.catalog_connected ? 'Конструкция и комплект сверены с каталогом CRM.' : '';
+    } catch (error) {
+      addMessage('assistant', error.message || 'Связь прервалась. Повторите сообщение.');
+      status.textContent = '';
+    } finally {
+      send.disabled = false;
+      textarea.focus();
+    }
+  });
+
+  if (selectedName) {
+    document.querySelector('[data-project-type]').textContent = selectedName;
+    textarea.value = `Начать проект «${selectedName}»`;
+  }
+  checkConnection();
+})();
