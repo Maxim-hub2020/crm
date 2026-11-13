@@ -1478,7 +1478,7 @@ def _fit_pdf_text(text, width, height, pdfmetrics, font_name, preferred_size, mu
     return paragraphs, minimum_size
 
 
-def _wrap_pdf_text(paragraphs, width, pdfmetrics, font_name, size):
+def _wrap_pdf_text(paragraphs, width, pdfmetrics, font_name, size, first_line_indent=0):
     lines = []
     for paragraph in paragraphs:
         words = paragraph.split()
@@ -1486,13 +1486,15 @@ def _wrap_pdf_text(paragraphs, width, pdfmetrics, font_name, size):
             lines.append("")
             continue
         current = words[0]
+        line_width = width - first_line_indent
         for word in words[1:]:
             candidate = f"{current} {word}"
-            if pdfmetrics.stringWidth(candidate, font_name, size) <= width:
+            if pdfmetrics.stringWidth(candidate, font_name, size) <= line_width:
                 current = candidate
             else:
                 lines.append(current)
                 current = word
+                line_width = width
         lines.append(current)
     return lines
 
@@ -1610,20 +1612,26 @@ def _draw_contract_first_page(pdf, values, font_names, pdfmetrics, page_width, p
     pdf.drawString(404, 706, str(values.get("DOCUMENT_DATE") or values.get("DOC_DATE") or ""))
 
     full_name = values.get("CLIENT_FULL_NAME") or values.get("CLIENT_SHORT_NAME") or ""
-    customer = f'Заказчик: {full_name}' if values["_IS_LEGAL_ENTITY"] else f'{full_name}, именуемый в дальнейшем "Заказчик"'
+    customer = f'{full_name}, именуемый в дальнейшем «Заказчик»'
     contractor = (
-        "Подрядчик: ИП ЛАПУНОВ МАКСИМ ВЛАДИМИРОВИЧ, ИНН 616805532322, ОГРНИП 325619600255723, "
+        "ИП ЛАПУНОВ МАКСИМ ВЛАДИМИРОВИЧ, ИНН 616805532322, ОГРНИП 325619600255723, "
         "юридический адрес: 344090, РОССИЯ, РОСТОВСКАЯ ОБЛ, Г РОСТОВ-НА-ДОНУ, "
-        "УЛ МИЛЬЧАКОВА, Д 3, КВ 78, именуемый в дальнейшем \"Подрядчик\", с другой "
-        "стороны, заключили настоящий договор о нижеследующем:"
+        "УЛ МИЛЬЧАКОВА, Д 3, КВ 78, именуемый в дальнейшем «Подрядчик», с одной стороны, и"
     )
     pdf.setFont(regular, 11)
     intro_width = page_width - 125
-    customer_paragraph = f"{customer}, с одной стороны, и"
-    intro_lines = _wrap_pdf_text([customer_paragraph, contractor], intro_width, pdfmetrics, regular, 11)
-    leading = min(13.2, 78 / max(len(intro_lines) - 1, 1))
-    next_top = _draw_pdf_paragraph(pdf, customer_paragraph, 84, 677, intro_width, pdfmetrics, regular, 11, leading)
-    _draw_pdf_paragraph(pdf, contractor, 84, next_top + 5, intro_width, pdfmetrics, regular, 11, leading)
+    customer_paragraph = f"{customer}, с другой стороны, заключили настоящий договор о нижеследующем:"
+    indent = 27
+    paragraphs = [
+        _wrap_pdf_text([paragraph], intro_width, pdfmetrics, regular, 11, first_line_indent=indent)
+        for paragraph in (contractor, customer_paragraph)
+    ]
+    leading = min(13.2, 78 / max(sum(map(len, paragraphs)) - 1, 1))
+    baseline = 666
+    for lines in paragraphs:
+        for index, line in enumerate(lines):
+            pdf.drawString(84 + (indent if index == 0 else 0), baseline, line)
+            baseline -= leading
 
     object_address = values.get("PROJECT_ADDRESS") or values.get("OBJECT_ADDRESS") or ""
     clauses = [
