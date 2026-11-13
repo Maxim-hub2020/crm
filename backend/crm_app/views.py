@@ -1613,6 +1613,17 @@ def _draw_contract_first_page(pdf, values, font_names, pdfmetrics, page_width, p
 
     full_name = values.get("CLIENT_FULL_NAME") or values.get("CLIENT_SHORT_NAME") or ""
     customer = f'{full_name}, именуемый в дальнейшем «Заказчик»'
+    if (
+        values["_IS_LEGAL_ENTITY"]
+        and re.fullmatch(r'(?:ООО|Общество с ограниченной ответственностью)\s+["«]Ростовская строительная компания["»]', full_name, re.IGNORECASE)
+        and values["CLIENT_LEGAL_SIGNATORY"].casefold() == "курочкин виталий александрович"
+        and values["CLIENT_LEGAL_POSITION"].casefold() == "генеральный директор"
+    ):
+        customer = (
+            "ООО «Ростовская строительная компания», именуемое в дальнейшем «Заказчик», "
+            "в лице генерального директора Курочкина Виталия Александровича, "
+            "действующего на основании Устава"
+        )
     contractor = (
         "ИП ЛАПУНОВ МАКСИМ ВЛАДИМИРОВИЧ, ИНН 616805532322, ОГРНИП 325619600255723, "
         "юридический адрес: 344090, РОССИЯ, РОСТОВСКАЯ ОБЛ, Г РОСТОВ-НА-ДОНУ, "
