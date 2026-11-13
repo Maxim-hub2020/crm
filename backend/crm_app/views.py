@@ -1612,7 +1612,7 @@ def _draw_contract_first_page(pdf, values, font_names, pdfmetrics, page_width, p
     full_name = values.get("CLIENT_FULL_NAME") or values.get("CLIENT_SHORT_NAME") or ""
     customer = f'Заказчик: {full_name}' if values["_IS_LEGAL_ENTITY"] else f'{full_name}, именуемый в дальнейшем "Заказчик"'
     introduction = (
-        f'{customer}, с одной стороны, и '
+        f'{customer}, с одной стороны, и\n'
         "ИП ЛАПУНОВ МАКСИМ ВЛАДИМИРОВИЧ, ИНН 616805532322, ОГРНИП 325619600255723, "
         "юридический адрес: 344090, РОССИЯ, РОСТОВСКАЯ ОБЛ, Г РОСТОВ-НА-ДОНУ, "
         "УЛ МИЛЬЧАКОВА, Д 3, КВ 78, именуемый в дальнейшем \"Подрядчик\", с другой "
