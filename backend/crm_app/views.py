@@ -1611,15 +1611,19 @@ def _draw_contract_first_page(pdf, values, font_names, pdfmetrics, page_width, p
 
     full_name = values.get("CLIENT_FULL_NAME") or values.get("CLIENT_SHORT_NAME") or ""
     customer = f'Заказчик: {full_name}' if values["_IS_LEGAL_ENTITY"] else f'{full_name}, именуемый в дальнейшем "Заказчик"'
-    introduction = (
-        f'{customer}, с одной стороны, и\n'
-        "ИП ЛАПУНОВ МАКСИМ ВЛАДИМИРОВИЧ, ИНН 616805532322, ОГРНИП 325619600255723, "
+    contractor = (
+        "Подрядчик: ИП ЛАПУНОВ МАКСИМ ВЛАДИМИРОВИЧ, ИНН 616805532322, ОГРНИП 325619600255723, "
         "юридический адрес: 344090, РОССИЯ, РОСТОВСКАЯ ОБЛ, Г РОСТОВ-НА-ДОНУ, "
         "УЛ МИЛЬЧАКОВА, Д 3, КВ 78, именуемый в дальнейшем \"Подрядчик\", с другой "
         "стороны, заключили настоящий договор о нижеследующем:"
     )
     pdf.setFont(regular, 11)
-    _draw_pdf_paragraph(pdf, introduction, 84, 677, page_width - 125, pdfmetrics, regular, 11, 13.2)
+    intro_width = page_width - 125
+    customer_paragraph = f"{customer}, с одной стороны, и"
+    intro_lines = _wrap_pdf_text([customer_paragraph, contractor], intro_width, pdfmetrics, regular, 11)
+    leading = min(13.2, 78 / max(len(intro_lines) - 1, 1))
+    next_top = _draw_pdf_paragraph(pdf, customer_paragraph, 84, 677, intro_width, pdfmetrics, regular, 11, leading)
+    _draw_pdf_paragraph(pdf, contractor, 84, next_top + 5, intro_width, pdfmetrics, regular, 11, leading)
 
     object_address = values.get("PROJECT_ADDRESS") or values.get("OBJECT_ADDRESS") or ""
     clauses = [
